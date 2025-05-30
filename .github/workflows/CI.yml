@@ -1,0 +1,166 @@
+name: GH Actions
+
+on:
+  release:
+    types: [published]
+  push:
+  pull_request:
+
+jobs:
+  build_sdist:
+    name: Build source distribution
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build sdist
+        run: pipx run build --sdist
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cibw-sdist
+          path: dist/*.tar.gz
+
+  build_wheels:
+    name: ${{ matrix.os }} ${{ matrix.CIBW_ARCHS }} wheels
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            CIBW_ENVIRONMENT: ''
+            CIBW_ARCHS: "x86_64"
+          - os: ubuntu-24.04-arm
+            CIBW_ENVIRONMENT: ''
+            CIBW_ARCHS: "aarch64"
+          - os: windows-latest
+            CIBW_ENVIRONMENT: ''
+            CIBW_ARCHS: "AMD64"
+          - os: macos-13  # Intel
+            CIBW_ENVIRONMENT: >
+              MACOSX_DEPLOYMENT_TARGET='10.15'
+            CIBW_ARCHS: "x86_64"
+          - os: macos-14 # Apple Silicon
+            CIBW_ENVIRONMENT: >
+              MACOSX_DEPLOYMENT_TARGET='11.0'
+            CIBW_ARCHS: "arm64"
+    env:
+      CIBW_ENVIRONMENT: ${{ matrix.CIBW_ENVIRONMENT }}
+      CIBW_SKIP: "*-win32 *i686"
+      CIBW_ARCHS: ${{ matrix.CIBW_ARCHS }}
+      CIBW_PRERELEASE_PYTHONS: "True"
+      # see https://github.com/matplotlib/matplotlib/pull/28687/files#diff-504e739c530d50b780e9a09ae8fd0c3ea8258ea7553be06afb06f03f95b1ee0aR103
+      CIBW_CONFIG_SETTINGS_WINDOWS: >-
+        setup-args="--vsenv"
+        setup-args="-Db_vscrt=mt"
+        setup-args="-Dcpp_link_args=['ucrt.lib','vcruntime.lib','/nodefaultlib:libucrt.lib','/nodefaultlib:libvcruntime.lib']"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build wheels
+        uses: pypa/cibuildwheel@v2.23.3
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cibw-wheels-${{ matrix.os }}-${{ strategy.job-index }}
+          path: ./wheelhouse/*.whl
+
+  test_wheels:
+    needs: [build_wheels]
+    strategy:
+      matrix:
+        os: [macos-13, windows-latest, ubuntu-latest, ubuntu-24.04-arm]
+        python-version: ['3.9', '3.10', '3.11', '3.12', '3.13']
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          allow-prereleases: true
+          #architecture: x64
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: cibw-wheels-*
+          path: dist
+          merge-multiple: true
+      - name: install wheel (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          pip install numpy pyyaml
+          pip install --no-index --find-links $GITHUB_WORKSPACE/dist pycdfpp
+      - name: install wheel (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          pip install numpy pyyaml
+          pip install --no-index --find-links $env:GITHUB_WORKSPACE\dist pycdfpp
+      - uses: actions/checkout@v4
+      - name: run tests
+        run: |
+          pip install ddt requests
+          python -v tests/full_corpus/test_full_corpus.py
+
+  test_wheels_macos_14:
+    needs: [build_wheels]
+    strategy:
+      matrix:
+        python-version: ['3.9', '3.10', '3.11', '3.12', '3.13']
+    runs-on: macos-14
+    steps:
+      - name: add pyenv to path
+        run: |
+          echo "~/.pyenv/shims" >> $GITHUB_PATH
+      - name: install dependencies
+        run: |
+          brew install pyenv
+          brew upgrade pyenv
+          pyenv install ${{ matrix.python-version }}
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: cibw-wheels-*
+          path: dist
+          merge-multiple: true
+      - name: install wheel
+        run: |
+          pyenv local ${{ matrix.python-version }}
+          python3 -m pip install --break-system-packages numpy pyyaml
+          python3 -m pip install --break-system-packages --no-index --find-links $GITHUB_WORKSPACE/dist pycdfpp
+      - uses: actions/checkout@v4
+      - name: run tests
+        run: |
+          pyenv local ${{ matrix.python-version }}
+          python3 -m pip install --break-system-packages ddt requests
+          python3 tests/full_corpus/test_full_corpus.py
+
+
+  upload_pypi:
+    needs: [build_sdist, build_wheels, test_wheels, test_wheels_macos_14]
+    runs-on: ubuntu-latest
+    # upload to PyPI only on github releases
+    if: github.event_name == 'release' && github.event.action == 'published' && github.repository_owner == 'SciQLop'
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: cibw-*
+          path: dist
+          merge-multiple: true
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          user: __token__
+          password: ${{ secrets.PYPI_PASSWORD }}
+          skip-existing: true
+
+  upload_test_pypi:
+    needs: [build_sdist, build_wheels, test_wheels, test_wheels_macos_14]
+    runs-on: ubuntu-latest
+    # upload to test PyPI on github pushes
+    if: github.event_name == 'push' && github.repository_owner == 'SciQLop'
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: cibw-*
+          path: dist
+          merge-multiple: true
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          user: __token__
+          password: ${{ secrets.PYPI_TEST_PASSWORD }}
+          repository-url: https://test.pypi.org/legacy/
+          skip-existing: true
