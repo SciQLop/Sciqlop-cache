@@ -18,6 +18,7 @@
 #include <optional>
 #include <stdexcept>
 #include <mutex>
+#include <functional>
 
 /*
 use shared_mutex for thread safety
@@ -72,11 +73,14 @@ class Cache {
 
         int open()
         {
-            int check = sqlite3_open("cache.db", &db);
+            std::lock_guard<std::mutex> lock(global_mutex);
 
-            if (check)
+            int check = sqlite3_open("sciqlop-cache.db", &db);
+
+            if (check) {
                 std::cerr << "Error opening database: " << sqlite3_errmsg(db) << std::endl;
-            else
+                sqlite3_close(db);
+            } else
                 std::cout << "Database opened successfully." << std::endl;
             return check;
         }
@@ -87,43 +91,66 @@ class Cache {
                 sqlite3_close(db);
         }
 
-        std::optional<std::string> get(const std::string& key)
+        template<typename T>
+        T execute_stmt(const std::string &sql, std::function<void(sqlite3_stmt*)> binder,
+            std::function<T(sqlite3_stmt*)> extractor, T default_value = T())
         {
             std::lock_guard<std::mutex> lock(global_mutex);
-
-            const char *sql = "SELECT value FROM cache WHERE key = ?;";
             sqlite3_stmt *stmt;
-            if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) != SQLITE_OK)
-                return std::nullopt;
 
-            if (sqlite3_bind_text(stmt, 1, key.c_str(), -1, SQLITE_STATIC) != SQLITE_OK) {
-                sqlite3_finalize(stmt);
-                return std::nullopt;
-            }
+            if (sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, nullptr) != SQLITE_OK)
+                return default_value;
 
-            std::optional<std::string> result;
+            binder(stmt);
+            T result = default_value;
+
             if (sqlite3_step(stmt) == SQLITE_ROW)
-                result = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
+                result = extractor(stmt);
 
             sqlite3_finalize(stmt);
             return result;
         }
 
-        bool set(const std::string& key, const std::string& value, int expire = 3600)
+        bool execute_stmt_void(const std::string& sql,
+            std::function<void(sqlite3_stmt*)> binder)
         {
             std::lock_guard<std::mutex> lock(global_mutex);
+            sqlite3_stmt* stmt;
 
-            const char *sql = "REPLACE INTO cache (key, value, expire) VALUES (?, ?, ?);";
-            sqlite3_stmt *stmt;
-            if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) != SQLITE_OK)
+            if (sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, nullptr) != SQLITE_OK)
                 return false;
 
-            sqlite3_bind_text(stmt, 1, key.c_str(), -1, SQLITE_STATIC);
-            sqlite3_bind_text(stmt, 2, value.c_str(), -1, SQLITE_STATIC);
-
+            binder(stmt);
             bool success = (sqlite3_step(stmt) == SQLITE_DONE);
             sqlite3_finalize(stmt);
             return success;
+        }
+
+        bool set(const std::string& key, const std::string& value, int expire = 3600)
+        {
+            return execute_stmt_void(
+                "REPLACE INTO cache (key, value, expire) VALUES (?, ?, ?);",
+                [&](sqlite3_stmt* stmt) {
+                    sqlite3_bind_text(stmt, 1, key.c_str(), -1, SQLITE_STATIC);
+                    sqlite3_bind_text(stmt, 2, value.c_str(), -1, SQLITE_STATIC);
+                    sqlite3_bind_int(stmt, 3, expire);
+                }
+            );
+        }
+
+        std::optional<std::string> get(const std::string& key)
+        {
+            return execute_stmt<std::optional<std::string>>(
+                "SELECT value FROM cache WHERE key = ?;",
+                [&](sqlite3_stmt* stmt) {
+                    sqlite3_bind_text(stmt, 1, key.c_str(), -1, SQLITE_STATIC);
+                },
+                [](sqlite3_stmt* stmt) -> std::optional<std::string> {
+                    const unsigned char* text = sqlite3_column_text(stmt, 0);
+                    return text ? std::optional<std::string>(reinterpret_cast<const char*>(text)) : std::nullopt;
+                },
+                std::nullopt
+            );
         }
 
         // Add a value if the key doesn't already exist
@@ -132,7 +159,7 @@ class Cache {
             return false;
         }
 
-        bool delete(const std::string& key)
+        bool del(const std::string& key)
         {
             std::lock_guard<std::mutex> lock(global_mutex);
 
