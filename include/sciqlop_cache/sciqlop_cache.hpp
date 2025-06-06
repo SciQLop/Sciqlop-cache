@@ -26,16 +26,6 @@ std::atomic<int> for frequency tracking
 Optionally consider lock-free structures (like concurrent_hash_map from TBB) if perf is critical.
 */
 
-struct CacheStats {
-    public:
-        size_t byte_size;
-        size_t item_nb;
-        // std::bitset<8> values;
-        // std::string key;
-        // int frequency;
-        // std::chrono::time_point<std::chrono::steady_clock> last_access;
-};
-
 // Base Cache class
 class Cache {
     public:
@@ -96,7 +86,6 @@ class Cache {
             std::function<T(sqlite3_stmt*)> extractor, T default_value = T())
         {
             std::lock_guard<std::mutex> lock(global_mutex);
-            sqlite3_stmt *stmt;
 
             if (sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, nullptr) != SQLITE_OK)
                 return default_value;
@@ -115,7 +104,6 @@ class Cache {
             std::function<void(sqlite3_stmt*)> binder)
         {
             std::lock_guard<std::mutex> lock(global_mutex);
-            sqlite3_stmt* stmt;
 
             if (sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, nullptr) != SQLITE_OK)
                 return false;
@@ -154,23 +142,26 @@ class Cache {
         }
 
         // Add a value if the key doesn't already exist
-        bool add(const std::string& key, const std::string& value)
+        bool add(const std::string& key, const std::string& value, int expire = 3600)
         {
-            return false;
+            return execute_stmt_void(
+                "INSERT INTO cache (key_column, data_column) VALUES (?, ?; ?);",
+                [&](sqlite3_stmt* stmt) {
+                    sqlite3_bind_text(stmt, 1, key.c_str(), -1, SQLITE_STATIC);
+                    sqlite3_bind_text(stmt, 2, value.c_str(), -1, SQLITE_STATIC);
+                    sqlite3_bind_int(stmt, 3, expire);
+                }
+            );
         }
 
         bool del(const std::string& key)
         {
-            std::lock_guard<std::mutex> lock(global_mutex);
-
-            const char *sql = "DELETE FROM cache WHERE key = ?;";
-            sqlite3_stmt *stmt;
-            sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr);
-            sqlite3_bind_text(stmt, 1, key.c_str(), -1, SQLITE_STATIC);
-
-            bool success = (sqlite3_step(stmt) == SQLITE_DONE);
-            sqlite3_finalize(stmt);
-            return success;
+            return execute_stmt_void(
+                "DELETE FROM cache WHERE key = ?;",
+                [&](sqlite3_stmt* stmt) {
+                    sqlite3_bind_text(stmt, 1, key.c_str(), -1, SQLITE_STATIC);
+                }
+            );
         }
 
         std::optional<std::string> pop(const std::string& key)
@@ -199,7 +190,13 @@ class Cache {
         // Touch a key to update its expiration time
         bool touch(const std::string& key, int expire)
         {
-            return false;
+            return execute_stmt_void(
+                "UPDATE cache SET last_update = ? WHERE key = ?;",
+                [&](sqlite3_stmt* stmt) {
+                    sqlite3_bind_int(stmt, 3, expire);
+                    sqlite3_bind_text(stmt, 1, key.c_str(), -1, SQLITE_STATIC);
+                }
+            );
         }
 
         // Delete expired items
