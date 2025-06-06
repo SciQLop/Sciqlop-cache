@@ -166,24 +166,10 @@ class Cache {
 
         std::optional<std::string> pop(const std::string& key)
         {
-            std::lock_guard<std::mutex> lock(global_mutex);
+            std::optional<std::string> result = get(key)
 
-            const char *sql = "SELECT value FROM cache WHERE key = ?;";
-            sqlite3_stmt *stmt;
-            if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) != SQLITE_OK)
-                return std::nullopt;
-            sqlite3_bind_text(stmt, 1, key.c_str(), -1, SQLITE_STATIC);
-
-            std::optional<std::string> result;
-            if (sqlite3_step(stmt) == SQLITE_ROW)
-                result = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
-
-            const char *sql = "DELETE FROM cache WHERE key = ?;";
-            sqlite3_stmt *stmt;
-            sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr);
-            sqlite3_bind_text(stmt, 1, key.c_str(), -1, SQLITE_STATIC);
-
-            sqlite3_finalize(stmt);
+            if (!del(key))
+                std::cerr << "Error deleting key: " << key << std::endl;
             return result;
         }
 
