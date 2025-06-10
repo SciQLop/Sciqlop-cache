@@ -19,22 +19,31 @@
 #include <stdexcept>
 #include <mutex>
 #include <functional>
+#include <chrono>
+#include <ctime>
+#include <iomanip>
+
+#include "utils/time.hpp"
 
 /*
-use shared_mutex for thread safety
+while (sqlite3_step(stmt) == SQLITE_ROW) {;}
 std::atomic<int> for frequency tracking
 Optionally consider lock-free structures (like concurrent_hash_map from TBB) if perf is critical.
 */
 
 // Base Cache class
 class Cache {
-    sqlite3 *db;
+    private:
+    sqlite3 *db; // replace with unique ptr -> close db automatically at class destruction
     sqlite3_stmt* stmt;
     std::mutex global_mutex;
     size_t current_size;
     size_t max_size;
     int check_;
+    bool auto_clean = false;
+    // put sql related function in another class
 
+    public:
     Cache(const std::string &db_path, size_t max_size = 1000)
     {
         check_ = open();
@@ -69,7 +78,7 @@ class Cache {
     T execute_stmt(const std::string &sql, std::function<void(sqlite3_stmt*)> binder,
         std::function<T(sqlite3_stmt*)> extractor, T default_value = T())
     {
-        std::lock_guard<std::mutex> lock(global_mutex);
+        std::lock_guard<std::mutex> lock(global_mutex); // maybe sql ensure the thread safe aspect
 
         if (sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, nullptr) != SQLITE_OK)
             return default_value;
@@ -100,12 +109,17 @@ class Cache {
 
     bool set(const std::string& key, const std::string& value, int expire = 3600)
     {
+        using namespace std::chrono_literals;
+        const auto now = std::chrono::system_clock::now();
+        const auto expire_time = std::chrono::system_clock::now() + std::chrono::hours(2h);
+
         return execute_stmt_void(
-            "REPLACE INTO cache (key, value, expire) VALUES (?, ?, ?);",
+            "REPLACE INTO cache (key, value, expire, last_update) VALUES (?, ?, ?, ?);",
             [&](sqlite3_stmt* stmt) {
                 sqlite3_bind_text(stmt, 1, key.c_str(), -1, SQLITE_STATIC);
                 sqlite3_bind_text(stmt, 2, value.c_str(), -1, SQLITE_STATIC);
-                sqlite3_bind_int(stmt, 3, expire);
+                sqlite3_bind_double(stmt, 3, time_to_double(expire_time));
+                sqlite3_bind_double(stmt, 3, time_to_double(expire_time));
             }
         );
     }
@@ -150,7 +164,7 @@ class Cache {
 
     std::optional<std::string> pop(const std::string& key)
     {
-        std::optional<std::string> result = get(key)
+        std::optional<std::string> result = get(key);
 
         if (!del(key))
             std::cerr << "Error deleting key: " << key << std::endl;
@@ -158,7 +172,7 @@ class Cache {
     }
 
     // Touch a key to update its expiration time
-    bool touch(const std::string& key, int expire)
+    bool touch(const std::string& key, int expire = 3600)
     {
         return execute_stmt_void(
             "UPDATE cache SET expire = ? WHERE key = ?;",
@@ -181,20 +195,7 @@ class Cache {
     // Delete items based on policy
     void evict()
     {
-        std::lock_guard<std::mutex> lock(global_mutex);
-        sqlite3_stmt *stmt;
-
-        if (sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, nullptr) != SQLITE_OK)
-            return default_value;
-
-        binder(stmt);
-        T result = default_value;
-
-        if (sqlite3_step(stmt) == SQLITE_ROW)
-            result = extractor(stmt);
-
-        sqlite3_finalize(stmt);
-        return result;
+        ;
     }
 
     // Get the cache directory
@@ -205,10 +206,10 @@ class Cache {
     }
 
     // Check the cache statistics
-    CacheStats stats()
-    {
-        ;
-    }
+    // CacheStats stats()
+    // {
+    //     ;
+    // }
 
     // Check if the cache is valid
     bool check()
