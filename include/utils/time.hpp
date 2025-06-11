@@ -9,17 +9,20 @@
 #pragma once
 
 #include <chrono>
+#include <ctime>
 
-double time_to_double(std::chrono::system_clock::time_point time_) {
-    using namespace std::chrono;
-    auto converter = time_.time_since_epoch();
-
-    return duration_cast<duration<double>>(converter).count();
+std::time_t time_to_epoch(std::chrono::system_clock::time_point time_) {
+    return std::chrono::system_clock::to_time_t(time_);
 }
 
-std::chrono::system_clock::time_point double_to_time(double double_) {
-    using namespace std::chrono;
-    auto converter = duration<double>(double_);
+std::chrono::system_clock::time_point epoch_to_time(std::time_t epoch_) {
+    return std::chrono::system_clock::from_time_t(epoch_);
+}
 
-    return std::chrono::system_clock::time_point(duration_cast<system_clock::duration>(converter));
+double epoch_to_double(std::time_t epoch_) {
+    return static_cast<double>(epoch_);
+}
+
+std::time_t double_to_epoch(double double_) {
+    return static_cast<std::time_t>(double_);
 }

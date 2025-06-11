@@ -118,8 +118,8 @@ class Cache {
             [&](sqlite3_stmt* stmt) {
                 sqlite3_bind_text(stmt, 1, key.c_str(), -1, SQLITE_STATIC);
                 sqlite3_bind_text(stmt, 2, value.c_str(), -1, SQLITE_STATIC);
-                sqlite3_bind_double(stmt, 3, time_to_double(expire_time));
-                sqlite3_bind_double(stmt, 3, time_to_double(expire_time));
+                sqlite3_bind_double(stmt, 3, epoch_to_double(time_to_epoch(now)));
+                sqlite3_bind_double(stmt, 3, epoch_to_double(time_to_epoch(expire_time)));
             }
         );
     }
