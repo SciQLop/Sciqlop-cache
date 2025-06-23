@@ -2,3 +2,4 @@ option('with_tests', type : 'boolean', value : false, description : 'Disable tes
 option('with_benchmarks', type : 'boolean', value : false, description : 'Disable benchmarks build.')
 option('show_extra_files', type : 'boolean', value : false, description : 'adds dummy lib to show extra files into an IDE.')
 option('disable_python_wrapper', type : 'boolean', value : false, description : 'build without Python wrapper.')
+

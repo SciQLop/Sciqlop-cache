@@ -65,7 +65,7 @@ sciqlop_cache_dep_inc = include_directories('include', '.')
 
 
 sciqlop_cache_dep = declare_dependency(include_directories: sciqlop_cache_dep_inc,
-                                dependencies: [hedley_dep, fmt_dep])
+                                dependencies: [hedley_dep, fmt_dep, sqlite3_dep])
 
 if get_option('disable_python_wrapper')
     message('building without Python wrapper')
@@ -83,11 +83,15 @@ if get_option('with_tests')
 
     catch_dep = dependency('catch2-with-main', version:'>3.0.0', required : true)
 
-foreach test:['example']
-    exe = executable('test-'+test,'tests/'+test+'/main.cpp',
-                    dependencies:[catch_dep, sciqlop_cache_dep],
-                    install: false
-                    )
+my_include = include_directories('include/sciqlop_cache')
+
+foreach test:['basic']
+    exe = executable(
+        'test-'+test,'tests/'+test+'/main.cpp',
+        include_directories: my_include,
+        dependencies:[catch_dep, sciqlop_cache_dep, sqlite3_dep],
+        install: false
+    )
     test(test, exe)
 endforeach
 
