@@ -26,6 +26,7 @@
 #include "utils/time.hpp"
 
 /*
+don't use lock guard everywhere, use it only when you need to ensure thread safety
 while (sqlite3_step(stmt) == SQLITE_ROW) {;}
 std::atomic<int> for frequency tracking
 Optionally consider lock-free structures (like concurrent_hash_map from TBB) if perf is critical.
@@ -44,21 +45,23 @@ class Cache {
     // put sql related function in another class
 
     public:
-    Cache(const std::string &db_path, size_t max_size = 1000)
+    Cache(const std::string &db_path = "sciqlop-cache.db", size_t max_size_ = 1000)
     {
-        check_ = open();
+        check_ = open(db_path);
 
         if (!check_)
             exit(84);
+        max_size = max_size_;
     }
 
     ~Cache() {;}
 
-    int open()
+    int open(const std::string &db_path)
     {
         std::lock_guard<std::mutex> lock(global_mutex);
 
-        int check = sqlite3_open("sciqlop-cache.db", &db);
+        const char *buffer = db_path.c_str();
+        int check = sqlite3_open(buffer, &db);
 
         if (check) {
             std::cerr << "Error opening database: " << sqlite3_errmsg(db) << std::endl;
@@ -111,7 +114,7 @@ class Cache {
     {
         using namespace std::chrono_literals;
         const auto now = std::chrono::system_clock::now();
-        const auto expire_time = std::chrono::system_clock::now() + std::chrono::hours(2h);
+        const auto expire_time = std::chrono::system_clock::now() + std::chrono::seconds(expire);
 
         return execute_stmt_void(
             "REPLACE INTO cache (key, value, expire, last_update) VALUES (?, ?, ?, ?);",
@@ -212,14 +215,19 @@ class Cache {
     // }
 
     // Check if the cache is valid
+    // need explaination and actually test everything
     bool check()
     {
-        return false;
-    }
+        std::lock_guard<std::mutex> lock(global_mutex);
+        const char *sql = "SELECT COUNT(*) FROM cache;";
+        sqlite3_stmt *stmt;
+        if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+            std::cerr << "Error preparing statement: " << sqlite3_errmsg(db) << std::endl;
+            return false;
+        }
 
-    // Remove old items or least recently used items
-    bool cull()
-    {
-        return false;
+        bool valid = (sqlite3_step(stmt) == SQLITE_ROW && sqlite3_column_int(stmt, 0) >= 0);
+        sqlite3_finalize(stmt);
+        return valid;
     }
 };
