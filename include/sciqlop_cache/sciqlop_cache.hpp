@@ -22,7 +22,7 @@
 #include <iomanip>
 
 #include "utils/time.hpp"
-#include "utils/db.hpp"
+#include "db.hpp"
 
 /*
 don't use lock guard everywhere, use it only when you need to ensure thread safety
