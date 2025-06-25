@@ -10,11 +10,9 @@
 
 #include <iostream>
 #include <string>
-#include <bitset>
-#include <unordered_map>
-#include <memory>
-#include <vector>
+#include <unique_ptr>
 #include <sqlite3.h>
+#include <bitset>
 #include <optional>
 #include <stdexcept>
 #include <mutex>
@@ -24,6 +22,7 @@
 #include <iomanip>
 
 #include "utils/time.hpp"
+#include "utils/db.hpp"
 
 /*
 don't use lock guard everywhere, use it only when you need to ensure thread safety
@@ -35,7 +34,7 @@ Optionally consider lock-free structures (like concurrent_hash_map from TBB) if 
 // Base Cache class
 class Cache {
     private:
-    sqlite3 *db; // replace with unique ptr -> close db automatically at class destruction
+    std::unique_ptr<sqlite3, SQLiteDeleter> db;
     sqlite3_stmt* stmt;
     std::mutex global_mutex;
     size_t current_size;
@@ -49,8 +48,14 @@ class Cache {
     {
         check_ = open(db_path);
 
-        if (!check_)
+        if (check_)
             exit(84);
+        
+        if (!init(db)) {
+            std::cerr << "Failed to initialize database schema." << std::endl;
+            exit(84);
+        }
+        
         max_size = max_size_;
     }
 

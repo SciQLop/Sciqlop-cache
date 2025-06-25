@@ -2,8 +2,7 @@
 ** CNRS LPP PROJECT, 2025
 ** Cache
 ** File description:
-** class Cache used to store and retrieve data
-** often used by the user
+** time related functions
 */
 
 #pragma once
