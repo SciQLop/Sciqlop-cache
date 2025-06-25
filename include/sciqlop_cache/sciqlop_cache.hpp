@@ -10,7 +10,7 @@
 
 #include <iostream>
 #include <string>
-#include <unique_ptr>
+#include <memory>
 #include <sqlite3.h>
 #include <bitset>
 #include <optional>
@@ -127,7 +127,7 @@ class Cache {
                 sqlite3_bind_text(stmt, 1, key.c_str(), -1, SQLITE_STATIC);
                 sqlite3_bind_text(stmt, 2, value.c_str(), -1, SQLITE_STATIC);
                 sqlite3_bind_double(stmt, 3, epoch_to_double(time_to_epoch(now)));
-                sqlite3_bind_double(stmt, 3, epoch_to_double(time_to_epoch(expire_time)));
+                sqlite3_bind_double(stmt, 4, epoch_to_double(time_to_epoch(expire_time)));
             }
         );
     }
@@ -151,7 +151,7 @@ class Cache {
     bool add(const std::string& key, const std::string& value, int expire = 3600)
     {
         return execute_stmt_void(
-            "INSERT INTO cache (key_column, data_column) VALUES (?, ?; ?);",
+            "INSERT INTO cache (key_column, data_column) VALUES (?, ?, ?);",
             [&](sqlite3_stmt* stmt) {
                 sqlite3_bind_text(stmt, 1, key.c_str(), -1, SQLITE_STATIC);
                 sqlite3_bind_text(stmt, 2, value.c_str(), -1, SQLITE_STATIC);
@@ -185,8 +185,8 @@ class Cache {
         return execute_stmt_void(
             "UPDATE cache SET expire = ? WHERE key = ?;",
             [&](sqlite3_stmt* stmt) {
-                sqlite3_bind_int(stmt, 3, expire);
-                sqlite3_bind_text(stmt, 1, key.c_str(), -1, SQLITE_STATIC);
+                sqlite3_bind_int(stmt, 1, expire);
+                sqlite3_bind_text(stmt, 2, key.c_str(), -1, SQLITE_STATIC);
             }
         );
     }

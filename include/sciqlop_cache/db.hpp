@@ -9,7 +9,7 @@
 
 #include <iostream>
 #include <string>
-#include <unique_ptr>
+#include <memory>
 #include <sqlite3.h>
 #include <optional>
 #include <mutex>
