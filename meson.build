@@ -15,7 +15,6 @@ if get_option('buildtype').contains('debug')
     add_project_arguments('-DCDFPP_HEDLEY', language : ['cpp'])
 endif
 
-
 conf_data = configuration_data()
 conf_data.set_quoted('SCIQLOP_CACHE_VERSION', meson.project_version())
 
@@ -28,7 +27,6 @@ cpp = meson.get_compiler('cpp')
 if('clang'==cpp.get_id())
     add_global_arguments('-fsized-deallocation', language : 'cpp')
 endif
-
 
 pybind11_dep = dependency('pybind11')
 hedley_dep = dependency('hedley')
@@ -43,9 +41,9 @@ else
     link_args = []
 endif
 
-
-
 sciqlop_cache_headers = files(
+    'include/sciqlop_cache/sciqlop_cache.hpp',
+    'include/sciqlop_cache/db.hpp'
 )
 
 pysciqlop_cache_headers = files(
@@ -62,7 +60,6 @@ sciqlop_cache_extra_files = files(
 )
 
 sciqlop_cache_dep_inc = include_directories('include', '.')
-
 
 sciqlop_cache_dep = declare_dependency(include_directories: sciqlop_cache_dep_inc,
                                 dependencies: [hedley_dep, fmt_dep, sqlite3_dep])
@@ -81,8 +78,7 @@ if get_option('with_tests')
       }
     )
 
-    catch_dep = dependency('catch2-with-main', version:'>3.0.0', required : true)
-
+catch_dep = dependency('catch2-with-main', version:'>3.0.0', required : true)
 my_include = include_directories('include/sciqlop_cache')
 
 foreach test:['basic']
@@ -95,9 +91,7 @@ foreach test:['basic']
     test(test, exe)
 endforeach
 
-
 endif
-
 
 summary({'C': meson.get_compiler('c').cmd_array(),
         'C++': meson.get_compiler('cpp').cmd_array()
