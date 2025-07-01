@@ -14,15 +14,12 @@
 #include <sqlite3.h>
 #include <bitset>
 #include <optional>
-#include <stdexcept>
 #include <mutex>
 #include <functional>
-#include <chrono>
-#include <ctime>
 #include <iomanip>
 
 #include "utils/time.hpp"
-#include "db.hpp"
+#include "database.hpp"
 
 /*
 don't use lock guard everywhere, use it only when you need to ensure thread safety
@@ -34,52 +31,38 @@ Optionally consider lock-free structures (like concurrent_hash_map from TBB) if 
 // Base Cache class
 class Cache {
     private:
-    std::unique_ptr<sqlite3, SQLiteDeleter> db;
+    size_t max_size;
+    size_t current_size;
     sqlite3_stmt* stmt;
     std::mutex global_mutex;
-    size_t current_size;
-    size_t max_size;
-    int check_;
     bool auto_clean = false;
     // put sql related function in another class
 
     public:
+    Database db;
+
     Cache(const std::string &db_path = "sciqlop-cache.db", size_t max_size_ = 1000)
+        : max_size(max_size_), current_size(0), stmt(nullptr)
     {
-        check_ = open(db_path);
+        if (!db.open(db_path) || !init())
+            throw std::runtime_error("Failed to initialize database schema.");
+    }
 
-        if (check_)
-            exit(84);
-        
-        if (!init(db)) {
-            std::cerr << "Failed to initialize database schema." << std::endl;
-            exit(84);
+    bool init() {
+        const std::string sql = R"(
+            CREATE TABLE IF NOT EXISTS cache (
+                key TEXT PRIMARY KEY,
+                value TEXT,
+                expire REAL,
+                last_update REAL
+            );
+        )";
+        bool result = db.exec(sql);
+
+        if (!result) {
+            std::cerr << "SQL exec failed in init(). SQL: " << sql << std::endl;
         }
-        
-        max_size = max_size_;
-    }
-
-    ~Cache() {;}
-
-    int open(const std::string &db_path)
-    {
-        std::lock_guard<std::mutex> lock(global_mutex);
-
-        const char *buffer = db_path.c_str();
-        int check = sqlite3_open(buffer, &db);
-
-        if (check) {
-            std::cerr << "Error opening database: " << sqlite3_errmsg(db) << std::endl;
-            sqlite3_close(db);
-        } else
-            std::cout << "Database opened successfully." << std::endl;
-        return check;
-    }
-
-    void close()
-    {
-        if (db)
-            sqlite3_close(db);
+        return result;
     }
 
     template<typename T>
@@ -88,7 +71,7 @@ class Cache {
     {
         std::lock_guard<std::mutex> lock(global_mutex); // maybe sql ensure the thread safe aspect
 
-        if (sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, nullptr) != SQLITE_OK)
+        if (sqlite3_prepare_v2(db.get(), sql.c_str(), -1, &stmt, nullptr) != SQLITE_OK)
             return default_value;
 
         binder(stmt);
@@ -106,7 +89,7 @@ class Cache {
     {
         std::lock_guard<std::mutex> lock(global_mutex);
 
-        if (sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, nullptr) != SQLITE_OK)
+        if (sqlite3_prepare_v2(db.get(), sql.c_str(), -1, &stmt, nullptr) != SQLITE_OK)
             return false;
 
         binder(stmt);
@@ -197,7 +180,7 @@ class Cache {
         std::lock_guard<std::mutex> lock(global_mutex);
 
         const char *sql = "DELETE FROM cache WHERE expire < datetime('now');";
-        sqlite3_exec(db, sql, nullptr, nullptr, nullptr);
+        sqlite3_exec(db.get(), sql, nullptr, nullptr, nullptr);
     }
 
     // Delete items based on policy
@@ -210,7 +193,7 @@ class Cache {
     void clear()
     {
         std::lock_guard<std::mutex> lock(global_mutex);
-        sqlite3_exec(db, "DELETE FROM cache;", nullptr, nullptr, nullptr);
+        sqlite3_exec(db.get(), "DELETE FROM cache;", nullptr, nullptr, nullptr);
     }
 
     // Check the cache statistics
@@ -226,8 +209,8 @@ class Cache {
         std::lock_guard<std::mutex> lock(global_mutex);
         const char *sql = "SELECT COUNT(*) FROM cache;";
         sqlite3_stmt *stmt;
-        if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
-            std::cerr << "Error preparing statement: " << sqlite3_errmsg(db) << std::endl;
+        if (sqlite3_prepare_v2(db.get(), sql, -1, &stmt, nullptr) != SQLITE_OK) {
+            std::cerr << "Error preparing statement: " << sqlite3_errmsg(db.get()) << std::endl;
             return false;
         }
 

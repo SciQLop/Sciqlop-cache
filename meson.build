@@ -43,7 +43,7 @@ endif
 
 sciqlop_cache_headers = files(
     'include/sciqlop_cache/sciqlop_cache.hpp',
-    'include/sciqlop_cache/db.hpp'
+    'include/sciqlop_cache/database.hpp'
 )
 
 pysciqlop_cache_headers = files(

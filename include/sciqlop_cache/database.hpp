@@ -27,7 +27,11 @@ class Database {
     std::mutex db_mutex;
 
     public:
-    Database();
+    Database()
+        : db(nullptr, SQLiteDeleter())
+    {
+        ;
+    }
 
     ~Database()
     {
@@ -47,8 +51,10 @@ class Database {
         if (check) {
             std::cerr << "Error opening database: " << sqlite3_errmsg(tmp_db) << std::endl;
             sqlite3_close(tmp_db);
-        } else
+        } else {
             std::cout << "Database opened successfully." << std::endl;
+            db.reset(tmp_db);
+        }
         return check;
     }
 
@@ -62,18 +68,20 @@ class Database {
 
     std::mutex& mutex() { return db_mutex; }
 
+    bool valid() const { return db != nullptr; }
+
     bool exec(const std::string& sql)
     {
         std::lock_guard<std::mutex> lock(db_mutex);
         char* errMsg = nullptr;
+
+        std::cout << "db pointer: " << db.get() << std::endl;
         int rc = sqlite3_exec(db.get(), sql.c_str(), nullptr, nullptr, &errMsg);
         if (rc != SQLITE_OK) {
-            std::cerr << "SQL error: " << errMsg << std::endl;
+            std::cerr << "SQL error: " << (errMsg ? errMsg : "unknown error") << std::endl;
             sqlite3_free(errMsg);
             return false;
         }
         return true;
     }
-
-    bool valid() const { return db != nullptr; }
 };

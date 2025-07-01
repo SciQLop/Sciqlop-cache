@@ -23,8 +23,6 @@ PYBIND11_MODULE(_pysciqlop_cache, m)
 
     py::class_<Cache>(m, "Cache")
         .def(py::init<const std::string &, size_t>(), py::arg("db_path") = "sciclop-cache.db", py::arg("max_size") = 1000)
-        .def("open", &Cache::open, py::arg("db_path") = "sciclop-cache.db")
-        .def("close", &Cache::close)
         .def("set", &Cache::set, py::arg("key"), py::arg("value"), py::arg("expire") = 3600)
         .def("get", &Cache::get, py::arg("key"))
         .def("add", &Cache::add, py::arg("key"), py::arg("value"), py::arg("expire") = 3600)

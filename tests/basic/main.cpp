@@ -65,7 +65,7 @@ SCENARIO("Testing sciqlop_cache", "[cache]")
 
         WHEN("We insert random data and close the cache") {
             REQUIRE(cache.set(test_key, original_str1));
-            cache.close();
+            cache.db.close();
 
             THEN("Data should persist after reopening") {
                 Cache reopened_cache(db_path, 1000);
