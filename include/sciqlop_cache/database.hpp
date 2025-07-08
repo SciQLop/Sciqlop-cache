@@ -55,6 +55,7 @@ class Database {
             std::cout << "Database opened successfully." << std::endl;
             db.reset(tmp_db);
         }
+        std::cout << "check: " << check << std::endl;
         return check;
     }
 

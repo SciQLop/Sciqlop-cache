@@ -52,11 +52,12 @@ SCENARIO("Testing sciqlop_cache", "[cache]")
         std::filesystem::remove(db_path);
 
     std::string test_key = "random/test";
-    std::vector<uint8_t> original_value(128);
-    std::generate(original_value.begin(), original_value.end(), std::rand);
-    std::string original_str1(original_value.begin(), original_value.end());
-    std::generate(original_value.begin(), original_value.end(), std::rand);
-    std::string original_str2(original_value.begin(), original_value.end());
+    std::vector<uint8_t> original_value1(128);
+    std::generate(original_value1.begin(), original_value1.end(), std::rand);
+    std::string original_str1(original_value1.begin(), original_value1.end());
+    std::vector<uint8_t> original_value2(128);
+    std::generate(original_value2.begin(), original_value2.end(), std::rand);
+    std::string original_str2(original_value2.begin(), original_value2.end());
 
     GIVEN("a cache we'll open and close")
     {
@@ -73,8 +74,8 @@ SCENARIO("Testing sciqlop_cache", "[cache]")
 
                 auto loaded_value = reopened_cache.get(test_key);
                 REQUIRE(loaded_value.has_value());
-                REQUIRE(loaded_value->size() == original_value.size());
-                REQUIRE(std::memcmp(loaded_value->data(), original_value.data(), original_value.size()) == 0);
+                REQUIRE(loaded_value->size() == original_value1.size());
+                REQUIRE(std::memcmp(loaded_value->data(), original_value1.data(), original_value1.size()) == 0);
             }
         }
     }
@@ -94,9 +95,9 @@ SCENARIO("Testing sciqlop_cache", "[cache]")
             auto value1 = cache.get("key1");
             auto value2 = cache.get("key2");
             REQUIRE(value1.has_value());
-            REQUIRE(value1.value() == original_str1);
+            REQUIRE(value1.value() == original_value1);
             REQUIRE(value2.has_value());
-            REQUIRE(value2.value() == original_str2);
+            REQUIRE(value2.value() == original_value2);
 
             THEN("we test delete and clear") {
                 REQUIRE(cache.del("key1"));
@@ -128,16 +129,16 @@ SCENARIO("Testing sciqlop_cache", "[cache]")
             REQUIRE_FALSE(cache.add("key1", original_str2));
             REQUIRE(cache.add("key2", original_str2));
             auto value1 = cache.get("key1");
-            REQUIRE(value1.value() == original_str1);
+            REQUIRE(value1.value() == original_value1);
             auto value2 = cache.get("key2");
-            REQUIRE(value2.value() == original_str2);
+            REQUIRE(value2.value() == original_value2);
         }
 
         WHEN("we test pop") {
             REQUIRE(cache.set("key_pop", original_str1));
             auto popped_value = cache.pop("key_pop");
             REQUIRE(popped_value.has_value());
-            REQUIRE(popped_value.value() == original_str1);
+            REQUIRE(popped_value.value() == original_value1);
             REQUIRE_FALSE(cache.get("key_pop").has_value());
         }
 
