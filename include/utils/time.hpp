@@ -10,18 +10,22 @@
 #include <chrono>
 #include <ctime>
 
-std::time_t time_to_epoch(std::chrono::system_clock::time_point time_) {
-    return std::chrono::system_clock::to_time_t(time_);
+
+template <typename T>
+concept Duration = requires(T t) {
+    { t.count() } -> std::convertible_to<long long>;
+    { std::chrono::duration_cast<std::chrono::seconds>(t) } -> std::convertible_to<std::chrono::seconds>;
+    { std::chrono::floor<T>(t)} -> std::convertible_to<T>;
+    std::is_same_v<T, std::chrono::duration<typename T::rep, typename T::period>>;
+};
+
+
+double time_point_to_epoch(auto time_) {
+    return std::chrono::duration_cast<std::chrono::nanoseconds>(time_.time_since_epoch()).count() / 1e9;
 }
 
-std::chrono::system_clock::time_point epoch_to_time(std::time_t epoch_) {
-    return std::chrono::system_clock::from_time_t(epoch_);
-}
-
-double epoch_to_double(std::time_t epoch_) {
-    return static_cast<double>(epoch_);
-}
-
-std::time_t double_to_epoch(double double_) {
-    return static_cast<std::time_t>(double_);
+auto epoch_to_time_point(double epoch_) {
+    return std::chrono::time_point<std::chrono::system_clock, std::chrono::nanoseconds>(
+        std::chrono::nanoseconds(static_cast<long long>(epoch_ * 1e9))
+    );
 }

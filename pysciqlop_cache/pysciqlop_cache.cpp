@@ -10,6 +10,7 @@
 #include <fmt/ranges.h>
 
 #include "include/sciqlop_cache/sciqlop_cache.hpp"
+using namespace std::chrono_literals;
 
 namespace py = pybind11;
 
@@ -22,13 +23,31 @@ PYBIND11_MODULE(_pysciqlop_cache, m)
     )pbdoc";
 
     py::class_<Cache>(m, "Cache")
-        .def(py::init<const std::string &, size_t>(), py::arg("db_path") = "sciclop-cache.db", py::arg("max_size") = 1000)
-        .def("set", &Cache::set, py::arg("key"), py::arg("value"), py::arg("expire") = 3600)
+        .def(py::init<const std::string&, size_t>(), py::arg("db_path") = "sciclop-cache.db",
+            py::arg("max_size") = 1000)
+        .def(
+            "set",
+            [](Cache& c, const std::string& key, const std::string& value,
+                std::chrono::system_clock::duration expire)
+            { return c.set(key, value, expire); },
+            py::arg("key"), py::arg("value"),
+            py::arg("expire") = 3600s)
         .def("get", &Cache::get, py::arg("key"))
-        .def("add", &Cache::add, py::arg("key"), py::arg("value"), py::arg("expire") = 3600)
+        .def("add",
+             [](Cache& c, const std::string& key, const std::string& value,
+             std::chrono::system_clock::duration expire)
+            {
+                return c.add(key, value, expire);
+            }
+             , py::arg("key"), py::arg("value"), py::arg("expire") = 3600s)
         .def("del", &Cache::del, py::arg("key"))
         .def("pop", &Cache::pop, py::arg("key"))
-        .def("touch", &Cache::touch, py::arg("key"), py::arg("expire") = 3600)
+        .def("touch",
+             [&](Cache& c, const std::string& key, std::chrono::system_clock::duration expire)
+             {
+                 return c.touch(key, expire);
+             }
+             , py::arg("key"), py::arg("expire") = 3600s)
         .def("expire", &Cache::expire)
         .def("evict", &Cache::evict)
         .def("clear", &Cache::clear)
