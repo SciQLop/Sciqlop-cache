@@ -172,7 +172,7 @@ class Cache {
     }
 
     // Touch a key to update its expiration time
-    bool touch(const std::string& key, int expire = 3600)
+    bool touch(const std::string& key, int expire)
     {
         return execute_stmt_void(
             "UPDATE cache SET expire = ? WHERE key = ?;",
@@ -187,9 +187,12 @@ class Cache {
     void expire()
     {
         std::lock_guard<std::mutex> lock(global_mutex);
+        using namespace std::chrono_literals;
+        const auto now = std::chrono::system_clock::now();
+        double now_ = epoch_to_double(time_to_epoch(now));
 
-        const char *sql = "DELETE FROM cache WHERE expire < datetime('now');";
-        sqlite3_exec(db.get(), sql, nullptr, nullptr, nullptr);
+        const std::string sql = "DELETE FROM cache WHERE expire <= " + std::to_string(now_) + ";";
+        sqlite3_exec(db.get(), sql.c_str(), nullptr, nullptr, nullptr);
     }
 
     // Delete items based on policy

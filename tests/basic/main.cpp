@@ -112,7 +112,7 @@ SCENARIO("Testing sciqlop_cache", "[cache]")
             cache.set("key1", original_str1, 0);
             cache.set("key2", original_str1);
             cache.evict();
-            REQUIRE_FALSE(cache.get("key1").has_value());
+            REQUIRE_FALSE(cache.get("key1").has_value()); // evict isn't made
             REQUIRE(cache.get("key2").has_value());
         }
 
@@ -120,7 +120,7 @@ SCENARIO("Testing sciqlop_cache", "[cache]")
             cache.set("key1", original_str1);
             cache.touch("key1", 0);
             cache.evict();
-            REQUIRE_FALSE(cache.get("key1").has_value());
+            REQUIRE_FALSE(cache.get("key1").has_value()); // evict isn't made
         }
 
         WHEN("we test add") {
@@ -145,9 +145,10 @@ SCENARIO("Testing sciqlop_cache", "[cache]")
         WHEN("we test expire") {
             cache.set("key1", original_str1, 0);
             cache.set("key2", original_str1);
+            REQUIRE(cache.get("key2").has_value());
             cache.expire();
             REQUIRE_FALSE(cache.get("key1").has_value());
-            REQUIRE(cache.get("key2").has_value());
+            REQUIRE(cache.get("key2").has_value()); // key2 should not expire
         }
 
         /*WHEN("we test stats") {
