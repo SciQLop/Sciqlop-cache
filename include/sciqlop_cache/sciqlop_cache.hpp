@@ -13,6 +13,7 @@
 #include <iomanip>
 #include <iostream>
 #include <memory>
+#include <span>
 #include <mutex>
 #include <optional>
 #include <sqlite3.h>
@@ -20,6 +21,13 @@
 
 #include "database.hpp"
 #include "utils/time.hpp"
+
+
+template <typename T>
+concept Bytes = requires(T t) {
+    { std::size(t) } -> std::convertible_to<std::size_t>;
+    { std::data(t) } -> std::convertible_to<const char*>;
+};
 
 /*
 don't use lock guard everywhere, use it only when you need to ensure thread safety
@@ -129,12 +137,12 @@ public:
             [](sqlite3_stmt*) { return true; }, false);
     }
 
-    inline bool set(const std::string& key, const std::string& value)
+    inline bool set(const std::string& key, const Bytes auto & value)
     {
         return set(key, value, std::chrono::seconds { 3600 });
     }
 
-    bool set(const std::string& key, const std::string& value, Duration auto expire)
+    bool set(const std::string& key, const Bytes auto & value, Duration auto expire)
     {
         const auto now = std::chrono::system_clock::now();
         return execute_stmt_void(
@@ -143,38 +151,38 @@ public:
             {
                 sqlite3_bind_text(stmt, 1, key.c_str(), -1, SQLITE_STATIC);
                 sqlite3_bind_blob(
-                    stmt, 2, value.data(), static_cast<int>(value.size()), SQLITE_STATIC);
+                    stmt, 2, std::data(value), static_cast<int>(std::size(value)), SQLITE_STATIC);
                 sqlite3_bind_double(stmt, 3, time_point_to_epoch(now + expire));
                 sqlite3_bind_double(stmt, 4, time_point_to_epoch(now));
             });
     }
 
-    std::optional<std::vector<uint8_t>> get(const std::string& key)
+    std::optional<std::vector<char>> get(const std::string& key)
     {
-        return execute_stmt<std::optional<std::vector<uint8_t>>>(
+        return execute_stmt<std::optional<std::vector<char>>>(
             "SELECT value FROM cache WHERE key = ?;",
             [&](sqlite3_stmt* stmt) { sqlite3_bind_text(stmt, 1, key.c_str(), -1, SQLITE_STATIC); },
-            [](sqlite3_stmt* stmt) -> std::optional<std::vector<uint8_t>>
+            [](sqlite3_stmt* stmt) -> std::optional<std::vector<char>>
             {
                 const void* blob = sqlite3_column_blob(stmt, 0);
                 int size = sqlite3_column_bytes(stmt, 0);
                 if (blob && size > 0)
                 {
-                    const uint8_t* start = static_cast<const uint8_t*>(blob);
-                    return std::vector<uint8_t>(start, start + size);
+                    const char* start = static_cast<const char*>(blob);
+                    return std::vector<char>(start, start + size);
                 }
                 return std::nullopt;
             },
             std::nullopt);
     }
 
-    inline bool add(const std::string& key, const std::string& value)
+    inline bool add(const std::string& key, const Bytes auto & value)
     {
         return add(key, value, std::chrono::seconds { 3600 });
     }
 
     // Add a value if the key doesn't already exist
-    bool add(const std::string& key, const std::string& value, Duration auto expire)
+    bool add(const std::string& key, const Bytes auto & value, Duration auto expire)
     {
         const auto now = std::chrono::system_clock::now();
         bool success = execute_stmt_void(
@@ -183,7 +191,7 @@ public:
             {
                 sqlite3_bind_text(stmt, 1, key.c_str(), -1, SQLITE_STATIC);
                 sqlite3_bind_blob(
-                    stmt, 2, value.data(), static_cast<int>(value.size()), SQLITE_STATIC);
+                    stmt, 2, std::data(value), static_cast<int>(std::size(value)), SQLITE_STATIC);
                 sqlite3_bind_double(stmt, 3, time_point_to_epoch(now + expire));
                 sqlite3_bind_double(stmt, 4, time_point_to_epoch(now));
             });
@@ -211,9 +219,9 @@ public:
         }
     }
 
-    std::optional<std::vector<uint8_t>> pop(const std::string& key)
+    std::optional<std::vector<char>> pop(const std::string& key)
     {
-        std::optional<std::vector<uint8_t>> result = get(key);
+        std::optional<std::vector<char>> result = get(key);
 
         if (!del(key))
             std::cerr << "Error deleting key: " << key << std::endl;
