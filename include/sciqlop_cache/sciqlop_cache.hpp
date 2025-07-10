@@ -28,7 +28,6 @@ std::atomic<int> for frequency tracking
 Optionally consider lock-free structures (like concurrent_hash_map from TBB) if perf is critical.
 */
 
-// Base Cache class
 class Cache {
     private:
     size_t max_size;
@@ -36,12 +35,9 @@ class Cache {
     sqlite3_stmt* stmt;
     std::mutex global_mutex;
     bool auto_clean = false;
-
     Database db;
 
 public:
-
-
     Cache(const std::string &db_path = "sciqlop-cache.db", size_t max_size_ = 1000)
         : max_size(max_size_), current_size(0), stmt(nullptr)
     {
@@ -99,6 +95,18 @@ public:
         return success;
     }
 
+    bool check_if_exists(const std::string& key)
+    {
+        return execute_stmt<bool>(
+            "SELECT 1 FROM cache WHERE key = ? LIMIT 1;",
+            [&](sqlite3_stmt* stmt) {
+                sqlite3_bind_text(stmt, 1, key.c_str(), -1, SQLITE_STATIC);
+            },
+            [](sqlite3_stmt*) { return true; },
+            false
+        );
+    }
+
     inline bool set(const std::string& key, const std::string& value)
     {
         return set(key, value, std::chrono::seconds{3600});
@@ -107,8 +115,9 @@ public:
     bool set(const std::string& key, const std::string& value, Duration auto expire)
     {
         const auto now = std::chrono::system_clock::now();
+        bool exists = check_if_exists(key);
 
-        return execute_stmt_void(
+        bool success = execute_stmt_void(
             "REPLACE INTO cache (key, value, expire, last_update) VALUES (?, ?, ?, ?);",
             [&](sqlite3_stmt* stmt) {
                 sqlite3_bind_text(stmt, 1, key.c_str(), -1, SQLITE_STATIC);
@@ -117,6 +126,15 @@ public:
                 sqlite3_bind_double(stmt, 4, time_point_to_epoch(now));
             }
         );
+
+        if (success && !exists) {
+            current_size++;
+            if (current_size > max_size) {
+                expire();
+            }
+        } else {
+            std::cerr << "Error setting value for key: " << key << std::endl;
+        }
     }
 
     std::optional<std::vector<uint8_t>> get(const std::string& key)
@@ -139,7 +157,6 @@ public:
         );
     }
 
-
     inline bool add(const std::string& key, const std::string& value)
     {
         return add(key, value, std::chrono::seconds{3600});
@@ -149,7 +166,7 @@ public:
     bool add(const std::string& key, const std::string& value, Duration auto expire)
     {
         const auto now = std::chrono::system_clock::now();
-        return execute_stmt_void(
+        bool success = execute_stmt_void(
             "INSERT INTO cache (key, value, expire, last_update) VALUES (?, ?, ?, ?);",
             [&](sqlite3_stmt* stmt) {
                 sqlite3_bind_text(stmt, 1, key.c_str(), -1, SQLITE_STATIC);
@@ -158,16 +175,32 @@ public:
                 sqlite3_bind_double(stmt, 4, time_point_to_epoch(now));
             }
         );
+        if (success)
+            current_size++;
+        return success;
     }
 
     bool del(const std::string& key)
     {
-        return execute_stmt_void(
+        bool exists = check_if_exists(key);
+        if (!exists) {
+            std::cerr << "Key not found: " << key << std::endl;
+            return false;
+        }
+
+        bool success execute_stmt_void(
             "DELETE FROM cache WHERE key = ?;",
             [&](sqlite3_stmt* stmt) {
                 sqlite3_bind_text(stmt, 1, key.c_str(), -1, SQLITE_STATIC);
             }
         );
+        if (success) {
+            current_size--;
+            return true;
+        } else {
+            std::cerr << "Error deleting key: " << key << std::endl;
+            return false;
+        }
     }
 
     std::optional<std::vector<uint8_t>> pop(const std::string& key)
@@ -214,6 +247,7 @@ public:
     {
         std::lock_guard<std::mutex> lock(global_mutex);
         sqlite3_exec(db.get(), "DELETE FROM cache;", nullptr, nullptr, nullptr);
+        current_size = 0;
     }
 
     // Check the cache statistics
