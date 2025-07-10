@@ -1,1 +1,3 @@
-from ._pysciqlop_cache import test, sum
+from ._pysciqlop_cache import Cache
+
+__all__ = ["Cache"]
