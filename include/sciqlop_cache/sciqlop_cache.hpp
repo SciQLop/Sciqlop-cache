@@ -37,8 +37,10 @@ class Cache {
     std::mutex global_mutex;
     bool auto_clean = false;
 
-    public:
     Database db;
+
+public:
+
 
     Cache(const std::string &db_path = "sciqlop-cache.db", size_t max_size_ = 1000)
         : max_size(max_size_), current_size(0), stmt(nullptr)
@@ -97,19 +99,22 @@ class Cache {
         return success;
     }
 
-    bool set(const std::string& key, const std::string& value, int expire = 3600)
+    inline bool set(const std::string& key, const std::string& value)
     {
-        using namespace std::chrono_literals;
+        return set(key, value, std::chrono::seconds{3600});
+    }
+
+    bool set(const std::string& key, const std::string& value, Duration auto expire)
+    {
         const auto now = std::chrono::system_clock::now();
-        const auto expire_time = now + std::chrono::seconds(expire);
 
         return execute_stmt_void(
             "REPLACE INTO cache (key, value, expire, last_update) VALUES (?, ?, ?, ?);",
             [&](sqlite3_stmt* stmt) {
                 sqlite3_bind_text(stmt, 1, key.c_str(), -1, SQLITE_STATIC);
                 sqlite3_bind_blob(stmt, 2, value.data(), static_cast<int>(value.size()), SQLITE_STATIC);
-                sqlite3_bind_double(stmt, 3, epoch_to_double(time_to_epoch(now)));
-                sqlite3_bind_double(stmt, 4, epoch_to_double(time_to_epoch(expire_time)));
+                sqlite3_bind_double(stmt, 3, time_point_to_epoch(now + expire));
+                sqlite3_bind_double(stmt, 4, time_point_to_epoch(now));
             }
         );
     }
@@ -134,20 +139,23 @@ class Cache {
         );
     }
 
-    // Add a value if the key doesn't already exist
-    bool add(const std::string& key, const std::string& value, int expire = 3600)
-    {
-        using namespace std::chrono_literals;
-        const auto now = std::chrono::system_clock::now();
-        const auto expire_time = now + std::chrono::seconds(expire);
 
+    inline bool add(const std::string& key, const std::string& value)
+    {
+        return add(key, value, std::chrono::seconds{3600});
+    }
+
+    // Add a value if the key doesn't already exist
+    bool add(const std::string& key, const std::string& value, Duration auto expire)
+    {
+        const auto now = std::chrono::system_clock::now();
         return execute_stmt_void(
             "INSERT INTO cache (key, value, expire, last_update) VALUES (?, ?, ?, ?);",
             [&](sqlite3_stmt* stmt) {
                 sqlite3_bind_text(stmt, 1, key.c_str(), -1, SQLITE_STATIC);
                 sqlite3_bind_blob(stmt, 2, value.data(), static_cast<int>(value.size()), SQLITE_STATIC);
-                sqlite3_bind_double(stmt, 3, epoch_to_double(time_to_epoch(now)));
-                sqlite3_bind_double(stmt, 4, epoch_to_double(time_to_epoch(expire_time)));
+                sqlite3_bind_double(stmt, 3, time_point_to_epoch(now + expire));
+                sqlite3_bind_double(stmt, 4, time_point_to_epoch(now));
             }
         );
     }
@@ -172,12 +180,12 @@ class Cache {
     }
 
     // Touch a key to update its expiration time
-    bool touch(const std::string& key, int expire)
+    bool touch(const std::string& key, Duration auto expire)
     {
         return execute_stmt_void(
             "UPDATE cache SET expire = ? WHERE key = ?;",
             [&](sqlite3_stmt* stmt) {
-                sqlite3_bind_int(stmt, 1, expire);
+                sqlite3_bind_int(stmt, 1, time_point_to_epoch(std::chrono::system_clock::now() + expire));
                 sqlite3_bind_text(stmt, 2, key.c_str(), -1, SQLITE_STATIC);
             }
         );
@@ -189,7 +197,7 @@ class Cache {
         std::lock_guard<std::mutex> lock(global_mutex);
         using namespace std::chrono_literals;
         const auto now = std::chrono::system_clock::now();
-        double now_ = epoch_to_double(time_to_epoch(now));
+        double now_ = time_point_to_epoch(now);
 
         const std::string sql = "DELETE FROM cache WHERE expire <= " + std::to_string(now_) + ";";
         sqlite3_exec(db.get(), sql.c_str(), nullptr, nullptr, nullptr);

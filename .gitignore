@@ -1,0 +1,15 @@
+build/
+subprojects/*
+!subprojects/*.wrap
+*.kdev4
+CMakeLists.txt.user
+.cache/*
+.cmake/*
+*.user
+*.user.*
+*.ipynb_check*
+*__pycache__*
+version.txt
+docs/_build/*
+docs/generated/*
+dist/*
