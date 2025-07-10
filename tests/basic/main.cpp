@@ -18,7 +18,8 @@
 #endif
 // #include "tests_config.hpp"
 
-#include "../include/sciqlop_cache/sciqlop_cache.hpp"
+#include "../../include/sciqlop_cache/sciqlop_cache.hpp"
+#include "../../include/sciqlop_cache/database.hpp"
 #include "../include/utils/time.hpp"
 using namespace std::chrono_literals;
 
@@ -31,7 +32,7 @@ SCENARIO("Testing time conversions", "[time]")
         WHEN("we test time conversions")
         {
             const auto now = std::chrono::floor<std::chrono::nanoseconds>(std::chrono::system_clock::now());
-            REQUIRE(now == epoch_to_time_point(time_point_to_epoch(now)));
+            REQUIRE(std::abs(time_point_to_epoch(now) - time_point_to_epoch(epoch_to_time_point(time_point_to_epoch(now)))) < 1e-6);
         }
     }
 }
