@@ -74,6 +74,13 @@ SCENARIO("Testing sciqlop_cache", "[cache]")
                             loaded_value->data(), original_value1.data(), original_value1.size())
                     == 0);
             }
+            THEN("We can count the number of items in the cache")
+            {
+                Cache reopened_cache(db_path, 1000);
+                REQUIRE(reopened_cache.check() == true);
+                auto count = reopened_cache.count();
+                REQUIRE(count == 1);
+            }
         }
     }
 
@@ -97,6 +104,12 @@ SCENARIO("Testing sciqlop_cache", "[cache]")
             REQUIRE(value1.value() == original_value1);
             REQUIRE(value2.has_value());
             REQUIRE(value2.value() == original_value2);
+
+            THEN("We can count the number of items in the cache")
+            {
+                auto count = cache.count();
+                REQUIRE(count == 2);
+            }
 
             THEN("we test delete and clear")
             {
