@@ -6,18 +6,15 @@ jobs:
   build:
     name: build an tests with coverage
     runs-on: ubuntu-latest
-    container:
-      image: fedora:latest
-      options: --user root
     steps:
-      - name: Install dependencies
-        run: |
-          sudo dnf update -y
-          sudo dnf install -y python3-pip python3-devel lcov g++ meson ninja-build git catch-devel.x86_64
-          pip install --upgrade meson ninja numpy meson-python>=0.14.0 build wheel ddt requests
       - uses: actions/checkout@v4
         with:
           submodules: true
+      - name: Install dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y python3-pip python3-dev lcov g++ meson ninja-build git catch2
+          pip install --upgrade meson ninja numpy meson-python>=0.14.0 build wheel ddt requests
       - name: Configure with meson
         run: meson -Db_coverage=true -Dwith_tests=true . build
       - name: Build (meson)
