@@ -23,11 +23,7 @@
 #include "utils/time.hpp"
 
 
-template <typename T>
-concept Bytes = requires(T t) {
-    { std::size(t) } -> std::convertible_to<std::size_t>;
-    { std::data(t) } -> std::convertible_to<const char*>;
-};
+
 
 /*
 don't use lock guard everywhere, use it only when you need to ensure thread safety
@@ -131,10 +127,8 @@ public:
 
     bool exists(const std::string& key)
     {
-        return execute_stmt<bool>(
-            "SELECT 1 FROM cache WHERE key = ? LIMIT 1;",
-            [&](sqlite3_stmt* stmt) { sqlite3_bind_text(stmt, 1, key.c_str(), -1, SQLITE_STATIC); },
-            [](sqlite3_stmt*) { return true; }, false);
+        auto [exists] = db.exec<bool>("SELECT 1 FROM cache WHERE key = ? LIMIT 1;", key);
+        return exists;
     }
 
     inline bool set(const std::string& key, const Bytes auto & value)
@@ -145,35 +139,22 @@ public:
     bool set(const std::string& key, const Bytes auto & value, Duration auto expire)
     {
         const auto now = std::chrono::system_clock::now();
-        return execute_stmt_void(
-            "REPLACE INTO cache (key, value, expire, last_update) VALUES (?, ?, ?, ?);",
-            [&](sqlite3_stmt* stmt)
-            {
-                sqlite3_bind_text(stmt, 1, key.c_str(), -1, SQLITE_STATIC);
-                sqlite3_bind_blob(
-                    stmt, 2, std::data(value), static_cast<int>(std::size(value)), SQLITE_STATIC);
-                sqlite3_bind_double(stmt, 3, time_point_to_epoch(now + expire));
-                sqlite3_bind_double(stmt, 4, time_point_to_epoch(now));
-            });
+        db.exec("REPLACE INTO cache (key, value, expire, last_update) VALUES (?, ?, ?, ?);", key, value, now + expire, now);
+        return true;
     }
 
     std::optional<std::vector<char>> get(const std::string& key)
     {
-        return execute_stmt<std::optional<std::vector<char>>>(
-            "SELECT value FROM cache WHERE key = ?;",
-            [&](sqlite3_stmt* stmt) { sqlite3_bind_text(stmt, 1, key.c_str(), -1, SQLITE_STATIC); },
-            [](sqlite3_stmt* stmt) -> std::optional<std::vector<char>>
-            {
-                const void* blob = sqlite3_column_blob(stmt, 0);
-                int size = sqlite3_column_bytes(stmt, 0);
-                if (blob && size > 0)
-                {
-                    const char* start = static_cast<const char*>(blob);
-                    return std::vector<char>(start, start + size);
-                }
-                return std::nullopt;
-            },
-            std::nullopt);
+
+        auto [values] = db.exec<std::vector<char>>("SELECT value FROM cache WHERE key = ?;", key);
+        if (values.empty())
+        {
+            return std::nullopt;
+        }
+        else
+        {
+            return values;
+        }
     }
 
     inline bool add(const std::string& key, const Bytes auto & value)
@@ -185,17 +166,8 @@ public:
     bool add(const std::string& key, const Bytes auto & value, Duration auto expire)
     {
         const auto now = std::chrono::system_clock::now();
-        bool success = execute_stmt_void(
-            "INSERT INTO cache (key, value, expire, last_update) VALUES (?, ?, ?, ?);",
-            [&](sqlite3_stmt* stmt)
-            {
-                sqlite3_bind_text(stmt, 1, key.c_str(), -1, SQLITE_STATIC);
-                sqlite3_bind_blob(
-                    stmt, 2, std::data(value), static_cast<int>(std::size(value)), SQLITE_STATIC);
-                sqlite3_bind_double(stmt, 3, time_point_to_epoch(now + expire));
-                sqlite3_bind_double(stmt, 4, time_point_to_epoch(now));
-            });
-        return success;
+        db.exec("INSERT INTO cache (key, value, expire, last_update) VALUES (?, ?, ?, ?);", key, value, now+expire, now);
+        return true;
     }
 
     bool del(const std::string& key)
@@ -206,8 +178,8 @@ public:
             return false;
         }
 
-        bool success = execute_stmt_void("DELETE FROM cache WHERE key = ?;", [&](sqlite3_stmt* stmt)
-            { sqlite3_bind_text(stmt, 1, key.c_str(), -1, SQLITE_STATIC); });
+        db.exec("DELETE FROM cache WHERE key = ?;", key);
+        auto success = true;
         if (success)
         {
             return true;
@@ -231,13 +203,9 @@ public:
     // Touch a key to update its expiration time
     bool touch(const std::string& key, Duration auto expire)
     {
-        return execute_stmt_void("UPDATE cache SET expire = ? WHERE key = ?;",
-            [&](sqlite3_stmt* stmt)
-            {
-                sqlite3_bind_int(
-                    stmt, 1, time_point_to_epoch(std::chrono::system_clock::now() + expire));
-                sqlite3_bind_text(stmt, 2, key.c_str(), -1, SQLITE_STATIC);
-            });
+        db.exec("UPDATE cache SET last_update = ?, expire = ? WHERE key = ?;",
+            std::chrono::system_clock::now(), std::chrono::system_clock::now() + expire, key);
+        return true;
     }
 
     // Delete expired items
