@@ -70,64 +70,18 @@ public:
 
     [[nodiscard]] std::size_t count()
     {
-        return execute_stmt<std::size_t>(
-            "SELECT COUNT(*) FROM cache;", [&](sqlite3_stmt*) {},
-            [&](sqlite3_stmt*) { return sqlite3_column_int64(stmt, 0); }, false);
+        return db.exec<std::size_t>("SELECT COUNT(*) FROM cache;");
     }
 
 [[nodiscard]] std::vector<std::string> keys()
     {
-        std::vector<std::string> keys;
-        execute_stmt_void(
-            "SELECT key FROM cache;",
-            [&](sqlite3_stmt* stmt)
-            {
-                while (sqlite3_step(stmt) == SQLITE_ROW)
-                {
-                    const char* key = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
-                    if (key)
-                        keys.emplace_back(key);
-                }
-            });
-        return keys;
+        return db.exec<std::vector<std::string>>("SELECT key FROM cache;");
     }
 
-
-    template <typename T>
-    T execute_stmt(const std::string& sql, std::function<void(sqlite3_stmt*)> binder,
-        std::function<T(sqlite3_stmt*)> extractor, T default_value = T())
-    {
-        std::lock_guard<std::mutex> lock(global_mutex); // maybe sql ensure the thread safe aspect
-
-        if (sqlite3_prepare_v2(db.get(), sql.c_str(), -1, &stmt, nullptr) != SQLITE_OK)
-            return default_value;
-
-        binder(stmt);
-        T result = default_value;
-
-        if (sqlite3_step(stmt) == SQLITE_ROW)
-            result = extractor(stmt);
-
-        sqlite3_finalize(stmt);
-        return result;
-    }
-
-    bool execute_stmt_void(const std::string& sql, std::function<void(sqlite3_stmt*)> binder)
-    {
-        std::lock_guard<std::mutex> lock(global_mutex);
-
-        if (sqlite3_prepare_v2(db.get(), sql.c_str(), -1, &stmt, nullptr) != SQLITE_OK)
-            return false;
-
-        binder(stmt);
-        bool success = (sqlite3_step(stmt) == SQLITE_DONE);
-        sqlite3_finalize(stmt);
-        return success;
-    }
 
     bool exists(const std::string& key)
     {
-        auto [exists] = db.exec<bool>("SELECT 1 FROM cache WHERE key = ? LIMIT 1;", key);
+        auto exists = db.exec<bool>("SELECT 1 FROM cache WHERE key = ? LIMIT 1;", key);
         return exists;
     }
 
@@ -146,7 +100,7 @@ public:
     std::optional<std::vector<char>> get(const std::string& key)
     {
 
-        auto [values] = db.exec<std::vector<char>>("SELECT value FROM cache WHERE key = ?;", key);
+        auto values = db.exec<std::vector<char>>("SELECT value FROM cache WHERE key = ?;", key);
         if (values.empty())
         {
             return std::nullopt;
