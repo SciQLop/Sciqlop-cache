@@ -8,18 +8,22 @@
 
 #pragma once
 
-#include <iostream>
-#include <string>
-#include <memory>
-#include <sqlite3.h>
 #include <bitset>
-#include <optional>
-#include <mutex>
 #include <functional>
 #include <iomanip>
+#include <iostream>
+#include <memory>
+#include <span>
+#include <mutex>
+#include <optional>
+#include <sqlite3.h>
+#include <string>
 
-#include "utils/time.hpp"
 #include "database.hpp"
+#include "utils/time.hpp"
+
+
+
 
 /*
 don't use lock guard everywhere, use it only when you need to ensure thread safety
@@ -28,24 +32,25 @@ std::atomic<int> for frequency tracking
 Optionally consider lock-free structures (like concurrent_hash_map from TBB) if perf is critical.
 */
 
-class Cache {
-    private:
+class Cache
+{
+private:
     size_t max_size;
-    size_t current_size;
     sqlite3_stmt* stmt;
     std::mutex global_mutex;
     bool auto_clean = false;
     Database db;
 
 public:
-    Cache(const std::string &db_path = "sciqlop-cache.db", size_t max_size_ = 1000)
-        : max_size(max_size_), current_size(0), stmt(nullptr)
+    Cache(const std::string& db_path = "sciqlop-cache.db", size_t max_size_ = 1000)
+            : max_size(max_size_), stmt(nullptr)
     {
         if (db.open(db_path) != SQLITE_OK || !init())
             throw std::runtime_error("Failed to initialize database schema.");
     }
 
-    bool init() {
+    bool init()
+    {
         const std::string sql = R"(
             CREATE TABLE IF NOT EXISTS cache (
                 key TEXT PRIMARY KEY,
@@ -56,156 +61,93 @@ public:
         )";
         bool result = db.exec(sql);
 
-        if (!result) {
+        if (!result)
+        {
             std::cerr << "SQL exec failed in init(). SQL: " << sql << std::endl;
         }
         return result;
     }
 
-    template<typename T>
-    T execute_stmt(const std::string &sql, std::function<void(sqlite3_stmt*)> binder,
-        std::function<T(sqlite3_stmt*)> extractor, T default_value = T())
+    [[nodiscard]] std::size_t count()
     {
-        std::lock_guard<std::mutex> lock(global_mutex); // maybe sql ensure the thread safe aspect
-
-        if (sqlite3_prepare_v2(db.get(), sql.c_str(), -1, &stmt, nullptr) != SQLITE_OK)
-            return default_value;
-
-        binder(stmt);
-        T result = default_value;
-
-        if (sqlite3_step(stmt) == SQLITE_ROW)
-            result = extractor(stmt);
-
-        sqlite3_finalize(stmt);
-        return result;
+        return db.exec<std::size_t>("SELECT COUNT(*) FROM cache;");
     }
 
-    bool execute_stmt_void(const std::string& sql,
-        std::function<void(sqlite3_stmt*)> binder)
+[[nodiscard]] std::vector<std::string> keys()
     {
-        std::lock_guard<std::mutex> lock(global_mutex);
-
-        if (sqlite3_prepare_v2(db.get(), sql.c_str(), -1, &stmt, nullptr) != SQLITE_OK)
-            return false;
-
-        binder(stmt);
-        bool success = (sqlite3_step(stmt) == SQLITE_DONE);
-        sqlite3_finalize(stmt);
-        return success;
+        return db.exec<std::vector<std::string>>("SELECT key FROM cache;");
     }
 
-    bool check_if_exists(const std::string& key)
+
+    bool exists(const std::string& key)
     {
-        return execute_stmt<bool>(
-            "SELECT 1 FROM cache WHERE key = ? LIMIT 1;",
-            [&](sqlite3_stmt* stmt) {
-                sqlite3_bind_text(stmt, 1, key.c_str(), -1, SQLITE_STATIC);
-            },
-            [](sqlite3_stmt*) { return true; },
-            false
-        );
+        auto exists = db.exec<bool>("SELECT 1 FROM cache WHERE key = ? LIMIT 1;", key);
+        return exists;
     }
 
-    inline bool set(const std::string& key, const std::string& value)
+    inline bool set(const std::string& key, const Bytes auto & value)
     {
-        return set(key, value, std::chrono::seconds{3600});
+        return set(key, value, std::chrono::seconds { 3600 });
     }
 
-    bool set(const std::string& key, const std::string& value, Duration auto expire)
+    bool set(const std::string& key, const Bytes auto & value, Duration auto expire)
     {
         const auto now = std::chrono::system_clock::now();
-        bool exists = check_if_exists(key);
+        db.exec("REPLACE INTO cache (key, value, expire, last_update) VALUES (?, ?, ?, ?);", key, value, now + expire, now);
+        return true;
+    }
 
-        bool success = execute_stmt_void(
-            "REPLACE INTO cache (key, value, expire, last_update) VALUES (?, ?, ?, ?);",
-            [&](sqlite3_stmt* stmt) {
-                sqlite3_bind_text(stmt, 1, key.c_str(), -1, SQLITE_STATIC);
-                sqlite3_bind_blob(stmt, 2, value.data(), static_cast<int>(value.size()), SQLITE_STATIC);
-                sqlite3_bind_double(stmt, 3, time_point_to_epoch(now + expire));
-                sqlite3_bind_double(stmt, 4, time_point_to_epoch(now));
-            }
-        );
+    std::optional<std::vector<char>> get(const std::string& key)
+    {
 
-        if (success && !exists) {
-            current_size++;
-            if (current_size > max_size) {
-                expire();
-            }
-        } else {
-            std::cerr << "Error setting value for key: " << key << std::endl;
+        auto values = db.exec<std::vector<char>>("SELECT value FROM cache WHERE key = ?;", key);
+        if (values.empty())
+        {
+            return std::nullopt;
+        }
+        else
+        {
+            return values;
         }
     }
 
-    std::optional<std::vector<uint8_t>> get(const std::string& key)
+    inline bool add(const std::string& key, const Bytes auto & value)
     {
-        return execute_stmt<std::optional<std::vector<uint8_t>>>(
-            "SELECT value FROM cache WHERE key = ?;",
-            [&](sqlite3_stmt* stmt) {
-                sqlite3_bind_text(stmt, 1, key.c_str(), -1, SQLITE_STATIC);
-            },
-            [](sqlite3_stmt* stmt) -> std::optional<std::vector<uint8_t>> {
-                const void *blob = sqlite3_column_blob(stmt, 0);
-                int size = sqlite3_column_bytes(stmt, 0);
-                if (blob && size > 0) {
-                    const uint8_t* start = static_cast<const uint8_t*>(blob);
-                    return std::vector<uint8_t>(start, start + size);
-                }
-                return std::nullopt;
-            },
-            std::nullopt
-        );
-    }
-
-    inline bool add(const std::string& key, const std::string& value)
-    {
-        return add(key, value, std::chrono::seconds{3600});
+        return add(key, value, std::chrono::seconds { 3600 });
     }
 
     // Add a value if the key doesn't already exist
-    bool add(const std::string& key, const std::string& value, Duration auto expire)
+    bool add(const std::string& key, const Bytes auto & value, Duration auto expire)
     {
         const auto now = std::chrono::system_clock::now();
-        bool success = execute_stmt_void(
-            "INSERT INTO cache (key, value, expire, last_update) VALUES (?, ?, ?, ?);",
-            [&](sqlite3_stmt* stmt) {
-                sqlite3_bind_text(stmt, 1, key.c_str(), -1, SQLITE_STATIC);
-                sqlite3_bind_blob(stmt, 2, value.data(), static_cast<int>(value.size()), SQLITE_STATIC);
-                sqlite3_bind_double(stmt, 3, time_point_to_epoch(now + expire));
-                sqlite3_bind_double(stmt, 4, time_point_to_epoch(now));
-            }
-        );
-        if (success)
-            current_size++;
-        return success;
+        db.exec("INSERT INTO cache (key, value, expire, last_update) VALUES (?, ?, ?, ?);", key, value, now+expire, now);
+        return true;
     }
 
     bool del(const std::string& key)
     {
-        bool exists = check_if_exists(key);
-        if (!exists) {
+        if (!exists(key))
+        {
             std::cerr << "Key not found: " << key << std::endl;
             return false;
         }
 
-        bool success execute_stmt_void(
-            "DELETE FROM cache WHERE key = ?;",
-            [&](sqlite3_stmt* stmt) {
-                sqlite3_bind_text(stmt, 1, key.c_str(), -1, SQLITE_STATIC);
-            }
-        );
-        if (success) {
-            current_size--;
+        db.exec("DELETE FROM cache WHERE key = ?;", key);
+        auto success = true;
+        if (success)
+        {
             return true;
-        } else {
+        }
+        else
+        {
             std::cerr << "Error deleting key: " << key << std::endl;
             return false;
         }
     }
 
-    std::optional<std::vector<uint8_t>> pop(const std::string& key)
+    std::optional<std::vector<char>> pop(const std::string& key)
     {
-        std::optional<std::vector<uint8_t>> result = get(key);
+        std::optional<std::vector<char>> result = get(key);
 
         if (!del(key))
             std::cerr << "Error deleting key: " << key << std::endl;
@@ -215,13 +157,9 @@ public:
     // Touch a key to update its expiration time
     bool touch(const std::string& key, Duration auto expire)
     {
-        return execute_stmt_void(
-            "UPDATE cache SET expire = ? WHERE key = ?;",
-            [&](sqlite3_stmt* stmt) {
-                sqlite3_bind_int(stmt, 1, time_point_to_epoch(std::chrono::system_clock::now() + expire));
-                sqlite3_bind_text(stmt, 2, key.c_str(), -1, SQLITE_STATIC);
-            }
-        );
+        db.exec("UPDATE cache SET last_update = ?, expire = ? WHERE key = ?;",
+            std::chrono::system_clock::now(), std::chrono::system_clock::now() + expire, key);
+        return true;
     }
 
     // Delete expired items
@@ -237,17 +175,13 @@ public:
     }
 
     // Delete items based on policy
-    void evict()
-    {
-        ;
-    }
+    void evict() { ; }
 
     // Get the cache directory
     void clear()
     {
         std::lock_guard<std::mutex> lock(global_mutex);
         sqlite3_exec(db.get(), "DELETE FROM cache;", nullptr, nullptr, nullptr);
-        current_size = 0;
     }
 
     // Check the cache statistics
@@ -261,9 +195,10 @@ public:
     bool check()
     {
         std::lock_guard<std::mutex> lock(global_mutex);
-        const char *sql = "SELECT COUNT(*) FROM cache;";
-        sqlite3_stmt *stmt;
-        if (sqlite3_prepare_v2(db.get(), sql, -1, &stmt, nullptr) != SQLITE_OK) {
+        const char* sql = "SELECT COUNT(*) FROM cache;";
+        sqlite3_stmt* stmt;
+        if (sqlite3_prepare_v2(db.get(), sql, -1, &stmt, nullptr) != SQLITE_OK)
+        {
             std::cerr << "Error preparing statement: " << sqlite3_errmsg(db.get()) << std::endl;
             return false;
         }

@@ -19,8 +19,13 @@ concept Duration = requires(T t) {
     std::is_same_v<T, std::chrono::duration<typename T::rep, typename T::period>>;
 };
 
+template <typename T>
+concept TimePoint = requires(T t) {
+    { t.time_since_epoch() } -> std::convertible_to<std::chrono::nanoseconds>;
+};
 
-double time_point_to_epoch(auto time_) {
+
+double time_point_to_epoch(const auto time_) {
     return std::chrono::duration_cast<std::chrono::nanoseconds>(time_.time_since_epoch()).count() / 1e9;
 }
 

@@ -1,0 +1,7 @@
+[wrap-git]
+url=https://github.com/jeandet/cpp_utils
+revision=main
+depth=1
+
+[provide]
+cpp_utils=cpp_utils_dep

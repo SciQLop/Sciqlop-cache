@@ -56,7 +56,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Build wheels
-        uses: pypa/cibuildwheel@v2.23.3
+        uses: pypa/cibuildwheel@v3.0.1
       - uses: actions/upload-artifact@v4
         with:
           name: cibw-wheels-${{ matrix.os }}-${{ strategy.job-index }}
@@ -84,18 +84,18 @@ jobs:
       - name: install wheel (Unix)
         if: runner.os != 'Windows'
         run: |
-          pip install numpy pyyaml
-          pip install --no-index --find-links $GITHUB_WORKSPACE/dist pycdfpp
+          pip install numpy
+          pip install --no-index --find-links $GITHUB_WORKSPACE/dist pysciqlop-cache
       - name: install wheel (Windows)
         if: runner.os == 'Windows'
         run: |
-          pip install numpy pyyaml
-          pip install --no-index --find-links $env:GITHUB_WORKSPACE\dist pycdfpp
+          pip install numpy
+          pip install --no-index --find-links $env:GITHUB_WORKSPACE\dist pysciqlop-cache
       - uses: actions/checkout@v4
       - name: run tests
         run: |
           pip install ddt requests
-          python -v tests/full_corpus/test_full_corpus.py
+          python -m pytest --tb=short --disable-warnings -v tests
 
   test_wheels_macos_14:
     needs: [build_wheels]
@@ -120,14 +120,14 @@ jobs:
       - name: install wheel
         run: |
           pyenv local ${{ matrix.python-version }}
-          python3 -m pip install --break-system-packages numpy pyyaml
-          python3 -m pip install --break-system-packages --no-index --find-links $GITHUB_WORKSPACE/dist pycdfpp
+          python3 -m pip install --break-system-packages numpy
+          python3 -m pip install --break-system-packages --no-index --find-links $GITHUB_WORKSPACE/dist pysciqlop-cache
       - uses: actions/checkout@v4
       - name: run tests
         run: |
           pyenv local ${{ matrix.python-version }}
           python3 -m pip install --break-system-packages ddt requests
-          python3 tests/full_corpus/test_full_corpus.py
+          python3 -m pytest --tb=short --disable-warnings -v tests
 
 
   upload_pypi:
