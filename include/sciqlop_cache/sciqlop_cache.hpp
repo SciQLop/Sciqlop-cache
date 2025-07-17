@@ -8,6 +8,8 @@
 
 #pragma once
 
+#include "database.hpp"
+#include "utils/time.hpp"
 #include <bitset>
 #include <functional>
 #include <iomanip>
@@ -18,19 +20,6 @@
 #include <optional>
 #include <sqlite3.h>
 #include <string>
-
-#include "database.hpp"
-#include "utils/time.hpp"
-
-
-
-
-/*
-don't use lock guard everywhere, use it only when you need to ensure thread safety
-while (sqlite3_step(stmt) == SQLITE_ROW) {;}
-std::atomic<int> for frequency tracking
-Optionally consider lock-free structures (like concurrent_hash_map from TBB) if perf is critical.
-*/
 
 class Cache
 {
@@ -73,7 +62,7 @@ public:
         return db.exec<std::size_t>("SELECT COUNT(*) FROM cache;");
     }
 
-[[nodiscard]] std::vector<std::string> keys()
+    [[nodiscard]] std::vector<std::string> keys()
     {
         return db.exec<std::vector<std::string>>("SELECT key FROM cache;");
     }
