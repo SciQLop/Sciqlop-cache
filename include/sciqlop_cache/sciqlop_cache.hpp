@@ -8,7 +8,8 @@
 
 #pragma once
 
-#include "database.hpp"
+//#include "database.hpp"
+#include "cache_by_files.hpp"
 #include "utils/time.hpp"
 #include <bitset>
 #include <functional>
@@ -67,50 +68,67 @@ public:
         return db.exec<std::vector<std::string>>("SELECT key FROM cache;");
     }
 
-
     bool exists(const std::string& key)
     {
+        if (dataList.find(key) != dataList.end())
+            return true;
         auto exists = db.exec<bool>("SELECT 1 FROM cache WHERE key = ? LIMIT 1;", key);
         return exists;
     }
 
     inline bool set(const std::string& key, const Bytes auto & value)
     {
-        return set(key, value, std::chrono::seconds { 3600 });
+        if (std::size(value) <= 500)
+            return set(key, value, std::chrono::seconds { 3600 });
+        result = storeBytes(key, value, true);
+        if (result)
+            dataList[key] = Data{value, std::chrono::seconds { 3600 }, 0};
+        return result;
     }
 
     bool set(const std::string& key, const Bytes auto & value, Duration auto expire)
     {
+        if (std::size(value) <= 500) {
+            const auto now = std::chrono::system_clock::now();
+            db.exec("REPLACE INTO cache (key, value, expire, last_update) VALUES (?, ?, ?, ?);", key, value, now + expire, now);
+            return true;
+        } // check if nullptr works
         const auto now = std::chrono::system_clock::now();
-        db.exec("REPLACE INTO cache (key, value, expire, last_update) VALUES (?, ?, ?, ?);", key, value, now + expire, now);
-        return true;
+        db.exec("REPLACE INTO cache (key, value, expire, last_update) VALUES (?, ?, ?, ?);", key, nullptr, now + expire, now);
+        result = storeBytes(key, value, true);
+        if (result)
+            dataList[key] = Data{value, expire, 0};
+        return result;
     }
 
     std::optional<std::vector<char>> get(const std::string& key)
     {
+        if (dataList.find(key) != dataList.end())
+            return getBytes(dataList[key].path);
 
         auto values = db.exec<std::vector<char>>("SELECT value FROM cache WHERE key = ?;", key);
         if (values.empty())
-        {
             return std::nullopt;
-        }
         else
-        {
             return values;
-        }
     }
 
     inline bool add(const std::string& key, const Bytes auto & value)
     {
-        return add(key, value, std::chrono::seconds { 3600 });
+        if (std::size(value) <= 500)
+            return add(key, value, std::chrono::seconds { 3600 });
+        return storeBytes(key, value, false);
     }
 
     // Add a value if the key doesn't already exist
     bool add(const std::string& key, const Bytes auto & value, Duration auto expire)
     {
-        const auto now = std::chrono::system_clock::now();
-        db.exec("INSERT INTO cache (key, value, expire, last_update) VALUES (?, ?, ?, ?);", key, value, now+expire, now);
-        return true;
+        if (std::size(value) <= 500) {
+            const auto now = std::chrono::system_clock::now();
+            db.exec("INSERT INTO cache (key, value, expire, last_update) VALUES (?, ?, ?, ?);", key, value, now+expire, now);
+            return true;
+        }
+        return storeBytes(key, value, false);
     }
 
     bool del(const std::string& key)
