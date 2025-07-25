@@ -21,6 +21,7 @@
 #include <optional>
 #include <sqlite3.h>
 #include <string>
+#include <cstdio>
 
 class Cache
 {
@@ -70,47 +71,46 @@ public:
 
     bool exists(const std::string& key)
     {
-        if (dataList.find(key) != dataList.end())
-            return true;
         auto exists = db.exec<bool>("SELECT 1 FROM cache WHERE key = ? LIMIT 1;", key);
         return exists;
     }
 
     inline bool set(const std::string& key, const Bytes auto & value)
     {
+        const auto now = std::chrono::system_clock::now();
+        const auto one_hour = std::chrono::seconds { 3600 };
+
         if (std::size(value) <= 500)
-            return set(key, value, std::chrono::seconds { 3600 });
-        result = storeBytes(key, value, true);
-        if (result)
-            dataList[key] = Data{value, std::chrono::seconds { 3600 }, 0};
+            return set(key, value, one_hour);
+        db.exec("REPLACE INTO cache (key, value, expire, last_update) VALUES (?, ?, ?, ?);", key, nullptr, now + std::chrono::seconds { 3600 }, now);
+        bool result = storeBytes(key, value, true);
         return result;
     }
 
     bool set(const std::string& key, const Bytes auto & value, Duration auto expire)
     {
+        const auto now = std::chrono::system_clock::now();
+
         if (std::size(value) <= 500) {
-            const auto now = std::chrono::system_clock::now();
             db.exec("REPLACE INTO cache (key, value, expire, last_update) VALUES (?, ?, ?, ?);", key, value, now + expire, now);
             return true;
         } // check if nullptr works
-        const auto now = std::chrono::system_clock::now();
         db.exec("REPLACE INTO cache (key, value, expire, last_update) VALUES (?, ?, ?, ?);", key, nullptr, now + expire, now);
-        result = storeBytes(key, value, true);
-        if (result)
-            dataList[key] = Data{value, expire, 0};
+        bool result = storeBytes(key, value, true);
         return result;
     }
 
     std::optional<std::vector<char>> get(const std::string& key)
     {
-        if (dataList.find(key) != dataList.end())
-            return getBytes(dataList[key].path);
+        auto values = db.exec<std::vector<char>, std::string>("SELECT value, path FROM cache WHERE key = ?;", key);
+        const auto &[value, path] = values;
 
-        auto values = db.exec<std::vector<char>>("SELECT value FROM cache WHERE key = ?;", key);
-        if (values.empty())
-            return std::nullopt;
+        if (!value.empty())
+            return value;
+        else if (!path.empty())
+            return getBytes(path);
         else
-            return values;
+            return std::nullopt;
     }
 
     inline bool add(const std::string& key, const Bytes auto & value)
@@ -169,22 +169,40 @@ public:
         return true;
     }
 
-    // Delete expired items
     void expire()
     {
         std::lock_guard<std::mutex> lock(global_mutex);
         using namespace std::chrono_literals;
         const auto now = std::chrono::system_clock::now();
         double now_ = time_point_to_epoch(now);
+        // const auto now_seconds = duration_cast<seconds>(now.time_since_epoch()).count();
+        const char* sql = "SELECT id, path FROM cache WHERE expire IS NOT NULL AND expire <= ?";
+        stmt = nullptr;
 
-        const std::string sql = "DELETE FROM cache WHERE expire <= " + std::to_string(now_) + ";";
-        sqlite3_exec(db.get(), sql.c_str(), nullptr, nullptr, nullptr);
+        if (sqlite3_prepare_v2(db.get(), sql, -1, &stmt, nullptr) == SQLITE_OK) {
+            sqlite3_bind_double(stmt, 1, static_cast<double>(now_));
+
+            while (sqlite3_step(stmt) == SQLITE_ROW) {
+                int id = sqlite3_column_int(stmt, 0);
+                const char* path = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
+
+                if (path) std::remove(path);
+                sqlite3_stmt* deleteStmt = nullptr;
+                if (sqlite3_prepare_v2(db.get(), "DELETE FROM cache WHERE id = ?", -1, &deleteStmt, nullptr) == SQLITE_OK) {
+                    sqlite3_bind_int(deleteStmt, 1, id);
+                    sqlite3_step(deleteStmt);
+                }
+                sqlite3_finalize(deleteStmt);
+            }
+        }
+        sqlite3_finalize(stmt);
+        // const std::string sql = "DELETE FROM cache WHERE expire <= " + std::to_string(now_) + ";";
+        // sqlite3_exec(db.get(), sql.c_str(), nullptr, nullptr, nullptr);
     }
 
     // Delete items based on policy
     void evict() { ; }
 
-    // Get the cache directory
     void clear()
     {
         std::lock_guard<std::mutex> lock(global_mutex);

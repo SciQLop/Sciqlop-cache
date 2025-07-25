@@ -7,6 +7,7 @@
 
 #pragma once
 
+#include "database.hpp"
 #include <iostream>
 #include <fstream>
 #include <filesystem>
@@ -14,15 +15,14 @@
 #include <vector>
 #include <string>
 #include <cstdint>
-#include <cstdio> // for std::remove
 
 struct Data {
     std::string path;
-    float expireTime;
+    float expireTime; // conversion through time_point_to_epoch ?
     int accessCount;
 };
 
-bool storeBytes(const std::string &path, const std::vector<std::uint8_t> &bytes, bool replace = false)
+bool storeBytes(const std::string &path, const Bytes auto &bytes, bool replace)
 {
     std::ios_base::openmode mode;
 
@@ -35,11 +35,12 @@ bool storeBytes(const std::string &path, const std::vector<std::uint8_t> &bytes,
     if (!file)
         return false;
 
-    file.write(reinterpret_cast<const char*>(bytes.data()), bytes.size());
+    file.write(std::data(bytes), std::size(bytes));
     return file.good();
 }
 
-std::vector<std::uint8_t> getBytes(const std::string &path)
+template <Bytes Buffer = std::vector<char>>
+Buffer getBytes(const std::string &path)
 {
     std::ifstream file(path, std::ios::binary | std::ios::ate);
 
@@ -49,8 +50,8 @@ std::vector<std::uint8_t> getBytes(const std::string &path)
     }
     std::streamsize size = file.tellg();
     file.seekg(0, std::ios::beg);
-    std::vector<std::uint8_t> buffer(size);
-    if (!file.read(reinterpret_cast<char*>(buffer.data()), size)) {
+    Buffer buffer(static_cast<size_t>(size));
+    if (!file.read(std::data(buffer), size)) {
         std::cerr << "Failed to read file: " << path << std::endl;
         return {};
     }
@@ -65,7 +66,7 @@ bool deleteFile(const std::string &path)
     }
     return true;
 }
-
+/*
 void saveData(const std::unordered_map<std::string, Data> &dataList, const std::string &filename)
 {
     std::ofstream out(filename, std::ios::binary);
@@ -117,3 +118,4 @@ std::unordered_map<std::string, Data> loadData(const std::string &filename)
     }
     return dataList;
 }
+*/

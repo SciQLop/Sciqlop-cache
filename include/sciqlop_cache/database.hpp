@@ -59,39 +59,29 @@ void sql_bind_all(const auto& stm, auto&&... values)
 template <typename rtype>
 auto sql_get(const auto& stmt, int col)
 {
-    if constexpr (std::is_same_v<rtype, std::vector<char>>)
-    {
+    if constexpr (std::is_same_v<rtype, std::vector<char>>) {
         const void* blob = sqlite3_column_blob(stmt, col);
         int size = sqlite3_column_bytes(stmt, col);
-        if (blob && size > 0)
-        {
+        if (blob && size > 0) {
             const char* start = static_cast<const char*>(blob);
             return std::vector<char>(start, start + size);
-        }
-        else
-        {
+        } else {
             return std::vector<char> {};
         }
-    }
-    if constexpr (std::is_same_v<rtype, bool>)
-    {
+    } else if constexpr (std::is_same_v<rtype, bool>) {
         return true;
-    }
-    if constexpr (std::is_same_v<rtype, std::size_t>)
-    {
+    } else if constexpr (std::is_same_v<rtype, std::size_t>) {
         return static_cast<std::size_t>(sqlite3_column_int64(stmt, col));
-    }
-    if constexpr (std::is_same_v<rtype, std::vector<std::string>>)
-    {
+    } else if constexpr (std::is_same_v<rtype, std::vector<std::string>>) {
         std::vector<std::string> result;
-        while (sqlite3_step(stmt) == SQLITE_ROW)
-        {
+        while (sqlite3_step(stmt) == SQLITE_ROW) {
             const char* v = reinterpret_cast<const char*>(sqlite3_column_text(stmt, col));
             if (v)
                 result.emplace_back(v);
         }
         return result;
-    }
+    } else
+        return nullptr;
 }
 
 template <typename... rtypes, std::size_t... Is>
@@ -105,7 +95,6 @@ auto sql_get_all(const auto& stm)
 {
     return _sql_get_all<rtypes...>(stm, std::index_sequence_for<rtypes...> {});
 }
-
 
 class Database
 {
@@ -132,13 +121,10 @@ public:
         sqlite3* tmp_db = db.get();
         int check = sqlite3_open(buffer, &tmp_db);
 
-        if (check)
-        {
+        if (check) {
             std::cerr << "Error opening database: " << sqlite3_errmsg(tmp_db) << std::endl;
             sqlite3_close(tmp_db);
-        }
-        else
-        {
+        } else {
             std::cout << "Database opened successfully." << std::endl;
             db.reset(tmp_db);
         }
@@ -165,8 +151,7 @@ public:
 
         std::cout << "db pointer: " << db.get() << std::endl;
         int rc = sqlite3_exec(db.get(), sql.c_str(), nullptr, nullptr, &errMsg);
-        if (rc != SQLITE_OK)
-        {
+        if (rc != SQLITE_OK) {
             std::cerr << "SQL error: " << (errMsg ? errMsg : "unknown error") << std::endl;
             sqlite3_free(errMsg);
             return false;
@@ -181,33 +166,25 @@ public:
         std::lock_guard<std::mutex> lock(db_mutex);
         sqlite3_stmt* stmt;
 
-        if (sqlite3_prepare_v2(db.get(), sql.c_str(), -1, &stmt, nullptr) == SQLITE_OK)
-        {
+        if (sqlite3_prepare_v2(db.get(), sql.c_str(), -1, &stmt, nullptr) == SQLITE_OK) {
             sql_bind_all(stmt, values...);
             auto cpp_utils_scope_guard = scope_leaving_guard<sqlite3_stmt, sqlite3_finalize>(stmt);
-            if (sqlite3_step(stmt) == SQLITE_ROW)
-            {
-                if constexpr (sizeof...(rtypes)==1)
-                {
+            if (sqlite3_step(stmt) == SQLITE_ROW) {
+                if constexpr (sizeof...(rtypes)==1) {
                     return sql_get<rtypes...>(stmt, 0);
                 }
-                if constexpr (sizeof...(rtypes)>1)
-                {
+                if constexpr (sizeof...(rtypes)>1) {
                     return sql_get_all<rtypes...>(stmt);
                 }
             }
         }
-        if constexpr (sizeof...(rtypes) == 0)
-        {
+        if constexpr (sizeof...(rtypes) == 0) {
             return;
-        }
-        else if constexpr (sizeof...(rtypes) == 1)
-        {
+        } else if constexpr (sizeof...(rtypes) == 1) {
             return decltype(sql_get<rtypes...>(stmt, 0)){};
-        }
-        else
-        {
+        } else {
             return std::tuple<rtypes...> {};
         }
     }
 };
+/*c++ if a function return a template that can be a tuple, how can I check if it's indeed a tuple or a nullptr (which are the only options in my case)*/
