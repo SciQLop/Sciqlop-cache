@@ -52,8 +52,6 @@ SCENARIO("Testing sciqlop_cache", "[cache]")
 
     GIVEN("a cache we'll open and close")
     {
-
-
         WHEN("We insert random data and close the cache")
         {
             {
@@ -124,7 +122,7 @@ SCENARIO("Testing sciqlop_cache", "[cache]")
             cache.set("key1", original_value1, 0s);
             cache.set("key2", original_value1);
             cache.evict();
-            //REQUIRE_FALSE(cache.get("key1").has_value()); // evict isn't made
+           //REQUIRE_FALSE(cache.get("key1").has_value()); // evict isn't made
             REQUIRE(cache.get("key2").has_value());
         }
 
@@ -177,3 +175,71 @@ SCENARIO("Testing sciqlop_cache", "[cache]")
         std::filesystem::remove(db_path);
     }
 }
+/*
+SCENARIO("Testing sciqlop_cache with file storage fallback", "[cache][file]")
+{
+    std::string db_path = "test_cache_file.db";
+    if (std::filesystem::exists(db_path))
+        std::filesystem::remove(db_path);
+
+    std::string large_key = "large/file_key";
+    std::vector<char> large_value(1024);
+    std::generate(large_value.begin(), large_value.end(), std::rand);
+
+    GIVEN("a cache and a large value to trigger file fallback")
+    {
+        Cache cache(db_path, 1000);
+        REQUIRE(cache.check());
+
+        WHEN("we set a large value")
+        {
+            REQUIRE(cache.set(large_key, large_value));
+            THEN("the value should be retrievable and match the original")
+            {
+                auto result = cache.get(large_key);
+                REQUIRE(result.has_value());
+                REQUIRE(result->size() == large_value.size());
+                REQUIRE(result.value() == large_value);
+            }
+
+            THEN("we should not overwrite existing key with add()")
+            {
+                std::vector<char> other_value(1024);
+                std::generate(other_value.begin(), other_value.end(), std::rand);
+                REQUIRE_FALSE(cache.add(large_key, other_value));
+                auto result = cache.get(large_key);
+                REQUIRE(result.value() == large_value); // still original
+            }
+
+            THEN("pop should return the value and delete it")
+            {
+                auto popped = cache.pop(large_key);
+                REQUIRE(popped.has_value());
+                REQUIRE(popped.value() == large_value);
+                REQUIRE_FALSE(cache.get(large_key).has_value());
+            }
+
+            THEN("delete should remove file-backed key")
+            {
+                REQUIRE(cache.del(large_key));
+                REQUIRE_FALSE(cache.get(large_key).has_value());
+            }
+
+            THEN("clear should remove all including file-backed keys")
+            {
+                cache.clear();
+                REQUIRE_FALSE(cache.get(large_key).has_value());
+            }
+        }
+
+        WHEN("we test expiration of file-backed values")
+        {
+            REQUIRE(cache.set(large_key, large_value, 0s)); // immediately expired
+            cache.expire();
+            REQUIRE_FALSE(cache.get(large_key).has_value());
+        }
+    }
+
+    std::filesystem::remove(db_path);
+}
+*/

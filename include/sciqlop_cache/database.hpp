@@ -170,16 +170,16 @@ public:
             sql_bind_all(stmt, values...);
             auto cpp_utils_scope_guard = scope_leaving_guard<sqlite3_stmt, sqlite3_finalize>(stmt);
             if (sqlite3_step(stmt) == SQLITE_ROW) {
-                if constexpr (sizeof...(rtypes)==1) {
+                if constexpr (sizeof...(rtypes) == 1) {
                     return sql_get<rtypes...>(stmt, 0);
                 }
-                if constexpr (sizeof...(rtypes)>1) {
+                if constexpr (sizeof...(rtypes) > 1) {
                     return sql_get_all<rtypes...>(stmt);
                 }
             }
         }
         if constexpr (sizeof...(rtypes) == 0) {
-            return;
+            return true; // true or false based on success
         } else if constexpr (sizeof...(rtypes) == 1) {
             return decltype(sql_get<rtypes...>(stmt, 0)){};
         } else {
@@ -187,4 +187,3 @@ public:
         }
     }
 };
-/*c++ if a function return a template that can be a tuple, how can I check if it's indeed a tuple or a nullptr (which are the only options in my case)*/

@@ -42,12 +42,23 @@ public:
 
     bool init()
     {
+        // const std::string sql = R"(
+        //     CREATE TABLE IF NOT EXISTS cache (
+        //         key TEXT PRIMARY KEY,
+        //         value TEXT,
+        //         expire REAL,
+        //         last_update REAL
+        //     );
+        // )";
         const std::string sql = R"(
             CREATE TABLE IF NOT EXISTS cache (
-                key TEXT PRIMARY KEY,
-                value TEXT,
-                expire REAL,
-                last_update REAL
+                key TEXT NOT NULL,
+                path TEXT DEFAULT NULL,
+                value BLOB DEFAULT NULL,
+                expire REAL DEFAULT NULL,
+                last_update REAL NOT NULL DEFAULT 0,
+                last_use REAL NOT NULL DEFAULT 0,
+                access_count_since_last_update INT NOT NULL DEFAULT 0
             );
         )";
         bool result = db.exec(sql);
@@ -77,25 +88,16 @@ public:
 
     inline bool set(const std::string& key, const Bytes auto & value)
     {
-        const auto now = std::chrono::system_clock::now();
-        const auto one_hour = std::chrono::seconds { 3600 };
-
-        if (std::size(value) <= 500)
-            return set(key, value, one_hour);
-        db.exec("REPLACE INTO cache (key, value, expire, last_update) VALUES (?, ?, ?, ?);", key, nullptr, now + std::chrono::seconds { 3600 }, now);
-        bool result = storeBytes(key, value, true);
-        return result;
+        return set(key, value, std::chrono::seconds { 3600 });
     }
 
     bool set(const std::string& key, const Bytes auto & value, Duration auto expire)
     {
         const auto now = std::chrono::system_clock::now();
 
-        if (std::size(value) <= 500) {
-            db.exec("REPLACE INTO cache (key, value, expire, last_update) VALUES (?, ?, ?, ?);", key, value, now + expire, now);
-            return true;
-        } // check if nullptr works
-        db.exec("REPLACE INTO cache (key, value, expire, last_update) VALUES (?, ?, ?, ?);", key, nullptr, now + expire, now);
+        if (std::size(value) <= 500)
+            return db.exec("REPLACE INTO cache (key, value, expire, last_update) VALUES (?, ?, ?, ?);", key, value, now + expire, now);
+        db.exec("REPLACE INTO cache (key, path, expire, last_update) VALUES (?, ?, ?, ?);", key, key, now + expire, now);
         bool result = storeBytes(key, value, true);
         return result;
     }
@@ -109,44 +111,43 @@ public:
             return value;
         else if (!path.empty())
             return getBytes(path);
-        else
+        else {
+            std::cerr << "Key not found: " << key << std::endl;
             return std::nullopt;
+        }
     }
 
     inline bool add(const std::string& key, const Bytes auto & value)
     {
-        if (std::size(value) <= 500)
-            return add(key, value, std::chrono::seconds { 3600 });
-        return storeBytes(key, value, false);
+        return add(key, value, std::chrono::seconds { 3600 });
     }
 
     // Add a value if the key doesn't already exist
     bool add(const std::string& key, const Bytes auto & value, Duration auto expire)
     {
-        if (std::size(value) <= 500) {
-            const auto now = std::chrono::system_clock::now();
-            db.exec("INSERT INTO cache (key, value, expire, last_update) VALUES (?, ?, ?, ?);", key, value, now+expire, now);
-            return true;
-        }
-        return storeBytes(key, value, false);
+        const auto now = std::chrono::system_clock::now();
+
+        if (std::size(value) <= 500)
+            return db.exec("INSERT INTO cache (key, value, expire, last_update) VALUES (?, ?, ?, ?);", key, value, now + expire, now);
+        bool result = db.exec("INSERT INTO cache (key, path, expire, last_update) VALUES (?, ?, ?, ?);", key, key, now + expire, now);
+        if (!result)
+            return false;
+        result = storeBytes(key, value, false);
+        return result;
     }
 
     bool del(const std::string& key)
     {
-        if (!exists(key))
-        {
+        if (!exists(key)) {
             std::cerr << "Key not found: " << key << std::endl;
             return false;
         }
 
         db.exec("DELETE FROM cache WHERE key = ?;", key);
         auto success = true;
-        if (success)
-        {
+        if (success) {
             return true;
-        }
-        else
-        {
+        } else {
             std::cerr << "Error deleting key: " << key << std::endl;
             return false;
         }
