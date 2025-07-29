@@ -9,6 +9,7 @@
 
 #include "utils/time.hpp"
 #include <cpp_utils/lifetime/scope_leaving_guards.hpp>
+#include <cpp_utils/types/detectors.hpp>
 #include <iostream>
 #include <memory>
 #include <mutex>
@@ -59,6 +60,15 @@ void sql_bind_all(const auto& stm, auto&&... values)
 template <typename rtype>
 auto sql_get(const auto& stmt, int col)
 {
+    static_assert(cpp_utils::types::detectors::is_any_of_v<
+        rtype,
+        std::vector<char>,
+        std::string,
+        bool,
+        std::size_t,
+        std::vector<std::string>> || TimePoint<rtype>,
+        "Unsupported return type for sql_get");
+
     if constexpr (std::is_same_v<rtype, std::vector<char>>) {
         const void* blob = sqlite3_column_blob(stmt, col);
         int size = sqlite3_column_bytes(stmt, col);
@@ -68,6 +78,15 @@ auto sql_get(const auto& stmt, int col)
         } else {
             return std::vector<char> {};
         }
+    } else if constexpr (std::is_same_v<rtype, std::string>) {
+        const char* v = reinterpret_cast<const char*>(sqlite3_column_text(stmt, col));
+        if (v)
+            return std::string(v);
+        else
+            return std::string {};
+    } else if constexpr (TimePoint<rtype>) {
+        double v = sqlite3_column_double(stmt, col);
+        return epoch_to_time_point(v);
     } else if constexpr (std::is_same_v<rtype, bool>) {
         return true;
     } else if constexpr (std::is_same_v<rtype, std::size_t>) {
