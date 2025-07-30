@@ -22,10 +22,12 @@
 #include <sqlite3.h>
 #include <string>
 #include <cstdio>
+#include <filesystem>
 
 class Cache
 {
 private:
+    std::string cache_path;
     size_t max_size;
     sqlite3_stmt* stmt;
     std::mutex global_mutex;
@@ -33,8 +35,8 @@ private:
     Database db;
 
 public:
-    Cache(const std::string& db_path = "sciqlop-cache.db", size_t max_size_ = 1000)
-            : max_size(max_size_), stmt(nullptr)
+    Cache(const std::string& db_path = "sciqlop-cache.db", size_t max_size_ = 1000, const std::string &cache_path_ = ".cache/")
+            : cache_path(cache_path_), max_size(max_size_), stmt(nullptr)
     {
         if (db.open(db_path) != SQLITE_OK || !init())
             throw std::runtime_error("Failed to initialize database schema.");
@@ -97,8 +99,9 @@ public:
 
         if (std::size(value) <= 500)
             return db.exec("REPLACE INTO cache (key, value, expire, last_update) VALUES (?, ?, ?, ?);", key, value, now + expire, now);
-        db.exec("REPLACE INTO cache (key, path, expire, last_update) VALUES (?, ?, ?, ?);", key, key, now + expire, now);
-        bool result = storeBytes(key, value, true);
+        std::string file_path = cache_path + key;
+        db.exec("REPLACE INTO cache (key, path, expire, last_update) VALUES (?, ?, ?, ?);", key, file_path, now + expire, now);
+        bool result = storeBytes(file_path, value, true);
         return result;
     }
 
@@ -129,10 +132,11 @@ public:
 
         if (std::size(value) <= 500)
             return db.exec("INSERT INTO cache (key, value, expire, last_update) VALUES (?, ?, ?, ?);", key, value, now + expire, now);
-        bool result = db.exec("INSERT INTO cache (key, path, expire, last_update) VALUES (?, ?, ?, ?);", key, key, now + expire, now);
+        std::string file_path = cache_path + key;
+        bool result = db.exec("INSERT INTO cache (key, path, expire, last_update) VALUES (?, ?, ?, ?);", key, file_path, now + expire, now);
         if (!result)
             return false;
-        result = storeBytes(key, value, false);
+        result = storeBytes(file_path, value, false);
         return result;
     }
 
@@ -143,9 +147,10 @@ public:
             return false;
         }
 
-        db.exec("DELETE FROM cache WHERE key = ?;", key);
-        auto success = true;
+        auto success = db.exec("DELETE FROM cache WHERE key = ?;", key);
         if (success) {
+            if (fileExists(cache_path + key))
+                deleteFile(cache_path + key);
             return true;
         } else {
             std::cerr << "Error deleting key: " << key << std::endl;
@@ -170,7 +175,7 @@ public:
         return true;
     }
 
-    void expire()
+    void expire() // I need to remove concerned files
     {
         std::lock_guard<std::mutex> lock(global_mutex);
         using namespace std::chrono_literals;
@@ -208,6 +213,11 @@ public:
     {
         std::lock_guard<std::mutex> lock(global_mutex);
         sqlite3_exec(db.get(), "DELETE FROM cache;", nullptr, nullptr, nullptr);
+        if (std::filesystem::exists(cache_path) && std::filesystem::is_directory(cache_path)) {
+            for (const auto& entry : std::filesystem::directory_iterator(cache_path)) {
+                std::filesystem::remove_all(entry);
+            }
+        }
     }
 
     // Check the cache statistics

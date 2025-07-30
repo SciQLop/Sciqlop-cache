@@ -15,6 +15,7 @@
 #include <vector>
 #include <string>
 #include <cstdint>
+#include <sys/stat.h>
 
 struct Data {
     std::string path;
@@ -56,6 +57,11 @@ Buffer getBytes(const std::string &path)
         return {};
     }
     return buffer;
+}
+
+bool fileExists(const std::string& path) {
+    struct stat buffer;
+    return (stat(path.c_str(), &buffer) == 0);
 }
 
 bool deleteFile(const std::string &path)
