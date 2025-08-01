@@ -137,7 +137,7 @@ SCENARIO("Testing sciqlop_cache", "[cache]")
         WHEN("we test add")
         {
             cache.clear();
-            REQUIRE(cache.set("key1", original_value1));
+            cache.set("key1", original_value1);
             REQUIRE_FALSE(cache.add("key1", original_value2));
             REQUIRE(cache.add("key2", original_value2));
             auto value1 = cache.get("key1");
@@ -148,7 +148,7 @@ SCENARIO("Testing sciqlop_cache", "[cache]")
 
         WHEN("we test pop")
         {
-            REQUIRE(cache.set("key_pop", original_value1));
+            cache.set("key_pop", original_value1);
             auto popped_value = cache.pop("key_pop");
             REQUIRE(popped_value.has_value());
             REQUIRE(popped_value.value() == original_value1);

@@ -44,17 +44,9 @@ public:
 
     bool init()
     {
-        // const std::string sql = R"(
-        //     CREATE TABLE IF NOT EXISTS cache (
-        //         key TEXT PRIMARY KEY,
-        //         value TEXT,
-        //         expire REAL,
-        //         last_update REAL
-        //     );
-        // )";
         const std::string sql = R"(
             CREATE TABLE IF NOT EXISTS cache (
-                key TEXT NOT NULL,
+                key TEXT PRIMARY KEY,
                 path TEXT DEFAULT NULL,
                 value BLOB DEFAULT NULL,
                 expire REAL DEFAULT NULL,
@@ -101,7 +93,7 @@ public:
             return db.exec("REPLACE INTO cache (key, value, expire, last_update) VALUES (?, ?, ?, ?);", key, value, now + expire, now);
         std::string file_path = cache_path + key;
         db.exec("REPLACE INTO cache (key, path, expire, last_update) VALUES (?, ?, ?, ?);", key, file_path, now + expire, now);
-        bool result = storeBytes(file_path, value, true);
+        bool result = storeBytes(file_path, value);
         return result;
     }
 
@@ -136,7 +128,7 @@ public:
         bool result = db.exec("INSERT INTO cache (key, path, expire, last_update) VALUES (?, ?, ?, ?);", key, file_path, now + expire, now);
         if (!result)
             return false;
-        result = storeBytes(file_path, value, false);
+        result = storeBytes(file_path, value);
         return result;
     }
 

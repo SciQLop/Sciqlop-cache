@@ -23,21 +23,13 @@ struct Data {
     int accessCount;
 };
 
-bool storeBytes(const std::string &path, const Bytes auto &bytes, bool replace)
+bool storeBytes(const std::string &path, const Bytes auto &bytes)
 {
-    std::ios_base::openmode mode;
-
-    if (replace || !std::filesystem::exists(path))
-        mode = std::ios::binary | std::ios::out | std::ios::trunc;
-    else
-        mode = std::ios::binary | std::ios::out | std::ios::app;
-
-    std::ofstream file(path, mode);
-    if (!file)
+   std::ofstream out(path, std::ios::binary);
+    if (!out)
         return false;
-
-    file.write(std::data(bytes), std::size(bytes));
-    return file.good();
+    out.write(std::data(bytes), static_cast<std::streamsize>(std::size(bytes)));
+    return out.good();
 }
 
 template <Bytes Buffer = std::vector<char>>

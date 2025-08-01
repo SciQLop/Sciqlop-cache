@@ -34,7 +34,6 @@ concept Bytes = requires(T t) {
     { std::data(t) } -> std::convertible_to<const char*>;
 };
 
-
 void sql_bind(const auto& stmt, int col, TimePoint auto&& value)
 {
     sqlite3_bind_double(stmt, col, time_point_to_epoch(value));
@@ -188,13 +187,21 @@ public:
         if (sqlite3_prepare_v2(db.get(), sql.c_str(), -1, &stmt, nullptr) == SQLITE_OK) {
             sql_bind_all(stmt, values...);
             auto cpp_utils_scope_guard = scope_leaving_guard<sqlite3_stmt, sqlite3_finalize>(stmt);
-            if (sqlite3_step(stmt) == SQLITE_ROW) {
+            int rc = sqlite3_step(stmt);
+            if (rc == SQLITE_ROW) {
                 if constexpr (sizeof...(rtypes) == 1) {
                     return sql_get<rtypes...>(stmt, 0);
                 }
                 if constexpr (sizeof...(rtypes) > 1) {
                     return sql_get_all<rtypes...>(stmt);
                 }
+            } else if (rc == SQLITE_CONSTRAINT) { // handle when trying to insert a duplicate key
+                if constexpr (sizeof...(rtypes) == 0)
+                    return false;
+                else if constexpr (sizeof...(rtypes) == 1)
+                    return decltype(sql_get<rtypes...>(stmt, 0)){};
+                else
+                    return std::tuple<rtypes...>{};
             }
         }
         if constexpr (sizeof...(rtypes) == 0) {
