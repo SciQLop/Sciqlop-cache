@@ -8,7 +8,7 @@
 
 #pragma once
 
-//#include "database.hpp"
+#include "database.hpp"
 #include "cache_by_files.hpp"
 #include "utils/time.hpp"
 #include <bitset>
@@ -46,7 +46,8 @@ public:
     {
         const std::string sql = R"(
             CREATE TABLE IF NOT EXISTS cache (
-                key TEXT PRIMARY KEY,
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                key TEXT UNIQUE NOT NULL,
                 path TEXT DEFAULT NULL,
                 value BLOB DEFAULT NULL,
                 expire REAL DEFAULT NULL,
@@ -167,35 +168,51 @@ public:
         return true;
     }
 
-    void expire() // I need to remove concerned files
+    void expire()
     {
         std::lock_guard<std::mutex> lock(global_mutex);
         using namespace std::chrono_literals;
         const auto now = std::chrono::system_clock::now();
         double now_ = time_point_to_epoch(now);
-        // const auto now_seconds = duration_cast<seconds>(now.time_since_epoch()).count();
         const char* sql = "SELECT id, path FROM cache WHERE expire IS NOT NULL AND expire <= ?";
         stmt = nullptr;
 
-        if (sqlite3_prepare_v2(db.get(), sql, -1, &stmt, nullptr) == SQLITE_OK) {
-            sqlite3_bind_double(stmt, 1, static_cast<double>(now_));
+        if (sqlite3_prepare_v2(db.get(), sql, -1, &stmt, nullptr) != SQLITE_OK)
+            return;
 
-            while (sqlite3_step(stmt) == SQLITE_ROW) {
-                int id = sqlite3_column_int(stmt, 0);
-                const char* path = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
+        sqlite3_bind_double(stmt, 1, now_);
+        std::vector<int> expired_ids;
 
-                if (path) std::remove(path);
-                sqlite3_stmt* deleteStmt = nullptr;
-                if (sqlite3_prepare_v2(db.get(), "DELETE FROM cache WHERE id = ?", -1, &deleteStmt, nullptr) == SQLITE_OK) {
-                    sqlite3_bind_int(deleteStmt, 1, id);
-                    sqlite3_step(deleteStmt);
+        while (sqlite3_step(stmt) == SQLITE_ROW) {
+            int id = sqlite3_column_int(stmt, 0);
+            const char* path = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
+
+            if (path && sizeof(path) > 0) {
+                std::filesystem::path file_path = std::filesystem::path(cache_path) / path;
+                std::error_code ec;
+                if (!std::filesystem::remove(file_path, ec) && ec) {
+                    std::cerr << "Failed to delete file: " << file_path << " (" << ec.message() << ")\n";
                 }
-                sqlite3_finalize(deleteStmt);
             }
+
+            expired_ids.push_back(id);
         }
         sqlite3_finalize(stmt);
-        // const std::string sql = "DELETE FROM cache WHERE expire <= " + std::to_string(now_) + ";";
-        // sqlite3_exec(db.get(), sql.c_str(), nullptr, nullptr, nullptr);
+
+        const char* delete_sql = "DELETE FROM cache WHERE id = ?;";
+        if (sqlite3_prepare_v2(db.get(), delete_sql, -1, &stmt, nullptr) != SQLITE_OK) {
+            std::cerr << "Failed to prepare DELETE statement: " << sqlite3_errmsg(db.get()) << std::endl;
+            return;
+        }
+
+        for (int id : expired_ids) {
+            sqlite3_bind_int(stmt, 1, id);
+            if (sqlite3_step(stmt) != SQLITE_DONE) {
+                std::cerr << "Failed to delete row with id " << id << ": " << sqlite3_errmsg(db.get()) << std::endl;
+            }
+            sqlite3_reset(stmt);
+        }
+        sqlite3_finalize(stmt);
     }
 
     // Delete items based on policy
