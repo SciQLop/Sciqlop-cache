@@ -7,7 +7,7 @@
 
 #pragma once
 
-#include "utils/time.hpp"
+#include "../utils/time.hpp"
 #include <cpp_utils/lifetime/scope_leaving_guards.hpp>
 #include <cpp_utils/types/detectors.hpp>
 #include <iostream>
@@ -146,7 +146,6 @@ public:
             std::cout << "Database opened successfully." << std::endl;
             db.reset(tmp_db);
         }
-        std::cout << "check: " << check << std::endl;
         return check;
     }
 
@@ -167,7 +166,6 @@ public:
         std::lock_guard<std::mutex> lock(db_mutex);
         char* errMsg = nullptr;
 
-        std::cout << "db pointer: " << db.get() << std::endl;
         int rc = sqlite3_exec(db.get(), sql.c_str(), nullptr, nullptr, &errMsg);
         if (rc != SQLITE_OK) {
             std::cerr << "SQL error: " << (errMsg ? errMsg : "unknown error") << std::endl;

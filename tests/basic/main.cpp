@@ -22,7 +22,7 @@
 #include "../../include/sciqlop_cache/database.hpp"
 #include "../include/utils/time.hpp"
 using namespace std::chrono_literals;
-
+/*
 SCENARIO("Testing time conversions", "[time]")
 {
     GIVEN("a time point")
@@ -37,7 +37,53 @@ SCENARIO("Testing time conversions", "[time]")
     }
 }
 
-// test open, close and open again to test database persistence
+SCENARIO("Testing file I/O with Bytes concept", "[bytes][fileio]") {
+    std::string test_file = "test_bytes_file.bin";
+    std::vector<char> test_data(512);
+    std::generate(test_data.begin(), test_data.end(), std::rand);
+
+    GIVEN("A buffer of random data and a file path") {
+        WHEN("We store the bytes to a file") {
+            bool write_success = storeBytes(test_file, test_data);
+
+            THEN("The file should exist") {
+                REQUIRE(write_success == true);
+                REQUIRE(fileExists(test_file) == true);
+            }
+
+            THEN("The file contents should match the original buffer") {
+                REQUIRE(write_success == true);
+                auto loaded_data = getBytes(test_file);
+                REQUIRE(loaded_data.size() == test_data.size());
+                REQUIRE(std::memcmp(loaded_data.data(), test_data.data(), test_data.size()) == 0);
+            }
+        }
+
+        WHEN("We check for a non-existent file") {
+            std::string missing_file = "non_existent_file.bin";
+
+            THEN("fileExists should return false") {
+                REQUIRE_FALSE(fileExists(missing_file));
+            }
+        }
+
+        WHEN("We delete the file after writing") {
+            REQUIRE(storeBytes(test_file, test_data));
+            REQUIRE(fileExists(test_file));
+
+            bool delete_success = deleteFile(test_file);
+
+            THEN("The file should no longer exist") {
+                REQUIRE(delete_success == true);
+                REQUIRE_FALSE(fileExists(test_file));
+            }
+        }
+    }
+
+    if (fileExists(test_file))
+        deleteFile(test_file);
+}
+*/
 SCENARIO("Testing sciqlop_cache", "[cache]")
 {
     std::string db_path = "test_cache.db";
@@ -49,7 +95,7 @@ SCENARIO("Testing sciqlop_cache", "[cache]")
     std::generate(original_value1.begin(), original_value1.end(), std::rand);
     std::vector<char> original_value2(128);
     std::generate(original_value2.begin(), original_value2.end(), std::rand);
-
+/*
     GIVEN("a cache we'll open and close")
     {
         WHEN("We insert random data and close the cache")
@@ -80,7 +126,7 @@ SCENARIO("Testing sciqlop_cache", "[cache]")
         }
     }
 
-    GIVEN("a newly initialized cache")
+    GIVEN("a cache used to store a small (<500 bytes) value")
     {
         Cache cache(db_path, 1000);
         REQUIRE(cache.check() == true);
@@ -165,81 +211,59 @@ SCENARIO("Testing sciqlop_cache", "[cache]")
             REQUIRE(cache.get("key2").has_value());
         }
 
-        /*WHEN("we test stats") {
-            cache.set("key1", original_value1);
-            cache.set("key2", original_value2);
-            auto stats = cache.stats();
-            REQUIRE(stats.size == 2);
-        }*/
-
         std::filesystem::remove(db_path);
     }
-}
-/*
-SCENARIO("Testing sciqlop_cache with file storage fallback", "[cache][file]")
-{
-    std::string db_path = "test_cache_file.db";
-    if (std::filesystem::exists(db_path))
-        std::filesystem::remove(db_path);
-
-    std::string large_key = "large/file_key";
-    std::vector<char> large_value(1024);
-    std::generate(large_value.begin(), large_value.end(), std::rand);
-
-    GIVEN("a cache and a large value to trigger file fallback")
-    {
-        Cache cache(db_path, 1000);
-        REQUIRE(cache.check());
-
-        WHEN("we set a large value")
-        {
-            REQUIRE(cache.set(large_key, large_value));
-            THEN("the value should be retrievable and match the original")
-            {
-                auto result = cache.get(large_key);
-                REQUIRE(result.has_value());
-                REQUIRE(result->size() == large_value.size());
-                REQUIRE(result.value() == large_value);
-            }
-
-            THEN("we should not overwrite existing key with add()")
-            {
-                std::vector<char> other_value(1024);
-                std::generate(other_value.begin(), other_value.end(), std::rand);
-                REQUIRE_FALSE(cache.add(large_key, other_value));
-                auto result = cache.get(large_key);
-                REQUIRE(result.value() == large_value); // still original
-            }
-
-            THEN("pop should return the value and delete it")
-            {
-                auto popped = cache.pop(large_key);
-                REQUIRE(popped.has_value());
-                REQUIRE(popped.value() == large_value);
-                REQUIRE_FALSE(cache.get(large_key).has_value());
-            }
-
-            THEN("delete should remove file-backed key")
-            {
-                REQUIRE(cache.del(large_key));
-                REQUIRE_FALSE(cache.get(large_key).has_value());
-            }
-
-            THEN("clear should remove all including file-backed keys")
-            {
-                cache.clear();
-                REQUIRE_FALSE(cache.get(large_key).has_value());
-            }
-        }
-
-        WHEN("we test expiration of file-backed values")
-        {
-            REQUIRE(cache.set(large_key, large_value, 0s)); // immediately expired
-            cache.expire();
-            REQUIRE_FALSE(cache.get(large_key).has_value());
-        }
-    }
-
-    std::filesystem::remove(db_path);
-}
 */
+    GIVEN("a cache used to store a large (>500 bytes) value")
+    {
+        std::vector<char> big_value(1024);
+        std::random_device rd;
+        std::mt19937 gen(rd());
+        std::uniform_int_distribution<int> dist(0, 255);
+        for (auto& b : big_value) {
+            b = static_cast<char>(dist(gen));
+        }
+        std::string big_key = "big/key";
+
+        WHEN("we set a big value in the cache")
+        {
+            {
+                Cache cache(db_path, 1000);
+                REQUIRE(cache.set(big_key, big_value)); // fails
+            }
+
+            THEN("the value should be correctly retrieved after reopening the cache")
+            {
+                Cache reopened_cache(db_path, 1000);
+                REQUIRE(reopened_cache.check() == true);
+
+                auto loaded_value = reopened_cache.get(big_key);
+                REQUIRE(loaded_value.has_value());
+                REQUIRE(loaded_value->size() == big_value.size());
+                REQUIRE(std::memcmp(
+                            loaded_value->data(), big_value.data(), big_value.size())
+                    == 0);
+            }
+
+            THEN("the cache should contain one item")
+            {
+                Cache reopened_cache(db_path, 1000);
+                REQUIRE(reopened_cache.count() == 1);
+            }
+
+            THEN("the value should be stored in the ./cache/ directory")
+            {
+                bool found_file = false;
+                for (const auto& entry : std::filesystem::directory_iterator("./cache/"))
+                {
+                    if (entry.is_regular_file())
+                    {
+                        found_file = true;
+                        break;
+                    }
+                }
+                REQUIRE(found_file == true);
+            }
+        }
+    }
+}

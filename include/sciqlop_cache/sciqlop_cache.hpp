@@ -92,9 +92,12 @@ public:
 
         if (std::size(value) <= 500)
             return db.exec("REPLACE INTO cache (key, value, expire, last_update) VALUES (?, ?, ?, ?);", key, value, now + expire, now);
+        std::cout << "Large value in file : " << key;
         std::string file_path = cache_path + key;
+        std::cout << " ; path is : " << file_path << std::endl;
         db.exec("REPLACE INTO cache (key, path, expire, last_update) VALUES (?, ?, ?, ?);", key, file_path, now + expire, now);
         bool result = storeBytes(file_path, value);
+        std::cout << "Store bytes result: " << result << std::endl;
         return result;
     }
 

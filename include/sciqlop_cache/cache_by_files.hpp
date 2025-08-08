@@ -17,19 +17,28 @@
 #include <cstdint>
 #include <sys/stat.h>
 
-struct Data {
+/*struct Data {
     std::string path;
-    float expireTime; // conversion through time_point_to_epoch ?
+    float expireTime;
     int accessCount;
-};
+};*/
 
-bool storeBytes(const std::string &path, const Bytes auto &bytes)
+template <Bytes T>
+bool storeBytes(const std::string &path, const T &bytes)
 {
-   std::ofstream out(path, std::ios::binary);
-    if (!out)
+    // std::filesystem::create_directories(std::filesystem::path(path).parent_path());
+    std::ofstream out(path, std::ios::binary);
+    if (!out) {
+        std::cerr << "Failed to open file for writing: " << path << std::endl;
         return false;
-    out.write(std::data(bytes), static_cast<std::streamsize>(std::size(bytes)));
-    return out.good();
+    }
+    out.write(reinterpret_cast<const char*>(std::data(bytes)),
+              static_cast<std::streamsize>(std::size(bytes)));
+    bool res = out && !out.fail() && !out.bad();
+    if (!res)
+        std::cerr << "Failed to write to file: " << path << std::endl;
+    out.close();
+    return res;
 }
 
 template <Bytes Buffer = std::vector<char>>
@@ -38,7 +47,7 @@ Buffer getBytes(const std::string &path)
     std::ifstream file(path, std::ios::binary | std::ios::ate);
 
     if (!file) {
-        std::cerr << "Failed to open file: " << path << std::endl;
+        std::cerr << "Failed to open file for reading: " << path << std::endl;
         return {};
     }
     std::streamsize size = file.tellg();
