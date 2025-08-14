@@ -26,7 +26,7 @@
 template <Bytes T>
 bool storeBytes(const std::string &path, const T &bytes)
 {
-    // std::filesystem::create_directories(std::filesystem::path(path).parent_path());
+    std::filesystem::create_directories(std::filesystem::path(path).parent_path());
     std::ofstream out(path, std::ios::binary);
     if (!out) {
         std::cerr << "Failed to open file for writing: " << path << std::endl;

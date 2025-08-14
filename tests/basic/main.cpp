@@ -22,7 +22,7 @@
 #include "../../include/sciqlop_cache/database.hpp"
 #include "../include/utils/time.hpp"
 using namespace std::chrono_literals;
-/*
+
 SCENARIO("Testing time conversions", "[time]")
 {
     GIVEN("a time point")
@@ -83,7 +83,7 @@ SCENARIO("Testing file I/O with Bytes concept", "[bytes][fileio]") {
     if (fileExists(test_file))
         deleteFile(test_file);
 }
-*/
+
 SCENARIO("Testing sciqlop_cache", "[cache]")
 {
     std::string db_path = "test_cache.db";
@@ -95,7 +95,7 @@ SCENARIO("Testing sciqlop_cache", "[cache]")
     std::generate(original_value1.begin(), original_value1.end(), std::rand);
     std::vector<char> original_value2(128);
     std::generate(original_value2.begin(), original_value2.end(), std::rand);
-/*
+
     GIVEN("a cache we'll open and close")
     {
         WHEN("We insert random data and close the cache")
@@ -210,10 +210,8 @@ SCENARIO("Testing sciqlop_cache", "[cache]")
             REQUIRE_FALSE(cache.get("key1").has_value());
             REQUIRE(cache.get("key2").has_value());
         }
-
-        std::filesystem::remove(db_path);
     }
-*/
+
     GIVEN("a cache used to store a large (>500 bytes) value")
     {
         std::vector<char> big_value(1024);
@@ -223,6 +221,8 @@ SCENARIO("Testing sciqlop_cache", "[cache]")
         for (auto& b : big_value) {
             b = static_cast<char>(dist(gen));
         }
+        namespace fs = std::filesystem;
+        fs::path dir = ".cache";
         std::string big_key = "big/key";
 
         WHEN("we set a big value in the cache")
@@ -251,19 +251,15 @@ SCENARIO("Testing sciqlop_cache", "[cache]")
                 REQUIRE(reopened_cache.count() == 1);
             }
 
-            THEN("the value should be stored in the ./cache/ directory")
+            THEN("the value should be stored in the ./.cache/ directory")
             {
-                bool found_file = false;
-                for (const auto& entry : std::filesystem::directory_iterator("./cache/"))
-                {
-                    if (entry.is_regular_file())
-                    {
-                        found_file = true;
-                        break;
-                    }
-                }
-                REQUIRE(found_file == true);
+                fs::path file_to_check = dir / "big/key";
+                REQUIRE(fs::exists(file_to_check));
+                REQUIRE(fs::is_regular_file(file_to_check));
             }
         }
     }
+
+    std::filesystem::remove(".cache");
+    std::filesystem::remove(db_path);
 }
