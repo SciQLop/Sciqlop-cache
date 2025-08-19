@@ -38,7 +38,7 @@ SCENARIO("Testing time conversions", "[time]")
 }
 
 SCENARIO("Testing file I/O with Bytes concept", "[bytes][fileio]") {
-    std::string test_file = "test_bytes_file.bin";
+    std::string test_file = "./test_bytes_file.bin";
     std::vector<char> test_data(512);
     std::generate(test_data.begin(), test_data.end(), std::rand);
 
@@ -260,6 +260,6 @@ SCENARIO("Testing sciqlop_cache", "[cache]")
         }
     }
 
-    std::filesystem::remove(".cache");
+    std::filesystem::remove_all(".cache");
     std::filesystem::remove(db_path);
 }
