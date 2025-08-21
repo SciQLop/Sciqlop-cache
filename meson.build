@@ -82,7 +82,7 @@ if get_option('with_tests')
 catch_dep = dependency('catch2-with-main', version:'>3.0.0', required : true)
 my_include = include_directories('include/sciqlop_cache')
 
-foreach test:['basic']
+foreach test:['basic', 'intermediate']
     exe = executable(
         'test-'+test,'tests/'+test+'/main.cpp',
         include_directories: my_include,

@@ -229,7 +229,7 @@ SCENARIO("Testing sciqlop_cache", "[cache]")
         {
             {
                 Cache cache(db_path, 1000);
-                REQUIRE(cache.set(big_key, big_value)); // fails
+                REQUIRE(cache.set(big_key, big_value));
             }
 
             THEN("the value should be correctly retrieved after reopening the cache")
