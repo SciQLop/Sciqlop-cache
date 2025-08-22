@@ -26,8 +26,7 @@
 
 class Cache
 {
-private:
-    std::string cache_path;
+    std::filesystem::path cache_path;
     size_t max_size;
     sqlite3_stmt* stmt;
     std::mutex global_mutex;
@@ -35,10 +34,13 @@ private:
     Database db;
 
 public:
-    Cache(const std::string& db_path = "sciqlop-cache.db", size_t max_size_ = 1000, const std::string &cache_path_ = ".cache/")
-            : cache_path(cache_path_), max_size(max_size_), stmt(nullptr)
+    static constexpr std::string_view db_fname = "sciqlop-cache.db";
+
+    Cache(const std::filesystem::path &cache_path = ".cache/", size_t max_size = 1000)
+            : cache_path(cache_path), max_size(max_size), stmt(nullptr)
     {
-        if (db.open(db_path) != SQLITE_OK || !init())
+        std::filesystem::create_directories(cache_path);
+        if (db.open(cache_path/db_fname) != SQLITE_OK || !init())
             throw std::runtime_error("Failed to initialize database schema.");
     }
 
@@ -97,7 +99,7 @@ public:
 
         if (std::size(value) <= 500)
             return db.exec("REPLACE INTO cache (key, value, expire, last_update) VALUES (?, ?, ?, ?);", key, value, now + expire, now);
-        std::string file_path = cache_path + key;
+       auto file_path = cache_path / key;
         if (!db.exec("REPLACE INTO cache (key, path, expire, last_update) VALUES (?, ?, ?, ?);", key, file_path, now + expire, now))
             return false;
         return storeBytes(file_path, value);
@@ -105,7 +107,7 @@ public:
 
     std::optional<std::vector<char>> get(const std::string& key)
     {
-        if(auto values = db.exec<std::vector<char>, std::string>("SELECT value, path FROM cache WHERE key = ?;", key)) {
+        if(auto values = db.exec<std::vector<char>, std::filesystem::path>("SELECT value, path FROM cache WHERE key = ?;", key)) {
             const auto &[value, path] = *values;
 
             if (!path.empty())
@@ -127,7 +129,7 @@ public:
 
         if (std::size(value) <= 500)
             return db.exec("INSERT INTO cache (key, value, expire, last_update) VALUES (?, ?, ?, ?);", key, value, now + expire, now);
-        std::string file_path = cache_path + key;
+        std::filesystem::path file_path = cache_path / key;
         if (!db.exec("INSERT INTO cache (key, path, expire, last_update) VALUES (?, ?, ?, ?);", key, file_path, now + expire, now))
             return false;
         return storeBytes(file_path, value);
@@ -135,6 +137,7 @@ public:
 
     bool del(const std::string& key)
     {
+        using namespace std::filesystem;
         if (!exists(key)) {
             std::cerr << "Key not found: " << key << std::endl;
             return false;
@@ -142,8 +145,8 @@ public:
 
         auto success = db.exec("DELETE FROM cache WHERE key = ?;", key);
         if (success) {
-            if (fileExists(cache_path + key))
-                deleteFile(cache_path + key);
+            if (exists(cache_path / key))
+                remove(cache_path / key);
             return true;
         } else {
             std::cerr << "Error deleting key: " << key << std::endl;
@@ -222,8 +225,10 @@ public:
         std::lock_guard<std::mutex> lock(global_mutex);
         sqlite3_exec(db.get(), "DELETE FROM cache;", nullptr, nullptr, nullptr);
         if (std::filesystem::exists(cache_path) && std::filesystem::is_directory(cache_path)) {
-            for (const auto& entry : std::filesystem::directory_iterator(cache_path)) {
-                std::filesystem::remove_all(entry);
+            for (const auto& entry : std::filesystem::directory_iterator(cache_path))
+            {
+                if (entry!=cache_path/db_fname)
+                    std::filesystem::remove_all(entry);
             }
         }
     }

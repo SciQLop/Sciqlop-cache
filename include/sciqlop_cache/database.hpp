@@ -18,6 +18,7 @@
 #include <string>
 #include <tuple>
 #include <vector>
+#include <filesystem>
 
 struct SQLiteDeleter
 {
@@ -50,6 +51,11 @@ void sql_bind(const auto& stmt, int col, const std::string& value)
     sqlite3_bind_text(stmt, col, value.c_str(), -1, SQLITE_STATIC);
 }
 
+void sql_bind(const auto& stmt, int col, const std::filesystem::path& value)
+{
+    sqlite3_bind_text(stmt, col, value.c_str(), -1, SQLITE_STATIC);
+}
+
 void sql_bind_all(const auto& stm, auto&&... values)
 {
     int i = 1;
@@ -63,6 +69,7 @@ auto sql_get(const auto& stmt, int col)
         rtype,
         std::vector<char>,
         std::string,
+        std::filesystem::path,
         bool,
         std::size_t,
         std::vector<std::string>> || TimePoint<rtype>,
@@ -77,13 +84,24 @@ auto sql_get(const auto& stmt, int col)
         } else {
             return std::vector<char> {};
         }
-    } else if constexpr (std::is_same_v<rtype, std::string>) {
+    }
+    else if constexpr (std::is_same_v<rtype, std::string>)
+    {
         const char* v = reinterpret_cast<const char*>(sqlite3_column_text(stmt, col));
         if (v)
             return std::string(v);
         else
             return std::string {};
-    } else if constexpr (TimePoint<rtype>) {
+    }
+    else if constexpr (std::is_same_v<rtype, std::filesystem::path>)
+    {
+        const char* v = reinterpret_cast<const char*>(sqlite3_column_text(stmt, col));
+        if (v)
+            return std::filesystem::path(v);
+        else
+            return std::filesystem::path{};
+    }
+    else if constexpr (TimePoint<rtype>) {
         double v = sqlite3_column_double(stmt, col);
         return epoch_to_time_point(v);
     } else if constexpr (std::is_same_v<rtype, bool>) {
@@ -135,9 +153,8 @@ public:
     {
         std::lock_guard<std::mutex> lock(db_mutex);
 
-        const char* buffer = db_path.c_str();
         sqlite3* tmp_db = db.get();
-        int check = sqlite3_open(buffer, &tmp_db);
+        int check = sqlite3_open(db_path.c_str(), &tmp_db);
 
         if (check) {
             std::cerr << "Error opening database: " << sqlite3_errmsg(tmp_db) << std::endl;

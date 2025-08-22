@@ -25,9 +25,9 @@ using namespace std::chrono_literals;
 
 SCENARIO("Limit testing sciqlop_cache", "[cache]")
 {
-    std::string db_path = "test_cache.db";
+    std::filesystem::path db_path = std::filesystem::temp_directory_path() / "LimitTest01";
     if (std::filesystem::exists(db_path))
-        std::filesystem::remove(db_path);
+        std::filesystem::remove_all(db_path);
     Cache cache(db_path, 1000);
 
     std::string test_key = "random/test";
@@ -57,14 +57,16 @@ SCENARIO("Limit testing sciqlop_cache", "[cache]")
     }
 
     GIVEN("A read-only .cache/ directory") {
+        std::filesystem::remove_all(".readonly_cache");
         std::filesystem::create_directory(".readonly_cache");
-        std::filesystem::permissions(".readonly_cache",
-            std::filesystem::perms::owner_read,
-            std::filesystem::perm_options::replace);
 
-        Cache cache(db_path, 1000, ".readonly_cache/");
+        Cache cache(".readonly_cache/", 1000);
 
         std::vector<char> large_data(600, 'A');
+
+        std::filesystem::permissions(".readonly_cache",
+                                     std::filesystem::perms::owner_read,
+                                     std::filesystem::perm_options::replace);
 
         WHEN("Trying to store a large value") {
             REQUIRE_FALSE(cache.set("some_key", large_data));
@@ -87,7 +89,7 @@ SCENARIO("Limit testing sciqlop_cache", "[cache]")
     }
 
     GIVEN("A corrupt DB file") {
-        std::ofstream corrupt(db_path);
+        std::ofstream corrupt(db_path/Cache::db_fname, std::ios::binary);
         corrupt << "NOT A REAL SQLITE FILE";
         corrupt.close();
 
@@ -95,7 +97,7 @@ SCENARIO("Limit testing sciqlop_cache", "[cache]")
             REQUIRE_THROWS_AS(Cache(db_path, 1000), std::runtime_error);
         }
 
-        std::filesystem::remove(db_path);
+        std::filesystem::remove_all(db_path);
     }
 
     GIVEN("A cache with max_size 0") {
@@ -108,6 +110,5 @@ SCENARIO("Limit testing sciqlop_cache", "[cache]")
         }
     }
 
-    std::filesystem::remove_all(".cache");
-    std::filesystem::remove(db_path);
+    std::filesystem::remove_all(db_path);
 }
