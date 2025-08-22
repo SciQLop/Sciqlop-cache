@@ -13,6 +13,8 @@ AccessModifierOffset: -4 # -IndentWidth
 ConstructorInitializerIndentWidth: 8 # 2 * IndentWidth
 
 BreakBeforeBraces: Allman
+SeparateDefinitionBlocks: Always
+EmptyLineBeforeAccessModifier: Always
 
 AllowShortFunctionsOnASingleLine: Inline
 AlwaysBreakTemplateDeclarations: true
@@ -23,4 +25,8 @@ IndentCaseLabels: true
 MaxEmptyLinesToKeep: 2
 Standard: Cpp11
 UseTab: Never
+
+ContinuationIndentWidth: 4
+AlignAfterOpenBracket: true
+LambdaBodyIndentation: Signature
 
