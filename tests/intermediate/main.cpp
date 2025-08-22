@@ -45,29 +45,28 @@ SCENARIO("Limit testing sciqlop_cache", "[cache]")
             REQUIRE(cache.set(empty_str, test_value));
             auto value = cache.get(empty_str);
             REQUIRE(value.has_value());
-            REQUIRE(std::string(value->begin(), value->end()) == test_value); // line 47
+            REQUIRE(std::string(value->begin(), value->end()) == test_value);
         }
 
         WHEN("We try to set a key with empty value") {
             REQUIRE(cache.set(test_value, empty_data));
             auto loaded = cache.get(test_value);
-            REQUIRE(loaded.has_value());
+            REQUIRE(loaded.has_value()); // fails because empty vectors are treated as no value
             REQUIRE(loaded->empty());
         }
     }
-/*
+
     GIVEN("Binary data in key") {
         Cache cache(db_path, 1000);
-        std::string binary_key = std::string("bin\0key", 7);  // Includes null byte
+        std::string binary_key = std::string("bin\0key", 7);
         std::vector<char> value(128, 'x');
 
         WHEN("We use binary data as a key") {
-//            REQUIRE_FALSE(cache.set(binary_key, value));  // Likely to fail or be inconsistent
+            REQUIRE_FALSE(cache.set(binary_key, value)); // fails because of null byte in key
             REQUIRE(cache.set("key1", binary_key));
             auto value = cache.get("key1");
             REQUIRE(value.has_value());
-            auto optVec = value.value();
-            REQUIRE(optVec.has_value() && std::string(optVec->begin(), optVec->end()) == binary_key);
+            REQUIRE(std::string(value->begin(), value->end()) == binary_key);
         }
     }
 
@@ -82,7 +81,7 @@ SCENARIO("Limit testing sciqlop_cache", "[cache]")
         std::vector<char> large_data(600, 'A');
 
         WHEN("Trying to store a large value") {
-            REQUIRE_FALSE(cache.set("some_key", large_data));  // Should fail due to permission
+            REQUIRE_FALSE(cache.set("some_key", large_data));
         }
 
         std::filesystem::permissions(".readonly_cache",
@@ -119,10 +118,10 @@ SCENARIO("Limit testing sciqlop_cache", "[cache]")
 
         WHEN("We try to add an item") {
             REQUIRE(cache.set("key", value));
-            REQUIRE(cache.count() == 1);  // Behavior: still allows writes, but might be policy-dependent
+            REQUIRE(cache.count() == 1);
         }
     }
-*/
+
     std::filesystem::remove_all(".cache");
     std::filesystem::remove(db_path);
 }
