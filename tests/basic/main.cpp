@@ -54,8 +54,8 @@ SCENARIO("Testing file I/O with Bytes concept", "[bytes][fileio]") {
             THEN("The file contents should match the original buffer") {
                 REQUIRE(write_success == true);
                 auto loaded_data = getBytes(test_file);
-                REQUIRE(loaded_data.size() == test_data.size());
-                REQUIRE(std::memcmp(loaded_data.data(), test_data.data(), test_data.size()) == 0);
+                REQUIRE(loaded_data->size() == test_data.size());
+                REQUIRE(std::memcmp(loaded_data->data(), test_data.data(), test_data.size()) == 0);
             }
         }
 
@@ -86,10 +86,8 @@ SCENARIO("Testing file I/O with Bytes concept", "[bytes][fileio]") {
 
 SCENARIO("Testing sciqlop_cache", "[cache]")
 {
-    std::string db_path = "test_cache.db";
-    if (std::filesystem::exists(db_path))
-        std::filesystem::remove(db_path);
 
+    std::filesystem::path db_path = std::filesystem::temp_directory_path() / "BasicTest01";
     std::string test_key = "random/test";
     std::vector<char> original_value1(128);
     std::generate(original_value1.begin(), original_value1.end(), std::rand);
@@ -222,7 +220,6 @@ SCENARIO("Testing sciqlop_cache", "[cache]")
             b = static_cast<char>(dist(gen));
         }
         namespace fs = std::filesystem;
-        fs::path dir = ".cache";
         std::string big_key = "big/key";
 
         WHEN("we set a big value in the cache")
@@ -253,13 +250,12 @@ SCENARIO("Testing sciqlop_cache", "[cache]")
 
             THEN("the value should be stored in the ./.cache/ directory")
             {
-                fs::path file_to_check = dir / "big/key";
+                fs::path file_to_check = db_path / "big/key";
                 REQUIRE(fs::exists(file_to_check));
                 REQUIRE(fs::is_regular_file(file_to_check));
             }
         }
     }
 
-    std::filesystem::remove_all(".cache");
-    std::filesystem::remove(db_path);
+    std::filesystem::remove_all(db_path);
 }

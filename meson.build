@@ -33,6 +33,7 @@ hedley_dep = dependency('hedley')
 fmt_dep = dependency('fmt')
 sqlite3_dep = dependency('sqlite3')
 cpp_utils = dependency('cpp_utils', required : true,  default_options : ['cpp_std=c++20'])
+stduuid = dependency('stduuid', required : true)
 
 if build_machine.system() == 'windows'
     link_args = ['-static-libstdc++','-static-libgcc','-static']
@@ -63,7 +64,7 @@ sciqlop_cache_extra_files = files(
 sciqlop_cache_dep_inc = include_directories('include', '.')
 
 sciqlop_cache_dep = declare_dependency(include_directories: sciqlop_cache_dep_inc,
-                                dependencies: [hedley_dep, fmt_dep, sqlite3_dep, cpp_utils])
+                                dependencies: [hedley_dep, fmt_dep, sqlite3_dep, cpp_utils, stduuid])
 
 if get_option('disable_python_wrapper')
     message('building without Python wrapper')
