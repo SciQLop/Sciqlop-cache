@@ -67,18 +67,23 @@ public:
 
     [[nodiscard]] std::size_t count()
     {
-        return db.exec<std::size_t>("SELECT COUNT(*) FROM cache;");
+        if (auto r = db.exec<std::size_t>("SELECT COUNT(*) FROM cache;"))
+            return *r;
+        return 0;
     }
 
     [[nodiscard]] std::vector<std::string> keys()
     {
-        return db.exec<std::vector<std::string>>("SELECT key FROM cache;");
+        if (auto r = db.exec<std::vector<std::string>>("SELECT key FROM cache;"))
+            return *r;
+        return {};
     }
 
     bool exists(const std::string& key)
     {
-        auto exists = db.exec<bool>("SELECT 1 FROM cache WHERE key = ? LIMIT 1;", key);
-        return exists;
+        if(auto r = db.exec<bool>("SELECT 1 FROM cache WHERE key = ? LIMIT 1;", key))
+            return *r;
+        return false;
     }
 
     inline bool set(const std::string& key, const Bytes auto & value)
@@ -92,28 +97,22 @@ public:
 
         if (std::size(value) <= 500)
             return db.exec("REPLACE INTO cache (key, value, expire, last_update) VALUES (?, ?, ?, ?);", key, value, now + expire, now);
-        std::cout << "Large value in file : " << key;
         std::string file_path = cache_path + key;
-        std::cout << " ; path is : " << file_path << std::endl;
-        db.exec("REPLACE INTO cache (key, path, expire, last_update) VALUES (?, ?, ?, ?);", key, file_path, now + expire, now);
-        bool result = storeBytes(file_path, value);
-        std::cout << "Store bytes result: " << result << std::endl;
-        return result;
+        if (!db.exec("REPLACE INTO cache (key, path, expire, last_update) VALUES (?, ?, ?, ?);", key, file_path, now + expire, now))
+            return false;
+        return storeBytes(file_path, value);
     }
 
     std::optional<std::vector<char>> get(const std::string& key)
     {
-        auto values = db.exec<std::vector<char>, std::string>("SELECT value, path FROM cache WHERE key = ?;", key);
-        const auto &[value, path] = values;
+        if(auto values = db.exec<std::vector<char>, std::string>("SELECT value, path FROM cache WHERE key = ?;", key)) {
+            const auto &[value, path] = *values;
 
-        if (!value.empty())
+            if (!path.empty())
+                return getBytes(path);
             return value;
-        else if (!path.empty())
-            return getBytes(path);
-        else {
-            std::cerr << "Key not found: " << key << std::endl;
-            return std::nullopt;
         }
+        return std::nullopt;
     }
 
     inline bool add(const std::string& key, const Bytes auto & value)
@@ -129,11 +128,9 @@ public:
         if (std::size(value) <= 500)
             return db.exec("INSERT INTO cache (key, value, expire, last_update) VALUES (?, ?, ?, ?);", key, value, now + expire, now);
         std::string file_path = cache_path + key;
-        bool result = db.exec("INSERT INTO cache (key, path, expire, last_update) VALUES (?, ?, ?, ?);", key, file_path, now + expire, now);
-        if (!result)
+        if (!db.exec("INSERT INTO cache (key, path, expire, last_update) VALUES (?, ?, ?, ?);", key, file_path, now + expire, now))
             return false;
-        result = storeBytes(file_path, value);
-        return result;
+        return storeBytes(file_path, value);
     }
 
     bool del(const std::string& key)
@@ -166,9 +163,8 @@ public:
     // Touch a key to update its expiration time
     bool touch(const std::string& key, Duration auto expire)
     {
-        db.exec("UPDATE cache SET last_update = ?, expire = ? WHERE key = ?;",
+        return db.exec("UPDATE cache SET last_update = ?, expire = ? WHERE key = ?;",
             std::chrono::system_clock::now(), std::chrono::system_clock::now() + expire, key);
-        return true;
     }
 
     void expire()

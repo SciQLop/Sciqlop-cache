@@ -41,6 +41,7 @@ bool storeBytes(const std::string &path, const T &bytes)
     return res;
 }
 
+// if getBytess fails, need to delete the line in the database
 template <Bytes Buffer = std::vector<char>>
 Buffer getBytes(const std::string &path)
 {

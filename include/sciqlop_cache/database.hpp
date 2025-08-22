@@ -176,7 +176,18 @@ public:
     }
 
     template <typename... rtypes>
-    auto exec(const std::string& sql, const auto&... values)
+    consteval auto exec_return_type()
+    {
+        if constexpr (sizeof...(rtypes) == 0)
+            return bool {};
+        else if constexpr (sizeof...(rtypes) == 1)
+            return std::optional<rtypes...> {};
+        else
+            return std::optional<std::tuple<rtypes...>> {};
+    }
+
+    template <typename... rtypes>
+    auto exec(const std::string& sql, const auto&... values)-> decltype(exec_return_type<rtypes...>())
     {
         using namespace cpp_utils::lifetime;
         std::lock_guard<std::mutex> lock(db_mutex);
@@ -196,18 +207,19 @@ public:
             } else if (rc == SQLITE_CONSTRAINT) { // handle when trying to insert a duplicate key
                 if constexpr (sizeof...(rtypes) == 0)
                     return false;
-                else if constexpr (sizeof...(rtypes) == 1)
-                    return decltype(sql_get<rtypes...>(stmt, 0)){};
                 else
-                    return std::tuple<rtypes...>{};
+                     return std::nullopt;
+            }
+            else if (rc == SQLITE_DONE) {
+                 if constexpr (sizeof...(rtypes) == 0)
+                    return true;
+                else
+                    return std::nullopt;
             }
         }
-        if constexpr (sizeof...(rtypes) == 0) {
-            return true; // true or false based on success
-        } else if constexpr (sizeof...(rtypes) == 1) {
-            return decltype(sql_get<rtypes...>(stmt, 0)){};
-        } else {
-            return std::tuple<rtypes...> {};
-        }
+        if constexpr (sizeof...(rtypes) == 0)
+            return false;
+        else
+            return std::nullopt;
     }
 };

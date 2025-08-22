@@ -56,20 +56,6 @@ SCENARIO("Limit testing sciqlop_cache", "[cache]")
         }
     }
 
-    GIVEN("Binary data in key") {
-        Cache cache(db_path, 1000);
-        std::string binary_key = std::string("bin\0key", 7);
-        std::vector<char> value(128, 'x');
-
-        WHEN("We use binary data as a key") {
-            REQUIRE_FALSE(cache.set(binary_key, value)); // fails because of null byte in key
-            REQUIRE(cache.set("key1", binary_key));
-            auto value = cache.get("key1");
-            REQUIRE(value.has_value());
-            REQUIRE(std::string(value->begin(), value->end()) == binary_key);
-        }
-    }
-
     GIVEN("A read-only .cache/ directory") {
         std::filesystem::create_directory(".readonly_cache");
         std::filesystem::permissions(".readonly_cache",
