@@ -86,7 +86,6 @@ SCENARIO("Testing file I/O with Bytes concept", "[bytes][fileio]") {
 
 SCENARIO("Testing sciqlop_cache", "[cache]")
 {
-
     std::filesystem::path db_path = std::filesystem::temp_directory_path() / "BasicTest01";
     std::string test_key = "random/test";
     std::vector<char> original_value1(128);
@@ -250,9 +249,21 @@ SCENARIO("Testing sciqlop_cache", "[cache]")
 
             THEN("the value should be stored in the ./.cache/ directory")
             {
-                fs::path file_to_check = db_path / "big/key";
-                REQUIRE(fs::exists(file_to_check));
-                REQUIRE(fs::is_regular_file(file_to_check));
+                fs::path filePath;
+                for (const auto& entry : fs::recursive_directory_iterator(db_path)) {
+                    if (entry.is_regular_file() && entry.path().filename() != "sciqlop-cache.db") {
+                        filePath = entry.path();
+                        break;
+                    }
+                }
+                REQUIRE(!filePath.empty());
+                REQUIRE(fs::file_size(filePath) == big_value.size());
+                auto loaded_value = getBytes(filePath);
+                REQUIRE(loaded_value.has_value());
+                REQUIRE(loaded_value->size() == big_value.size());
+                REQUIRE(std::memcmp(
+                            loaded_value->data(), big_value.data(), big_value.size())
+                    == 0);
             }
         }
     }

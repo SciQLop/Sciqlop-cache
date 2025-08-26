@@ -16,6 +16,8 @@
 #include <string>
 #include <cstdint>
 #include <sys/stat.h>
+#include <uuid.h>
+#include <format>
 
 /*struct Data {
     std::string path;
@@ -41,7 +43,6 @@ bool storeBytes(const std::filesystem::path &path, const T &bytes)
     return res;
 }
 
-// if getBytess fails, need to delete the line in the database
 template <Bytes Buffer = std::vector<char>>
 std::optional<Buffer> getBytes(const std::filesystem::path &path)
 {
@@ -74,3 +75,14 @@ bool deleteFile(const std::string &path)
     return true;
 }
 
+std::string generate_random_filename()
+{
+    static std::random_device rd;
+    static std::mt19937 gen(rd());
+
+    uuids::uuid_random_generator generator{gen};
+    uuids::uuid id = generator();
+    std::string uuid_str = uuids::to_string(id);
+
+    return uuid_str;
+}

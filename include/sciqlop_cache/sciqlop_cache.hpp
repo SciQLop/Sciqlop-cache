@@ -99,7 +99,9 @@ public:
 
         if (std::size(value) <= 500)
             return db.exec("REPLACE INTO cache (key, value, expire, last_update) VALUES (?, ?, ?, ?);", key, value, now + expire, now);
-       auto file_path = cache_path / key;
+
+        const auto filename = generate_random_filename();
+        const auto file_path = cache_path / filename.substr(0, 2) / filename.substr(2, 2) / filename;
         if (!db.exec("REPLACE INTO cache (key, path, expire, last_update) VALUES (?, ?, ?, ?);", key, file_path, now + expire, now))
             return false;
         return storeBytes(file_path, value);
@@ -110,8 +112,13 @@ public:
         if(auto values = db.exec<std::vector<char>, std::filesystem::path>("SELECT value, path FROM cache WHERE key = ?;", key)) {
             const auto &[value, path] = *values;
 
-            if (!path.empty())
-                return getBytes(path);
+            if (!path.empty()) {
+                auto result = getBytes(path);
+                if (result)
+                    return result;
+                else
+                    del(key);
+            }
             return value;
         }
         return std::nullopt;
@@ -129,7 +136,9 @@ public:
 
         if (std::size(value) <= 500)
             return db.exec("INSERT INTO cache (key, value, expire, last_update) VALUES (?, ?, ?, ?);", key, value, now + expire, now);
-        std::filesystem::path file_path = cache_path / key;
+
+        const auto filename = generate_random_filename();
+        const auto file_path = cache_path / filename.substr(0, 2) / filename.substr(2, 2) / filename;
         if (!db.exec("INSERT INTO cache (key, path, expire, last_update) VALUES (?, ?, ?, ?);", key, file_path, now + expire, now))
             return false;
         return storeBytes(file_path, value);
