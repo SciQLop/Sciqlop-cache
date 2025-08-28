@@ -74,7 +74,7 @@ PYBIND11_MODULE(_pysciqlop_cache, m)
             });
 
     py::class_<Cache>(m, "Cache")
-        .def(py::init<const std::string&, size_t>(), py::arg("db_path") = "sciclop-cache.db",
+        .def(py::init<const std::string&, size_t>(), py::arg("cache_path") = ".cache/",
             py::arg("max_size") = 1000)
         .def("count", &Cache::count)
         .def("__len__", &Cache::count)
@@ -86,14 +86,12 @@ PYBIND11_MODULE(_pysciqlop_cache, m)
         .def("get", _get_item, py::arg("key"))
         .def("__getitem__", _get_item, py::arg("key"))
         .def("keys", &Cache::keys)
-        .def(
-            "add",
-            _add_item,
+        .def("exists", &Cache::exists, py::arg("key"))
+        .def("add", _add_item,
             py::arg("key"), py::arg("value"), py::arg("expire").none(true) = 3600s)
         .def("delete", &Cache::del, py::arg("key"))
         .def("pop", &Cache::pop, py::arg("key"))
-        .def(
-            "touch",
+        .def("touch",
             [&](Cache& c, const std::string& key, std::chrono::system_clock::duration expire)
             { return c.touch(key, expire); }, py::arg("key"), py::arg("expire").none(true) = 3600s)
         .def("expire", &Cache::expire)

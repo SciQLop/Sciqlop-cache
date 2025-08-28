@@ -93,6 +93,16 @@ foreach test:['basic', 'intermediate']
     test(test, exe)
 endforeach
 
+python_test_script = configure_file(
+  input: 'tests/python/test_python_interface.py',
+  output: 'test_python_interface.py',
+  copy: true
+)
+
+if not get_option('disable_python_wrapper')
+    test('python_test', python3, args:[python_test_script])
+endif
+
 endif
 
 summary({'C': meson.get_compiler('c').cmd_array(),
