@@ -83,25 +83,26 @@ if get_option('with_tests')
 catch_dep = dependency('catch2-with-main', version:'>3.0.0', required : true)
 my_include = include_directories('include/sciqlop_cache')
 
-foreach test:['basic', 'intermediate']
+foreach test_name:['basic', 'intermediate', 'multithreads']
     exe = executable(
-        'test-'+test,'tests/'+test+'/main.cpp',
+        'test-'+test_name,'tests/'+test_name+'/main.cpp',
         include_directories: my_include,
         dependencies:[catch_dep, sciqlop_cache_dep, sqlite3_dep],
         install: false
     )
-    test(test, exe)
+    test(test_name, exe)
 endforeach
 
-python_test_script = configure_file(
-  input: 'tests/python/test_python_interface.py',
-  output: 'test_python_interface.py',
-  copy: true
-)
 
 if not get_option('disable_python_wrapper')
-    test('python_test', python3, args:[python_test_script])
+    foreach test_name:['test_python_interface', 'test_python_multiprocess']
+        test(test_name, python3,
+            args:files('tests/python/@0@.py'.format(test_name)),
+            env : {'PYTHONPATH': meson.current_build_dir()}
+            )
+    endforeach
 endif
+
 
 endif
 

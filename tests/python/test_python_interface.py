@@ -1,10 +1,9 @@
 import os
+import shutil
 import unittest
 from pysciqlop_cache import  Cache
-from  tempfile import NamedTemporaryFile
+from  tempfile import TemporaryDirectory
 import time
-from multiprocessing import Pool
-from functools import partial
 
 class TestCache(unittest.TestCase):
 
@@ -12,19 +11,16 @@ class TestCache(unittest.TestCase):
         """
         Set up the test environment.
         """
-        # Create a temporary file for the cache
-        self.tmp_file = NamedTemporaryFile(delete=False)
-        self.cache = Cache(self.tmp_file.name)
+        self.tmp_dir = TemporaryDirectory(delete=False)
+        self.cache = Cache(str(self.tmp_dir))
 
     def tearDown(self):
         """
         Clean up the test environment.
         """
-        # Close and delete the temporary file
         if hasattr(self, 'cache'):
             del self.cache
-        self.tmp_file.close()
-        os.remove(self.tmp_file.name)
+        shutil.rmtree(str(self.tmp_dir))
 
     def test_simple_set_get(self):
         """
@@ -49,65 +45,5 @@ class TestCache(unittest.TestCase):
         assert self.cache.get(key) is None, "Cache should return None after expiration"
 
 
-def get_cache_value(path, key):
-    """
-    Function to get a value from the cache.
-    """
-    cache = Cache(path)
-    return cache.get(key)
-
-def set_cache_value(path, key, value):
-    """
-    Function to set a value in the cache.
-    """
-    cache = Cache(path)
-    cache.set(key, value)
-
-
-class TestMultiProcessCache(unittest.TestCase):
-    """
-    Test the Cache functionality in a multi-process environment.
-    """
-
-    def setUp(self):
-        """
-        Set up the test environment.
-        """
-        self.tmp_file = NamedTemporaryFile(delete=False)
-        self.cache = Cache(self.tmp_file.name)
-
-    def tearDown(self):
-        """
-        Clean up the test environment.
-        """
-        if hasattr(self, 'cache'):
-            del self.cache
-        self.tmp_file.close()
-        os.remove(self.tmp_file.name)
-
-    def test_multiprocess_cache_get(self):
-        """
-        Test the Cache functionality in a multi-process environment.
-        """
-        with Pool(processes=20) as pool:
-            # Set a value in the cache
-            self.cache.set("shared_key", "shared_value")
-
-            # Define a function to get the value from the cache
-
-            # Use the pool to get the value from the cache in parallel
-            results = pool.map(partial(get_cache_value, self.tmp_file.name), ["shared_key"] * 20)
-
-            # Check that both processes got the same value
-            assert all(result == "shared_value" for result in results), "Cache values should match across processes"
-
-    def test_multiprocess_cache_set(self):
-        """
-        Test the Cache functionality in a multi-process environment.
-        """
-        with Pool(processes=20) as pool:
-            # Use the pool to set the value in the cache in parallel
-            pool.map(partial(set_cache_value, self.tmp_file.name, "shared_key"), ["shared_value"] * 20)
-
-            # Check that the value was set correctly
-            assert self.cache.get("shared_key") == "shared_value", "Cache value should be 'shared_value'"
+if __name__ == "__main__":
+    unittest.main()
