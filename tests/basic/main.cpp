@@ -200,9 +200,10 @@ SCENARIO("Testing sciqlop_cache", "[cache]")
 
         WHEN("we test expire")
         {
-            cache.set("key1", original_value1, 0s);
+            cache.set("key1", original_value1, std::chrono::microseconds { 1 });
             cache.set("key2", original_value1);
             REQUIRE(cache.get("key2").has_value());
+            usleep(2);
             cache.expire();
             REQUIRE_FALSE(cache.get("key1").has_value());
             REQUIRE(cache.get("key2").has_value());
