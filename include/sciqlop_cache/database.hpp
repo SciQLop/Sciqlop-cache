@@ -153,14 +153,15 @@ public:
     {
         std::lock_guard<std::mutex> lock(db_mutex);
 
-        sqlite3* tmp_db = db.get();
+        sqlite3* tmp_db = nullptr;
         int check = sqlite3_open_v2(db_path.c_str(), &tmp_db, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_NOMUTEX, nullptr);
 
-        sqlite3_busy_timeout(tmp_db, 1000*60*10); // set busy timeout to 10 minutes
+        sqlite3_busy_timeout(tmp_db, 1000*60*15); // set busy timeout to 10 minutes
 
         if (check) {
             std::cerr << "Error opening database: " << sqlite3_errmsg(tmp_db) << std::endl;
-            sqlite3_close(tmp_db);
+            if (tmp_db)
+                sqlite3_close(tmp_db);
         } else {
             std::cout << "Database opened successfully." << std::endl;
             db.reset(tmp_db);
