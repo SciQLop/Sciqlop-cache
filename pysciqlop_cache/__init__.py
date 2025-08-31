@@ -8,6 +8,18 @@ __all__ = ["Cache"]
 
 class Cache(_Cache):
 
+    def __init__(self, cache_path=None):
+        super().__init__(cache_path=cache_path)
+        self._pickle_protocol = pickle.HIGHEST_PROTOCOL
+
+    @property
+    def pickle_protocol(self):
+        return self._pickle_protocol
+
+    @pickle_protocol.setter
+    def pickle_protocol(self, value):
+        self._pickle_protocol = value
+
     def set(self, key:AnyStr, value:Any, expire:Optional[Union[timedelta, int, float]]=None):
         """
         Set a value in the cache with an optional expiration time.
@@ -19,7 +31,7 @@ class Cache(_Cache):
         """
         if type(expire) in (int, float):
             expire = timedelta(seconds=expire)
-        super().set(key, pickle.dumps(value), expire=expire or timedelta(seconds=36000))  # Default to 1 hour if no expire is set
+        super().set(key, pickle.dumps(value, self._pickle_protocol), expire=expire or timedelta(seconds=36000))  # Default to 1 hour if no expire is set
 
     def get(self, key:AnyStr, default=None) -> Any:
         """
@@ -58,7 +70,7 @@ class Cache(_Cache):
         """
         if type(expire) in (int, float):
             expire = timedelta(seconds=expire)
-        super().add(key, pickle.dumps(value),
+        super().add(key, pickle.dumps(value, self._pickle_protocol),
                     expire=expire or timedelta(seconds=36000))  # Default to 1 hour if no expire is set
 
     def __getitem__(self, key:AnyStr):
