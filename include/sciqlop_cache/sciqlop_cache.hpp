@@ -11,9 +11,6 @@
 #include "database.hpp"
 #include "cache_by_files.hpp"
 #include "utils/time.hpp"
-#include <bitset>
-#include <functional>
-#include <iomanip>
 #include <iostream>
 #include <memory>
 #include <span>
@@ -23,6 +20,7 @@
 #include <string>
 #include <cstdio>
 #include <filesystem>
+#include <variant>
 #include <cpp_utils/io/memory_mapped_file.hpp>
 
 using namespace cpp_utils::io;
@@ -117,7 +115,6 @@ class Cache
 {
     std::filesystem::path cache_path;
     size_t max_size;
-    sqlite3_stmt* stmt;
     std::mutex global_mutex;
     bool auto_clean = false;
     Database db;
@@ -127,7 +124,7 @@ public:
     static constexpr std::string_view db_fname = "sciqlop-cache.db";
 
     Cache(const std::filesystem::path &cache_path = ".cache/", size_t max_size = 1000)
-            : cache_path(cache_path), max_size(max_size), stmt(nullptr)
+            : cache_path(cache_path), max_size(max_size)
     {
         std::filesystem::create_directories(cache_path);
         if (db.open(cache_path/db_fname) != SQLITE_OK || !init())
@@ -188,7 +185,7 @@ public:
         return set(key, value, std::chrono::seconds { 3600 });
     }
 
-    bool set(const std::string& key, const Bytes auto & value, Duration auto expire)
+    bool set(const std::string& key, const Bytes auto & value, DurationConcept auto expire)
     {
         const auto now = std::chrono::system_clock::now();
 
@@ -196,7 +193,7 @@ public:
             return db.exec("REPLACE INTO cache (key, value, expire, last_update) VALUES (?, ?, ?, ?);", key, value, now + expire, now);
 
         const auto filename = generate_random_filename();
-        const auto file_path = cache_path / filename.substr(0, 2) / filename.substr(2, 2) / filename;
+        const std::string file_path = (cache_path / filename.substr(0, 2) / filename.substr(2, 2) / filename).string();
         if (!db.exec("REPLACE INTO cache (key, path, expire, last_update) VALUES (?, ?, ?, ?);", key, file_path, now + expire, now))
             return false;
         return storeBytes(file_path, value);
@@ -225,7 +222,8 @@ public:
     }
 
     // Add a value if the key doesn't already exist
-    bool add(const std::string& key, const Bytes auto & value, Duration auto expire)
+    //@TODO: check if a previous file exists and replace or delete it
+    bool add(const std::string& key, const Bytes auto & value, DurationConcept auto expire)
     {
         const auto now = std::chrono::system_clock::now();
 
@@ -233,7 +231,7 @@ public:
             return db.exec("INSERT INTO cache (key, value, expire, last_update) VALUES (?, ?, ?, ?);", key, value, now + expire, now);
 
         const auto filename = generate_random_filename();
-        const auto file_path = cache_path / filename.substr(0, 2) / filename.substr(2, 2) / filename;
+        const std::string file_path = (cache_path / filename.substr(0, 2) / filename.substr(2, 2) / filename).string();
         if (!db.exec("INSERT INTO cache (key, path, expire, last_update) VALUES (?, ?, ?, ?);", key, file_path, now + expire, now))
             return false;
         return storeBytes(file_path, value);
@@ -241,18 +239,22 @@ public:
 
     bool del(const std::string& key)
     {
-        using namespace std::filesystem;
+        using namespace std;
         if (!exists(key)) {
             std::cerr << "Key not found: " << key << std::endl;
             return false;
         }
-
-        auto success = db.exec("DELETE FROM cache WHERE key = ?;", key);
-        if (success) {
-            if (exists(cache_path / key))
-                remove(cache_path / key);
+        if (auto filepath = db.exec<filesystem::path>("SELECT path FROM cache WHERE key = ?;", key))
+        {
+            if (filesystem::exists(*filepath))
+                filesystem::remove(*filepath);
+        }
+        if(db.exec("DELETE FROM cache WHERE key = ?;", key))
+        {
             return true;
-        } else {
+        }
+        else
+        {
             std::cerr << "Error deleting key: " << key << std::endl;
             return false;
         }
@@ -268,7 +270,7 @@ public:
     }
 
     // Touch a key to update its expiration time
-    bool touch(const std::string& key, Duration auto expire)
+    bool touch(const std::string& key, DurationConcept auto expire)
     {
         return db.exec("UPDATE cache SET last_update = ?, expire = ? WHERE key = ?;",
             std::chrono::system_clock::now(), std::chrono::system_clock::now() + expire, key);
@@ -281,7 +283,7 @@ public:
         const auto now = std::chrono::system_clock::now();
         double now_ = time_point_to_epoch(now);
         const char* sql = "SELECT id, path FROM cache WHERE expire IS NOT NULL AND expire <= ?";
-        stmt = nullptr;
+        sqlite3_stmt* stmt = nullptr;
 
         if (sqlite3_prepare_v2(db.get(), sql, -1, &stmt, nullptr) != SQLITE_OK)
             return;

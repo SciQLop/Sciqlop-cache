@@ -1,3 +1,7 @@
+[![GitHub License](https://img.shields.io/github/license/SciQLop/Sciqlop-cache)](https://mit-license.org/)
+[![CPP20](https://img.shields.io/badge/Language-C++20-blue.svg)]()
+[![PyPi](https://img.shields.io/pypi/v/Sciqlop-cache.svg)](https://pypi.python.org/pypi/Sciqlop-cache)
+[![Coverage](https://codecov.io/gh/SciQLop/Sciqlop-cache/coverage.svg?branch=main)](https://codecov.io/gh/SciQLop/Sciqlop-cache/branch/main)
 # SciQLop Cache
 
 SciQLop Cache is a C++/Python library for fast, persistent, and concurrent caching of binary and text data. It is designed for scientific and general-purpose applications that require efficient storage and retrieval of key-value pairs, with support for expiration, eviction, and multi-process access.
@@ -133,7 +137,6 @@ if value is not None:
     # use value
 ```
 
-<vscode_annotation details='%5B%7B%22title%22%3A%22hardcoded-credentials%22%2C%22description%22%3A%22Embedding%20credentials%20in%20source%20code%20risks%20unauthorized%20access%22%7D%5D'>##</vscode_annotation> License
 
 MIT License
 

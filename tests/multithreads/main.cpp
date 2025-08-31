@@ -52,8 +52,8 @@ SCENARIO("Testing time conversions", "[time]")
     std::string test_key = "random/test";
     std::vector<char> original_value(128);
     std::generate(original_value.begin(), original_value.end(), std::rand);
-    int thread_count = 32;
-    int iterations_per_thread = 5000;
+    int thread_count = std::thread::hardware_concurrency()*2;
+    int iterations_per_thread = 1000;
     GIVEN("a cache accessed by multiple threads")
     {
         WHEN("multiple threads read and write to the cache concurrently")

@@ -10,6 +10,7 @@
 #include "../utils/time.hpp"
 #include <cpp_utils/lifetime/scope_leaving_guards.hpp>
 #include <cpp_utils/types/detectors.hpp>
+#include <filesystem>
 #include <iostream>
 #include <memory>
 #include <mutex>
@@ -18,7 +19,6 @@
 #include <string>
 #include <tuple>
 #include <vector>
-#include <filesystem>
 
 struct SQLiteDeleter
 {
@@ -42,16 +42,11 @@ void sql_bind(const auto& stmt, int col, TimePoint auto&& value)
 
 void sql_bind(const auto& stmt, int col, Bytes auto&& value)
 {
-    sqlite3_bind_blob(
-        stmt, col, std::data(value), static_cast<int>(std::size(value)), SQLITE_STATIC);
+    sqlite3_bind_blob(stmt, col, std::data(value), static_cast<int>(std::size(value)),
+                      SQLITE_STATIC);
 }
 
 void sql_bind(const auto& stmt, int col, const std::string& value)
-{
-    sqlite3_bind_text(stmt, col, value.c_str(), -1, SQLITE_STATIC);
-}
-
-void sql_bind(const auto& stmt, int col, const std::filesystem::path& value)
 {
     sqlite3_bind_text(stmt, col, value.c_str(), -1, SQLITE_STATIC);
 }
@@ -65,23 +60,23 @@ void sql_bind_all(const auto& stm, auto&&... values)
 template <typename rtype>
 auto sql_get(const auto& stmt, int col)
 {
-    static_assert(cpp_utils::types::detectors::is_any_of_v<
-        rtype,
-        std::vector<char>,
-        std::string,
-        std::filesystem::path,
-        bool,
-        std::size_t,
-        std::vector<std::string>> || TimePoint<rtype>,
-        "Unsupported return type for sql_get");
+    static_assert(cpp_utils::types::detectors::is_any_of_v<rtype, std::vector<char>, std::string,
+                                                           std::filesystem::path, bool, std::size_t,
+                                                           std::vector<std::string>>
+                      || TimePoint<rtype>,
+                  "Unsupported return type for sql_get");
 
-    if constexpr (std::is_same_v<rtype, std::vector<char>>) {
+    if constexpr (std::is_same_v<rtype, std::vector<char>>)
+    {
         const void* blob = sqlite3_column_blob(stmt, col);
         int size = sqlite3_column_bytes(stmt, col);
-        if (blob && size > 0) {
+        if (blob && size > 0)
+        {
             const char* start = static_cast<const char*>(blob);
             return std::vector<char>(start, start + size);
-        } else {
+        }
+        else
+        {
             return std::vector<char> {};
         }
     }
@@ -99,24 +94,33 @@ auto sql_get(const auto& stmt, int col)
         if (v)
             return std::filesystem::path(v);
         else
-            return std::filesystem::path{};
+            return std::filesystem::path {};
     }
-    else if constexpr (TimePoint<rtype>) {
+    else if constexpr (TimePoint<rtype>)
+    {
         double v = sqlite3_column_double(stmt, col);
         return epoch_to_time_point(v);
-    } else if constexpr (std::is_same_v<rtype, bool>) {
+    }
+    else if constexpr (std::is_same_v<rtype, bool>)
+    {
         return true;
-    } else if constexpr (std::is_same_v<rtype, std::size_t>) {
+    }
+    else if constexpr (std::is_same_v<rtype, std::size_t>)
+    {
         return static_cast<std::size_t>(sqlite3_column_int64(stmt, col));
-    } else if constexpr (std::is_same_v<rtype, std::vector<std::string>>) {
+    }
+    else if constexpr (std::is_same_v<rtype, std::vector<std::string>>)
+    {
         std::vector<std::string> result;
-        while (sqlite3_step(stmt) == SQLITE_ROW) {
+        while (sqlite3_step(stmt) == SQLITE_ROW)
+        {
             const char* v = reinterpret_cast<const char*>(sqlite3_column_text(stmt, col));
             if (v)
                 result.emplace_back(v);
         }
         return result;
-    } else
+    }
+    else
         return nullptr;
 }
 
@@ -149,20 +153,26 @@ public:
         }
     }
 
-    int open(const std::string& db_path)
+    int open(const std::filesystem::path& db_path)
     {
         std::lock_guard<std::mutex> lock(db_mutex);
 
         sqlite3* tmp_db = nullptr;
-        int check = sqlite3_open_v2(db_path.c_str(), &tmp_db, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_NOMUTEX, nullptr);
+        auto db_path_str = db_path.string();
+        int check = sqlite3_open_v2(
+            db_path_str.c_str(), &tmp_db,
+            SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_NOMUTEX, nullptr);
 
-        sqlite3_busy_timeout(tmp_db, 1000*60*15); // set busy timeout to 10 minutes
+        sqlite3_busy_timeout(tmp_db, 1000 * 60 * 15); // set busy timeout to 10 minutes
 
-        if (check) {
+        if (check)
+        {
             std::cerr << "Error opening database: " << sqlite3_errmsg(tmp_db) << std::endl;
             if (tmp_db)
                 sqlite3_close(tmp_db);
-        } else {
+        }
+        else
+        {
             std::cout << "Database opened successfully." << std::endl;
             db.reset(tmp_db);
         }
@@ -187,7 +197,8 @@ public:
         char* errMsg = nullptr;
 
         int rc = sqlite3_exec(db.get(), sql.c_str(), nullptr, nullptr, &errMsg);
-        if (rc != SQLITE_OK) {
+        if (rc != SQLITE_OK)
+        {
             std::cerr << "SQL error: " << (errMsg ? errMsg : "unknown error") << std::endl;
             sqlite3_free(errMsg);
             return false;
@@ -207,31 +218,39 @@ public:
     }
 
     template <typename... rtypes>
-    auto exec(const std::string& sql, const auto&... values)-> decltype(exec_return_type<rtypes...>())
+    auto exec(const std::string& sql, const auto&... values)
+        -> decltype(exec_return_type<rtypes...>())
     {
         using namespace cpp_utils::lifetime;
         std::lock_guard<std::mutex> lock(db_mutex);
         sqlite3_stmt* stmt;
 
-        if (sqlite3_prepare_v2(db.get(), sql.c_str(), -1, &stmt, nullptr) == SQLITE_OK) {
+        if (sqlite3_prepare_v2(db.get(), sql.c_str(), -1, &stmt, nullptr) == SQLITE_OK)
+        {
             sql_bind_all(stmt, values...);
             auto cpp_utils_scope_guard = scope_leaving_guard<sqlite3_stmt, sqlite3_finalize>(stmt);
             int rc = sqlite3_step(stmt);
-            if (rc == SQLITE_ROW) {
-                if constexpr (sizeof...(rtypes) == 1) {
+            if (rc == SQLITE_ROW)
+            {
+                if constexpr (sizeof...(rtypes) == 1)
+                {
                     return sql_get<rtypes...>(stmt, 0);
                 }
-                if constexpr (sizeof...(rtypes) > 1) {
+                if constexpr (sizeof...(rtypes) > 1)
+                {
                     return sql_get_all<rtypes...>(stmt);
                 }
-            } else if (rc == SQLITE_CONSTRAINT) { // handle when trying to insert a duplicate key
+            }
+            else if (rc == SQLITE_CONSTRAINT)
+            { // handle when trying to insert a duplicate key
                 if constexpr (sizeof...(rtypes) == 0)
                     return false;
                 else
-                     return std::nullopt;
+                    return std::nullopt;
             }
-            else if (rc == SQLITE_DONE) {
-                 if constexpr (sizeof...(rtypes) == 0)
+            else if (rc == SQLITE_DONE)
+            {
+                if constexpr (sizeof...(rtypes) == 0)
                     return true;
                 else
                     return std::nullopt;
