@@ -14,11 +14,6 @@ using namespace std::chrono_literals;
 
 namespace py = pybind11;
 
-struct _bytes
-{
-    std::vector<char> data;
-};
-
 inline void _set_item(Cache& c, const std::string& key, py::bytes& buffer,
     std::chrono::system_clock::duration* expire = nullptr)
 {
@@ -47,17 +42,8 @@ inline void _add_item(Cache& c, const std::string& key, py::bytes& buffer,
     }
 }
 
-inline std::optional<_bytes> _get_item(Cache& c, const std::string& key)
-{
-    if (auto value = c.get(key))
-    {
-        return _bytes { std::move( *value) };
-    }
-    return std::nullopt;
-}
 
-
-PYBIND11_MODULE(_pysciqlop_cache, m)
+PYBIND11_MODULE(_pysciqlop_cache, m, py::mod_gil_not_used{})
 {
     m.doc() = R"pbdoc(
         _pysciqlop_cache
@@ -65,12 +51,12 @@ PYBIND11_MODULE(_pysciqlop_cache, m)
 
     )pbdoc";
 
-    py::class_<_bytes>(m, "_bytes", py::buffer_protocol())
+    py::class_<Buffer>(m, "Buffer", py::buffer_protocol())
         .def_buffer(
-            [](_bytes& b) -> py::buffer_info
+            [](Buffer& b) -> py::buffer_info
             {
                 py::gil_scoped_release release;
-                return py::buffer_info(b.data.data(), std::size(b.data), true);
+                return py::buffer_info(b.data(), b.size(), true);
             });
 
     py::class_<Cache>(m, "Cache")
@@ -83,8 +69,8 @@ PYBIND11_MODULE(_pysciqlop_cache, m)
         .def(
             "__setitem__", [](Cache& c, const std::string& key, py::bytes& buffer)
             { return _set_item(c, key, buffer); }, py::arg("key"), py::arg("value"))
-        .def("get", _get_item, py::arg("key"))
-        .def("__getitem__", _get_item, py::arg("key"))
+        .def("get", &Cache::get, py::arg("key"))
+        .def("__getitem__", &Cache::get, py::arg("key"))
         .def("keys", &Cache::keys)
         .def("exists", &Cache::exists, py::arg("key"))
         .def("add", _add_item,

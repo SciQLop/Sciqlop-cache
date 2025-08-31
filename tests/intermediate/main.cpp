@@ -45,14 +45,14 @@ SCENARIO("Limit testing sciqlop_cache", "[cache]")
             REQUIRE(cache.set(empty_str, test_value));
             auto value = cache.get(empty_str);
             REQUIRE(value.has_value());
-            REQUIRE(std::string(value->begin(), value->end()) == test_value);
+            REQUIRE(std::string(value->data(), value->data()+value->size()) == test_value);
         }
 
         WHEN("We try to set a key with empty value") {
             REQUIRE(cache.set(test_value, empty_data));
             auto loaded = cache.get(test_value);
             REQUIRE(loaded.has_value()); // fails because empty vectors are treated as no value
-            REQUIRE(loaded->empty());
+            REQUIRE(loaded->size()==0);
         }
     }
 

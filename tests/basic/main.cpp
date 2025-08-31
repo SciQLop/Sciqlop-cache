@@ -48,14 +48,14 @@ SCENARIO("Testing file I/O with Bytes concept", "[bytes][fileio]") {
 
             THEN("The file should exist") {
                 REQUIRE(write_success == true);
-                REQUIRE(fileExists(test_file) == true);
+                REQUIRE(std::filesystem::exists(test_file) == true);
             }
 
             THEN("The file contents should match the original buffer") {
                 REQUIRE(write_success == true);
-                auto loaded_data = getBytes(test_file);
-                REQUIRE(loaded_data->size() == test_data.size());
-                REQUIRE(std::memcmp(loaded_data->data(), test_data.data(), test_data.size()) == 0);
+                auto loaded_data = Buffer(test_file);
+                REQUIRE(loaded_data.size() == test_data.size());
+                REQUIRE(std::memcmp(loaded_data.data(), test_data.data(), test_data.size()) == 0);
             }
         }
 
@@ -63,25 +63,25 @@ SCENARIO("Testing file I/O with Bytes concept", "[bytes][fileio]") {
             std::string missing_file = "non_existent_file.bin";
 
             THEN("fileExists should return false") {
-                REQUIRE_FALSE(fileExists(missing_file));
+                REQUIRE_FALSE(std::filesystem::exists(missing_file));
             }
         }
 
         WHEN("We delete the file after writing") {
             REQUIRE(storeBytes(test_file, test_data));
-            REQUIRE(fileExists(test_file));
+            REQUIRE(std::filesystem::exists(test_file));
 
-            bool delete_success = deleteFile(test_file);
+            bool delete_success = std::filesystem::remove(test_file);
 
             THEN("The file should no longer exist") {
                 REQUIRE(delete_success == true);
-                REQUIRE_FALSE(fileExists(test_file));
+                REQUIRE_FALSE(std::filesystem::exists(test_file));
             }
         }
     }
 
-    if (fileExists(test_file))
-        deleteFile(test_file);
+    if (std::filesystem::exists(test_file))
+        std::filesystem::remove(test_file);
 }
 
 SCENARIO("Testing sciqlop_cache", "[cache]")
@@ -140,9 +140,9 @@ SCENARIO("Testing sciqlop_cache", "[cache]")
             auto value1 = cache.get("key1");
             auto value2 = cache.get("key2");
             REQUIRE(value1.has_value());
-            REQUIRE(value1.value() == original_value1);
+            REQUIRE(value1.value().to_vector() == original_value1);
             REQUIRE(value2.has_value());
-            REQUIRE(value2.value() == original_value2);
+            REQUIRE(value2.value().to_vector() == original_value2);
 
             THEN("We can count the number of items in the cache")
             {
@@ -184,9 +184,9 @@ SCENARIO("Testing sciqlop_cache", "[cache]")
             REQUIRE_FALSE(cache.add("key1", original_value2));
             REQUIRE(cache.add("key2", original_value2));
             auto value1 = cache.get("key1");
-            REQUIRE(value1.value() == original_value1);
+            REQUIRE(value1.value().to_vector() == original_value1);
             auto value2 = cache.get("key2");
-            REQUIRE(value2.value() == original_value2);
+            REQUIRE(value2.value().to_vector() == original_value2);
         }
 
         WHEN("we test pop")
@@ -194,7 +194,7 @@ SCENARIO("Testing sciqlop_cache", "[cache]")
             cache.set("key_pop", original_value1);
             auto popped_value = cache.pop("key_pop");
             REQUIRE(popped_value.has_value());
-            REQUIRE(popped_value.value() == original_value1);
+            REQUIRE(popped_value.value().to_vector() == original_value1);
             REQUIRE_FALSE(cache.get("key_pop").has_value());
         }
 
@@ -259,11 +259,10 @@ SCENARIO("Testing sciqlop_cache", "[cache]")
                 }
                 REQUIRE(!filePath.empty());
                 REQUIRE(fs::file_size(filePath) == big_value.size());
-                auto loaded_value = getBytes(filePath);
-                REQUIRE(loaded_value.has_value());
-                REQUIRE(loaded_value->size() == big_value.size());
+                auto loaded_value = Buffer(filePath);
+                REQUIRE(loaded_value.size() == big_value.size());
                 REQUIRE(std::memcmp(
-                            loaded_value->data(), big_value.data(), big_value.size())
+                            loaded_value.data(), big_value.data(), big_value.size())
                     == 0);
             }
         }

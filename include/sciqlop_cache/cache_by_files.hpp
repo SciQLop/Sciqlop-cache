@@ -43,38 +43,6 @@ bool storeBytes(const std::filesystem::path &path, const T &bytes)
     return res;
 }
 
-template <Bytes Buffer = std::vector<char>>
-std::optional<Buffer> getBytes(const std::filesystem::path &path)
-{
-    if(std::ifstream file{path, std::ios::binary | std::ios::ate})
-    {
-        std::streamsize size = file.tellg();
-        file.seekg(0, std::ios::beg);
-        Buffer buffer(static_cast<size_t>(size));
-        if (!file.read(std::data(buffer), size)) {
-            std::cerr << "Failed to read file: " << path << std::endl;
-            return std::nullopt;
-        }
-        return buffer;
-    }
-    std::cerr << "Failed to open file for reading: " << path << std::endl;
-    return std::nullopt;
-}
-
-bool fileExists(const std::string& path) {
-    struct stat buffer;
-    return (stat(path.c_str(), &buffer) == 0);
-}
-
-bool deleteFile(const std::string &path)
-{
-    if (std::remove(path.c_str()) != 0) {
-        std::cerr << "Error deleting file: " << path << std::endl;
-        return false;
-    }
-    return true;
-}
-
 std::string generate_random_filename()
 {
     static std::random_device rd;

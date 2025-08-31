@@ -34,6 +34,19 @@ class Cache(_Cache):
             return pickle.loads(value)
         return default
 
+    def pop(self, key:AnyStr, default=None) -> Any:
+        """
+        Remove a value from the cache and return it.
+        Parameters:
+        key (str): The key of the value to remove.
+        Returns:
+        Any: The value associated with the key, or `default` if the key does not exist.
+        """
+        value = super().pop(key)
+        if value is not None:
+            return pickle.loads(value)
+        return default
+
     def add(self, key:AnyStr, value:Any, expire:Optional[Union[timedelta, int, float]]=None) -> bool:
         """
         Add a value to the cache if the key does not already exist.

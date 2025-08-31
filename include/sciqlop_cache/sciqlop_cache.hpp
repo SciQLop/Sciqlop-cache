@@ -23,6 +23,95 @@
 #include <string>
 #include <cstdio>
 #include <filesystem>
+#include <cpp_utils/io/memory_mapped_file.hpp>
+
+using namespace cpp_utils::io;
+class Buffer
+{
+    using shared_mmf = std::shared_ptr<memory_mapped_file>;
+    std::variant<shared_mmf, std::vector<char>> _data;
+    const char *data_ptr = nullptr;
+    std::size_t size_ = 0;
+
+    void init_from_variant()
+    {
+        if (std::holds_alternative<shared_mmf>(_data)) {
+            auto& mmf = std::get<shared_mmf>(_data);
+            data_ptr = mmf->data();
+            size_ = mmf->size();
+        } else if (std::holds_alternative<std::vector<char>>(_data)) {
+            auto& v = std::get<std::vector<char>>(_data);
+            data_ptr = v.data();
+            size_ = v.size();
+        }
+    }
+
+public:
+
+    Buffer(const std::filesystem::path& path) : _data(std::make_shared<memory_mapped_file>(path.string()))
+    {
+        auto& mmf = std::get<shared_mmf>(_data);
+        data_ptr = mmf->data();
+        size_ = mmf->size();
+    }
+
+    Buffer(std::vector<char>&& vec) : _data(std::move(vec))
+    {
+        auto& v = std::get<std::vector<char>>(_data);
+        data_ptr = v.data();
+        size_ = v.size();
+    }
+
+    Buffer(const Buffer& other)
+        : _data(other._data)
+    {
+        init_from_variant();
+    }
+
+    Buffer(Buffer&& other) noexcept
+        : _data(std::move(other._data)), data_ptr(other.data_ptr), size_(other.size_)
+    {
+        other.data_ptr = nullptr;
+        other.size_ = 0;
+    }
+
+    ~Buffer() = default;
+
+    Buffer& operator=(const Buffer& other)
+    {
+        if (this != &other) {
+            _data = other._data;
+            init_from_variant();
+        }
+        return *this;
+    }
+
+    Buffer& operator=(Buffer&& other) noexcept
+    {
+        if (this != &other) {
+            _data = std::move(other._data);
+            data_ptr = other.data_ptr;
+            size_ = other.size_;
+            other.data_ptr = nullptr;
+            other.size_ = 0;
+        }
+        return *this;
+    }
+
+    [[nodiscard]]inline operator bool() const noexcept { return data_ptr != nullptr; }
+    [[nodiscard]]inline const char* data() const noexcept { return data_ptr; }
+    [[nodiscard]]inline size_t size() const noexcept { return size_; }
+
+    [[nodiscard]]inline std::vector<char> to_vector() const
+    {
+        if (std::holds_alternative<std::vector<char>>(_data)) {
+            return std::get<std::vector<char>>(_data);
+        } else if (std::holds_alternative<shared_mmf>(_data)) {
+            return std::vector<char>(data_ptr, data_ptr + size_);
+        }
+        return {};
+    }
+};
 
 class Cache
 {
@@ -44,7 +133,7 @@ public:
             throw std::runtime_error("Failed to initialize database schema.");
     }
 
-    bool init()
+    [[nodiscard]]bool init()
     {
         const std::string sql = R"(
             CREATE TABLE IF NOT EXISTS cache (
@@ -81,7 +170,7 @@ public:
         return {};
     }
 
-    bool exists(const std::string& key)
+    [[nodiscard]]bool exists(const std::string& key)
     {
         if(auto r = db.exec<bool>("SELECT 1 FROM cache WHERE key = ? LIMIT 1;", key))
             return *r;
@@ -107,19 +196,19 @@ public:
         return storeBytes(file_path, value);
     }
 
-    std::optional<std::vector<char>> get(const std::string& key)
+    std::optional<Buffer> get(const std::string& key)
     {
         if(auto values = db.exec<std::vector<char>, std::filesystem::path>("SELECT value, path FROM cache WHERE key = ?;", key)) {
-            const auto &[value, path] = *values;
+            const auto &[_, path] = *values;
 
             if (!path.empty()) {
-                auto result = getBytes(path);
+                auto result = Buffer(path);
                 if (result)
                     return result;
                 else
                     del(key);
             }
-            return value;
+            return Buffer(std::move(std::get<0>(*values)));
         }
         return std::nullopt;
     }
@@ -163,9 +252,9 @@ public:
         }
     }
 
-    std::optional<std::vector<char>> pop(const std::string& key)
+    std::optional<Buffer> pop(const std::string& key)
     {
-        std::optional<std::vector<char>> result = get(key);
+        std::optional<Buffer> result = get(key);
 
         if (!del(key))
             std::cerr << "Error deleting key: " << key << std::endl;
