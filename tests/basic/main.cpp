@@ -212,7 +212,7 @@ SCENARIO("Testing sciqlop_cache", "[cache]")
 
     GIVEN("a cache used to store a large (>500 bytes) value")
     {
-        std::vector<char> big_value(1024);
+        std::vector<char> big_value(1024*1024*32);
         std::random_device rd;
         std::mt19937 gen(rd());
         std::uniform_int_distribution<int> dist(0, 255);

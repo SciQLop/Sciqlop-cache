@@ -121,6 +121,7 @@ class Cache
     std::mutex global_mutex;
     bool auto_clean = false;
     Database db;
+    std::size_t _file_size_threshold = 8*1024;
 
 public:
     static constexpr std::string_view db_fname = "sciqlop-cache.db";
@@ -156,6 +157,11 @@ public:
         return result;
     }
 
+    [[nodiscard]] std::size_t file_size_threshold()
+    {
+        return _file_size_threshold;
+    }
+
     [[nodiscard]] std::size_t count()
     {
         if (auto r = db.exec<std::size_t>("SELECT COUNT(*) FROM cache;"))
@@ -186,7 +192,7 @@ public:
     {
         const auto now = std::chrono::system_clock::now();
 
-        if (std::size(value) <= 500)
+        if (std::size(value) <= _file_size_threshold)
             return db.exec("REPLACE INTO cache (key, value, expire, last_update) VALUES (?, ?, ?, ?);", key, value, now + expire, now);
 
         const auto filename = generate_random_filename();
@@ -223,7 +229,7 @@ public:
     {
         const auto now = std::chrono::system_clock::now();
 
-        if (std::size(value) <= 500)
+        if (std::size(value) <= _file_size_threshold)
             return db.exec("INSERT INTO cache (key, value, expire, last_update) VALUES (?, ?, ?, ?);", key, value, now + expire, now);
 
         const auto filename = generate_random_filename();
