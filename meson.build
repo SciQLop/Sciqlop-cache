@@ -32,7 +32,7 @@ nanobind_dep = dependency('nanobind')
 hedley_dep = dependency('hedley')
 fmt_dep = dependency('fmt')
 sqlite3_dep = dependency('sqlite3')
-cpp_utils = dependency('cpp_utils', required : true,  default_options : ['cpp_std=c++20'])
+cpp_utils = dependency('cpp_utils', required : true,  default_options : ['cpp_std=c++20', 'with_tests=false'])
 stduuid = dependency('stduuid', required : true)
 
 if build_machine.system() == 'windows'
