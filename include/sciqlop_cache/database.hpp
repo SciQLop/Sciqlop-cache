@@ -7,7 +7,8 @@
 
 #pragma once
 
-#include "../utils/time.hpp"
+#include "sciqlop_cache/utils/time.hpp"
+#include "sciqlop_cache/utils/concepts.hpp"
 #include <cpp_utils/lifetime/scope_leaving_guards.hpp>
 #include <cpp_utils/types/detectors.hpp>
 #include <filesystem>
@@ -29,12 +30,6 @@ struct SQLiteDeleter
     }
 };
 
-template <typename T>
-concept Bytes = requires(T t) {
-    { std::size(t) } -> std::convertible_to<std::size_t>;
-    { std::data(t) } -> std::convertible_to<const char*>;
-};
-
 void sql_bind(const auto& stmt, int col, TimePoint auto&& value)
 {
     sqlite3_bind_double(stmt, col, time_point_to_epoch(value));
@@ -49,6 +44,11 @@ void sql_bind(const auto& stmt, int col, Bytes auto&& value)
 void sql_bind(const auto& stmt, int col, const std::string& value)
 {
     sqlite3_bind_text(stmt, col, value.c_str(), -1, SQLITE_STATIC);
+}
+
+void sql_bind(const auto& stmt, int col, const std::size_t value)
+{
+    sqlite3_bind_int64(stmt, col, value);
 }
 
 void sql_bind_all(const auto& stm, auto&&... values)
@@ -136,11 +136,73 @@ auto sql_get_all(const auto& stm)
     return _sql_get_all<rtypes...>(stm, std::index_sequence_for<rtypes...> {});
 }
 
+class BindableCompiledStatement
+{
+    sqlite3_stmt* stmt;
+public:
+    BindableCompiledStatement() : stmt(nullptr) {}
+    BindableCompiledStatement(sqlite3_stmt* s) : stmt(s) {}
+    ~BindableCompiledStatement()
+    {
+        if (stmt)
+            sqlite3_reset(stmt);
+    }
+};
+
+class CompiledStatement
+{
+    sqlite3_stmt* stmt;
+    std::string source_sql;
+    public:
+
+    CompiledStatement(const std::string& sql) : stmt(nullptr), source_sql(std::move(sql)) {}
+
+    CompiledStatement(sqlite3* db, const std::string& sql ) : stmt(nullptr), source_sql(sql)
+    {
+        compile(db);
+    }
+
+    ~CompiledStatement()
+    {
+        if (stmt)
+            sqlite3_finalize(stmt);
+    }
+
+    inline bool compile(sqlite3* db)
+    {
+        if (stmt)
+            sqlite3_finalize(stmt);
+        stmt = nullptr;
+        if (sqlite3_prepare_v2(db, source_sql.c_str(), -1, &stmt, nullptr) != SQLITE_OK)
+        {
+            std::cerr << "Error preparing statement: " << sqlite3_errmsg(db) << std::endl;
+            stmt = nullptr;
+            return false;
+        }
+        return true;
+    }
+
+    [[nodiscard]] inline bool valid() const { return stmt != nullptr; }
+    [[nodiscard]] inline sqlite3_stmt* get() const { return stmt; }
+
+    [[nodiscard]] inline BindableCompiledStatement bind_all(const auto&... values) const
+    {
+        if (valid())
+        {
+            sql_bind_all(stmt, values...);
+            return BindableCompiledStatement(stmt);
+        }
+        return BindableCompiledStatement();
+    }
+};
+
+
+
+
 class Database
 {
 private:
     std::unique_ptr<sqlite3, SQLiteDeleter> db;
-    std::mutex db_mutex;
 
 public:
     Database() : db(nullptr, SQLiteDeleter()) { ; }
@@ -155,8 +217,6 @@ public:
 
     int open(const std::filesystem::path& db_path)
     {
-        std::lock_guard<std::mutex> lock(db_mutex);
-
         sqlite3* tmp_db = nullptr;
         auto db_path_str = db_path.string();
         int check = sqlite3_open_v2(
@@ -187,13 +247,10 @@ public:
 
     sqlite3* get() const { return db.get(); }
 
-    std::mutex& mutex() { return db_mutex; }
-
     bool valid() const { return db != nullptr; }
 
     bool exec(const std::string& sql)
     {
-        std::lock_guard<std::mutex> lock(db_mutex);
         char* errMsg = nullptr;
 
         int rc = sqlite3_exec(db.get(), sql.c_str(), nullptr, nullptr, &errMsg);
@@ -204,6 +261,11 @@ public:
             return false;
         }
         return true;
+    }
+
+    inline CompiledStatement prepare(const char* sql)
+    {
+        return CompiledStatement(db.get(), sql);
     }
 
     template <typename... rtypes>
@@ -218,27 +280,23 @@ public:
     }
 
     template <typename... rtypes>
-    auto exec(const std::string& sql, const auto&... values)
+    auto exec(const CompiledStatement& stmt, const auto&... values)
         -> decltype(exec_return_type<rtypes...>())
     {
         using namespace cpp_utils::lifetime;
-        std::lock_guard<std::mutex> lock(db_mutex);
-        sqlite3_stmt* stmt;
-
-        if (sqlite3_prepare_v2(db.get(), sql.c_str(), -1, &stmt, nullptr) == SQLITE_OK)
+        if (stmt.valid())
         {
-            sql_bind_all(stmt, values...);
-            auto cpp_utils_scope_guard = scope_leaving_guard<sqlite3_stmt, sqlite3_finalize>(stmt);
-            int rc = sqlite3_step(stmt);
+            auto binded = stmt.bind_all(std::forward<decltype(values)>(values)...);
+            int rc = sqlite3_step(stmt.get());
             if (rc == SQLITE_ROW)
             {
                 if constexpr (sizeof...(rtypes) == 1)
                 {
-                    return sql_get<rtypes...>(stmt, 0);
+                    return sql_get<rtypes...>(stmt.get(), 0);
                 }
                 if constexpr (sizeof...(rtypes) > 1)
                 {
-                    return sql_get_all<rtypes...>(stmt);
+                    return sql_get_all<rtypes...>(stmt.get());
                 }
             }
             else if (rc == SQLITE_CONSTRAINT)
@@ -260,5 +318,12 @@ public:
             return false;
         else
             return std::nullopt;
+    }
+
+    template <typename... rtypes>
+    auto exec(const std::string& sql, const auto&... values)
+        -> decltype(exec_return_type<rtypes...>())
+    {
+        return exec<rtypes...>(CompiledStatement{db.get(), sql.c_str()}, std::forward<decltype(values)>(values)...);
     }
 };

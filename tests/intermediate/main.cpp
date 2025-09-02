@@ -18,9 +18,9 @@
 #endif
 // #include "tests_config.hpp"
 
-#include "../../include/sciqlop_cache/sciqlop_cache.hpp"
-#include "../../include/sciqlop_cache/database.hpp"
-#include "../include/utils/time.hpp"
+#include "sciqlop_cache/sciqlop_cache.hpp"
+#include "sciqlop_cache/database.hpp"
+#include "sciqlop_cache/utils/time.hpp"
 using namespace std::chrono_literals;
 
 SCENARIO("Limit testing sciqlop_cache", "[cache]")

@@ -1,13 +1,10 @@
 #include <algorithm>
 #include <chrono>
-#include <cstdint>
 #include <cstring>
 #include <filesystem>
 #include <optional>
 #include <random>
 #include <string>
-#include <tuple>
-#include <unordered_map>
 #include <vector>
 
 #if __has_include(<catch2/catch_all.hpp>)
@@ -18,10 +15,14 @@
 #endif
 // #include "tests_config.hpp"
 
-#include "../../include/sciqlop_cache/sciqlop_cache.hpp"
-#include "../../include/sciqlop_cache/database.hpp"
-#include "../include/utils/time.hpp"
+#include <cpp_utils/lifetime/scope_leaving_guards.hpp>
+
+#include "sciqlop_cache/sciqlop_cache.hpp"
+#include "sciqlop_cache/disk_storage.hpp"
+#include "sciqlop_cache/utils/time.hpp"
 using namespace std::chrono_literals;
+
+
 
 SCENARIO("Testing time conversions", "[time]")
 {
@@ -38,24 +39,38 @@ SCENARIO("Testing time conversions", "[time]")
 }
 
 SCENARIO("Testing file I/O with Bytes concept", "[bytes][fileio]") {
-    std::string test_file = "./test_bytes_file.bin";
+    std::filesystem::path test_file;
     std::vector<char> test_data(512);
     std::generate(test_data.begin(), test_data.end(), std::rand);
+    DiskStorage disk_storage(std::filesystem::temp_directory_path() / "BasicTest02");
+    auto scope_guard = cpp_utils::lifetime::scope_leaving_guard<DiskStorage, [](DiskStorage* ds) { ds->remove(ds->path(), true); }>(&disk_storage);
+
 
     GIVEN("A buffer of random data and a file path") {
         WHEN("We store the bytes to a file") {
-            bool write_success = storeBytes(test_file, test_data);
+            auto write_success = disk_storage.store(test_data);
+            test_file = *write_success;
 
             THEN("The file should exist") {
-                REQUIRE(write_success == true);
+                REQUIRE(bool(write_success) == true);
                 REQUIRE(std::filesystem::exists(test_file) == true);
             }
 
             THEN("The file contents should match the original buffer") {
-                REQUIRE(write_success == true);
                 auto loaded_data = Buffer(test_file);
                 REQUIRE(loaded_data.size() == test_data.size());
                 REQUIRE(std::memcmp(loaded_data.data(), test_data.data(), test_data.size()) == 0);
+            }
+
+            THEN("We delete the file after writing") {
+                REQUIRE(std::filesystem::exists(test_file));
+
+                bool delete_success = std::filesystem::remove(test_file);
+
+                THEN("The file should no longer exist") {
+                    REQUIRE(delete_success == true);
+                    REQUIRE_FALSE(std::filesystem::exists(test_file));
+                }
             }
         }
 
@@ -66,22 +81,8 @@ SCENARIO("Testing file I/O with Bytes concept", "[bytes][fileio]") {
                 REQUIRE_FALSE(std::filesystem::exists(missing_file));
             }
         }
-
-        WHEN("We delete the file after writing") {
-            REQUIRE(storeBytes(test_file, test_data));
-            REQUIRE(std::filesystem::exists(test_file));
-
-            bool delete_success = std::filesystem::remove(test_file);
-
-            THEN("The file should no longer exist") {
-                REQUIRE(delete_success == true);
-                REQUIRE_FALSE(std::filesystem::exists(test_file));
-            }
-        }
     }
 
-    if (std::filesystem::exists(test_file))
-        std::filesystem::remove(test_file);
 }
 
 SCENARIO("Testing sciqlop_cache", "[cache]")
@@ -126,6 +127,7 @@ SCENARIO("Testing sciqlop_cache", "[cache]")
     GIVEN("a cache used to store a small (<500 bytes) value")
     {
         Cache cache(db_path, 1000);
+        auto scope_guard = cpp_utils::lifetime::scope_leaving_guard<Cache, [](Cache* c) { std::filesystem::remove_all(c->path()); }>(&cache);
         REQUIRE(cache.check() == true);
 
         WHEN("we test check")
@@ -216,6 +218,7 @@ SCENARIO("Testing sciqlop_cache", "[cache]")
         std::random_device rd;
         std::mt19937 gen(rd());
         std::uniform_int_distribution<int> dist(0, 255);
+        auto scope_guard = cpp_utils::lifetime::scope_leaving_guard<std::filesystem::path, [](std::filesystem::path* p) { std::filesystem::remove_all(*p); }>(&db_path);
         for (auto& b : big_value) {
             b = static_cast<char>(dist(gen));
         }
@@ -268,5 +271,4 @@ SCENARIO("Testing sciqlop_cache", "[cache]")
         }
     }
 
-    std::filesystem::remove_all(db_path);
 }

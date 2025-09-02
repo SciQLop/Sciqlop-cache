@@ -8,7 +8,7 @@ __all__ = ["Cache"]
 
 class Cache(_Cache):
 
-    def __init__(self, cache_path=None):
+    def __init__(self, cache_path=".cache/"):
         super().__init__(cache_path=cache_path)
         self._pickle_protocol = pickle.HIGHEST_PROTOCOL
 
@@ -43,7 +43,7 @@ class Cache(_Cache):
         """
         value = super().get(key)
         if value is not None:
-            return pickle.loads(value)
+            return pickle.loads(value.memoryview())
         return default
 
     def pop(self, key:AnyStr, default=None) -> Any:
@@ -56,7 +56,7 @@ class Cache(_Cache):
         """
         value = super().pop(key)
         if value is not None:
-            return pickle.loads(value)
+            return pickle.loads(value.memoryview())
         return default
 
     def add(self, key:AnyStr, value:Any, expire:Optional[Union[timedelta, int, float]]=None) -> bool:

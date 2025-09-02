@@ -28,7 +28,7 @@ if('clang'==cpp.get_id())
     add_global_arguments('-fsized-deallocation', language : 'cpp')
 endif
 
-pybind11_dep = dependency('pybind11')
+nanobind_dep = dependency('nanobind')
 hedley_dep = dependency('hedley')
 fmt_dep = dependency('fmt')
 sqlite3_dep = dependency('sqlite3')

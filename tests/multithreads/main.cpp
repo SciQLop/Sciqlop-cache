@@ -19,9 +19,9 @@
 #endif
 // #include "tests_config.hpp"
 
-#include "../../include/sciqlop_cache/sciqlop_cache.hpp"
-#include "../../include/sciqlop_cache/database.hpp"
-#include "../include/utils/time.hpp"
+#include "sciqlop_cache/sciqlop_cache.hpp"
+#include "sciqlop_cache/database.hpp"
+#include "sciqlop_cache/utils/time.hpp"
 
 
 void read_write_cache(std::filesystem::path db_path, const std::string& key, const std::vector<char>& value, int iterations)

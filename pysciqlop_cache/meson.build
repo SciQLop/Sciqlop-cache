@@ -13,7 +13,7 @@ endif
 
 
 _pysciqlop_cache = python3.extension_module('_pysciqlop_cache', 'pysciqlop_cache.cpp',
-                         dependencies: [sciqlop_cache_dep, fmt_dep, pybind11_dep,python3.dependency()],
+                         dependencies: [sciqlop_cache_dep, fmt_dep, nanobind_dep,python3.dependency()],
                          link_args: link_args,
                          cpp_args: pysciqlop_cache_cpp_args,
                          subdir: 'pysciqlop_cache',
