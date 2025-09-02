@@ -93,6 +93,7 @@ SCENARIO("Testing sciqlop_cache", "[cache]")
     std::generate(original_value1.begin(), original_value1.end(), std::rand);
     std::vector<char> original_value2(128);
     std::generate(original_value2.begin(), original_value2.end(), std::rand);
+    auto scope_guard = cpp_utils::lifetime::scope_leaving_guard<std::filesystem::path, [](std::filesystem::path* p) { std::filesystem::remove_all(*p); }>(&db_path);
 
     GIVEN("a cache we'll open and close")
     {
@@ -176,6 +177,7 @@ SCENARIO("Testing sciqlop_cache", "[cache]")
             cache.set("key1", original_value1);
             cache.touch("key1", 0s);
             cache.expire();
+            usleep(2000);
             REQUIRE_FALSE(cache.get("key1").has_value());
         }
 

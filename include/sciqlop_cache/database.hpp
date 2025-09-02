@@ -136,17 +136,19 @@ auto sql_get_all(const auto& stm)
     return _sql_get_all<rtypes...>(stm, std::index_sequence_for<rtypes...> {});
 }
 
-class BindableCompiledStatement
+class BindedCompiledStatement
 {
     sqlite3_stmt* stmt;
 public:
-    BindableCompiledStatement() : stmt(nullptr) {}
-    BindableCompiledStatement(sqlite3_stmt* s) : stmt(s) {}
-    ~BindableCompiledStatement()
+    BindedCompiledStatement() : stmt(nullptr) {}
+    BindedCompiledStatement(sqlite3_stmt* s) : stmt(s) {}
+    ~BindedCompiledStatement()
     {
         if (stmt)
             sqlite3_reset(stmt);
     }
+    [[nodiscard]] inline bool valid() const { return stmt != nullptr; }
+    [[nodiscard]] inline sqlite3_stmt* get() const { return stmt; }
 };
 
 class CompiledStatement
@@ -185,14 +187,14 @@ class CompiledStatement
     [[nodiscard]] inline bool valid() const { return stmt != nullptr; }
     [[nodiscard]] inline sqlite3_stmt* get() const { return stmt; }
 
-    [[nodiscard]] inline BindableCompiledStatement bind_all(const auto&... values) const
+    [[nodiscard]] inline BindedCompiledStatement bind_all(const auto&... values) const
     {
         if (valid())
         {
             sql_bind_all(stmt, values...);
-            return BindableCompiledStatement(stmt);
+            return BindedCompiledStatement(stmt);
         }
-        return BindableCompiledStatement();
+        return BindedCompiledStatement();
     }
 };
 
@@ -280,6 +282,42 @@ public:
     }
 
     template <typename... rtypes>
+    auto step(const BindedCompiledStatement& stmt)
+        -> decltype(exec_return_type<rtypes...>())
+    {
+        int rc = sqlite3_step(stmt.get());
+        if (rc == SQLITE_ROW)
+        {
+            if constexpr (sizeof...(rtypes) == 1)
+            {
+                return sql_get<rtypes...>(stmt.get(), 0);
+            }
+            if constexpr (sizeof...(rtypes) > 1)
+            {
+                return sql_get_all<rtypes...>(stmt.get());
+            }
+        }
+        else if (rc == SQLITE_CONSTRAINT)
+        { // handle when trying to insert a duplicate key
+            if constexpr (sizeof...(rtypes) == 0)
+                return false;
+            else
+                return std::nullopt;
+        }
+        else if (rc == SQLITE_DONE)
+        {
+            if constexpr (sizeof...(rtypes) == 0)
+                return true;
+            else
+                return std::nullopt;
+        }
+        if constexpr (sizeof...(rtypes) == 0)
+            return false;
+        else
+            return std::nullopt;
+    }
+
+    template <typename... rtypes>
     auto exec(const CompiledStatement& stmt, const auto&... values)
         -> decltype(exec_return_type<rtypes...>())
     {
@@ -287,32 +325,7 @@ public:
         if (stmt.valid())
         {
             auto binded = stmt.bind_all(std::forward<decltype(values)>(values)...);
-            int rc = sqlite3_step(stmt.get());
-            if (rc == SQLITE_ROW)
-            {
-                if constexpr (sizeof...(rtypes) == 1)
-                {
-                    return sql_get<rtypes...>(stmt.get(), 0);
-                }
-                if constexpr (sizeof...(rtypes) > 1)
-                {
-                    return sql_get_all<rtypes...>(stmt.get());
-                }
-            }
-            else if (rc == SQLITE_CONSTRAINT)
-            { // handle when trying to insert a duplicate key
-                if constexpr (sizeof...(rtypes) == 0)
-                    return false;
-                else
-                    return std::nullopt;
-            }
-            else if (rc == SQLITE_DONE)
-            {
-                if constexpr (sizeof...(rtypes) == 0)
-                    return true;
-                else
-                    return std::nullopt;
-            }
+            return step<rtypes...>(binded);
         }
         if constexpr (sizeof...(rtypes) == 0)
             return false;

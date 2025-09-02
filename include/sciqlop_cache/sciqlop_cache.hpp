@@ -27,28 +27,35 @@ class _Cache
 {
     std::filesystem::path cache_path;
     size_t max_size;
-    std::mutex global_mutex;
     bool auto_clean = false;
     Database db;
     std::unique_ptr<Storage> storage;
     std::size_t _file_size_threshold = 8 * 1024;
 
-    CompiledStatement statements[11]
-        = { CompiledStatement { "SELECT COUNT(*) FROM cache;" },
-            CompiledStatement { "SELECT key FROM cache;" },
-            CompiledStatement { "SELECT 1 FROM cache WHERE key = ? LIMIT 1;" },
-            CompiledStatement { "SELECT value, path FROM cache WHERE key = ? AND (expire IS NULL OR expire > strftime('%s', 'now'));" },
-            CompiledStatement { "SELECT path FROM cache WHERE key = ? AND (expire IS NULL OR expire > strftime('%s', 'now'));" },
-            CompiledStatement {
-                "REPLACE INTO cache (key, value, expire, size) VALUES (?, ?, ?, ?);" },
-            CompiledStatement {
-                "REPLACE INTO cache (key, path, expire, size) VALUES (?, ?, ?, ?);" },
-            CompiledStatement {
-                "INSERT INTO cache (key, value, expire, size) VALUES (?, ?, ?, ?);" },
-            CompiledStatement {
-                "INSERT INTO cache (key, path, expire, size) VALUES (?, ?, ?, ?);" },
-            CompiledStatement { "DELETE FROM cache WHERE key = ?;" },
-            CompiledStatement { "UPDATE cache SET last_update = ?, expire = ? WHERE key = ?;" } };
+    CompiledStatement statements[13] = {
+        CompiledStatement { "SELECT COUNT(*) FROM cache;" },
+        CompiledStatement { "SELECT key FROM cache;" },
+        CompiledStatement { "SELECT 1 FROM cache WHERE key = ? LIMIT 1;" },
+        CompiledStatement { "SELECT value, path FROM cache WHERE key = ? AND (expire IS NULL OR "
+                            "expire > strftime('%s', 'now'));" },
+        CompiledStatement { "SELECT path FROM cache WHERE key = ? AND (expire IS NULL OR expire > "
+                            "strftime('%s', 'now'));" },
+        CompiledStatement { "REPLACE INTO cache (key, value, expire, size) VALUES (?, ?, "
+                            "strftime('%s', 'now') + ?, ?);" },
+        CompiledStatement { "REPLACE INTO cache (key, path, expire, size) VALUES (?, ?, "
+                            "strftime('%s', 'now') + ?, ?);" },
+        CompiledStatement { "INSERT INTO cache (key, value, expire, size) VALUES (?, ?, "
+                            "strftime('%s', 'now') + ?, ?);" },
+        CompiledStatement { "INSERT INTO cache (key, path, expire, size) VALUES (?, ?, "
+                            "strftime('%s', 'now') + ?, ?);" },
+        CompiledStatement { "DELETE FROM cache WHERE key = ?;" },
+        CompiledStatement { "UPDATE cache SET last_update = strftime('%s', 'now'), expire = strftime('%s', 'now') + ?, "
+                            "last_use = strftime('%s', 'now') WHERE key = ?;" },
+        CompiledStatement { "SELECT path FROM cache WHERE expire IS NOT NULL AND expire <= "
+                            "strftime('%s', 'now');" },
+        CompiledStatement {
+            "DELETE FROM cache WHERE expire IS NOT NULL AND expire <= strftime('%s', 'now');" }
+    };
 
     static inline constexpr auto _COUNT_STMT = 0;
     static inline constexpr auto _KEYS_STMT = 1;
@@ -61,6 +68,8 @@ class _Cache
     static inline constexpr auto _INSERT_PATH_STMT = 8;
     static inline constexpr auto _DELETE_STMT = 9;
     static inline constexpr auto _TOUCH_STMT = 10;
+    static inline constexpr auto _EXPIRE_STMT = 11;
+    static inline constexpr auto _EVICT_STMT = 12;
 
 
 public:
@@ -89,8 +98,7 @@ public:
             PRAGMA cache_size=10000;
             PRAGMA temp_store=MEMORY;
             PRAGMA mmap_size=268435456;
-            PRAGMA analysis_limit=1000;)"
-            );
+            PRAGMA analysis_limit=1000;)");
         if (!result)
             std::cerr << "PRAGMA exec failed in init()." << std::endl;
 
@@ -136,8 +144,7 @@ public:
             BEGIN
                 UPDATE meta SET value = COALESCE((SELECT SUM(size) FROM cache), 0) WHERE key = 'size';
             END;
-)"
-            );
+)");
 
         if (!result)
             std::cerr << "Table creation failed in init()." << std::endl;
@@ -198,15 +205,18 @@ public:
 
     inline bool set(const std::string& key, const Bytes auto& value, DurationConcept auto expire)
     {
-        const auto now = std::chrono::system_clock::now();
+        const double expires_secs
+            = std::chrono::duration_cast<std::chrono::seconds>(expire).count();
 
         if (std::size(value) <= _file_size_threshold)
-            return db.exec(statements[_REPLACE_VALUE_STMT], key, value, now + expire, std::size(value));
+            return db.exec(statements[_REPLACE_VALUE_STMT], key, value, expires_secs,
+                           std::size(value));
 
         if (const auto file_path = storage->store(value))
         {
             const auto file_path_str = file_path->string();
-            if (!db.exec(statements[_REPLACE_PATH_STMT], key, file_path_str, now + expire, std::size(value)))
+            if (!db.exec(statements[_REPLACE_PATH_STMT], key, file_path_str, expires_secs,
+                         std::size(value)))
                 return false;
         }
         else
@@ -244,7 +254,8 @@ public:
     // Add a value if the key doesn't already exist
     inline bool add(const std::string& key, const Bytes auto& value, DurationConcept auto expire)
     {
-        const auto now = std::chrono::system_clock::now();
+        const double expires_secs
+            = std::chrono::duration_cast<std::chrono::seconds>(expire).count();
 
         if (auto filepath = db.exec<std::filesystem::path>(statements[_GET_PATH_STMT], key))
         {
@@ -253,12 +264,14 @@ public:
         }
 
         if (std::size(value) <= _file_size_threshold)
-            return db.exec(statements[_INSERT_VALUE_STMT], key, value, now + expire, std::size(value));
+            return db.exec(statements[_INSERT_VALUE_STMT], key, value, expires_secs,
+                           std::size(value));
 
         if (const auto file_path = storage->store(value))
         {
             const auto file_path_str = file_path->string();
-            if (!db.exec(statements[_INSERT_PATH_STMT], key, file_path_str, now + expire, std::size(value)))
+            if (!db.exec(statements[_INSERT_PATH_STMT], key, file_path_str, expires_secs,
+                         std::size(value)))
                 return false;
         }
         else
@@ -305,64 +318,26 @@ public:
     // Touch a key to update its expiration time
     inline bool touch(const std::string& key, DurationConcept auto expire)
     {
-        return db.exec(statements[_TOUCH_STMT], std::chrono::system_clock::now(),
-                       std::chrono::system_clock::now() + expire, key);
+        auto expire_secs = std::chrono::duration_cast<std::chrono::seconds>(expire).count();
+        return db.exec(statements[_TOUCH_STMT], expire_secs, key);
     }
 
     inline void expire()
     {
-        std::lock_guard<std::mutex> lock(global_mutex);
-        using namespace std::chrono_literals;
-        const auto now = std::chrono::system_clock::now();
-        double now_ = time_point_to_epoch(now);
-        const char* sql = "SELECT id, path FROM cache WHERE expire IS NOT NULL AND expire <= ?";
-        sqlite3_stmt* stmt = nullptr;
-
-        if (sqlite3_prepare_v2(db.get(), sql, -1, &stmt, nullptr) != SQLITE_OK)
-            return;
-
-        sqlite3_bind_double(stmt, 1, now_);
-        std::vector<int> expired_ids;
-
-        while (sqlite3_step(stmt) == SQLITE_ROW)
         {
-            int id = sqlite3_column_int(stmt, 0);
-            const char* path = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
-
-            if (path && sizeof(path) > 0)
+            auto binded = statements[_EXPIRE_STMT].bind_all();
+            while (auto r = db.step<std::filesystem::path>(binded))
             {
-                std::filesystem::path file_path = std::filesystem::path(cache_path) / path;
-                std::error_code ec;
-                if (!std::filesystem::remove(file_path, ec) && ec)
+                const auto file_path = *r;
+                if (!storage->remove(file_path))
                 {
-                    std::cerr << "Failed to delete file: " << file_path << " (" << ec.message()
-                              << ")\n";
+                    std::cerr << "Failed to delete file: " << file_path << std::endl;
                 }
             }
-
-            expired_ids.push_back(id);
-        }
-        sqlite3_finalize(stmt);
-
-        const char* delete_sql = "DELETE FROM cache WHERE id = ?;";
-        if (sqlite3_prepare_v2(db.get(), delete_sql, -1, &stmt, nullptr) != SQLITE_OK)
-        {
-            std::cerr << "Failed to prepare DELETE statement: " << sqlite3_errmsg(db.get())
-                      << std::endl;
-            return;
         }
 
-        for (int id : expired_ids)
-        {
-            sqlite3_bind_int(stmt, 1, id);
-            if (sqlite3_step(stmt) != SQLITE_DONE)
-            {
-                std::cerr << "Failed to delete row with id " << id << ": "
-                          << sqlite3_errmsg(db.get()) << std::endl;
-            }
-            sqlite3_reset(stmt);
-        }
-        sqlite3_finalize(stmt);
+        if (!db.exec(statements[_EVICT_STMT]))
+            std::cerr << "Error deleting expired items from cache database." << std::endl;
     }
 
     // Delete items based on policy
@@ -370,7 +345,6 @@ public:
 
     inline void clear()
     {
-        std::lock_guard<std::mutex> lock(global_mutex);
         sqlite3_exec(db.get(), "DELETE FROM cache;", nullptr, nullptr, nullptr);
         if (std::filesystem::exists(cache_path) && std::filesystem::is_directory(cache_path))
         {
@@ -392,7 +366,6 @@ public:
     // need explaination and actually test everything
     inline bool check()
     {
-        std::lock_guard<std::mutex> lock(global_mutex);
         const char* sql = "SELECT COUNT(*) FROM cache;";
         sqlite3_stmt* stmt;
         if (sqlite3_prepare_v2(db.get(), sql, -1, &stmt, nullptr) != SQLITE_OK)
