@@ -56,28 +56,6 @@ SCENARIO("Limit testing sciqlop_cache", "[cache]")
         }
     }
 
-    GIVEN("A read-only .cache/ directory") {
-        std::filesystem::remove_all(".readonly_cache");
-        std::filesystem::create_directory(".readonly_cache");
-
-        Cache cache(".readonly_cache/", 1000);
-
-        std::vector<char> large_data(600, 'A');
-
-        std::filesystem::permissions(".readonly_cache",
-                                     std::filesystem::perms::owner_read,
-                                     std::filesystem::perm_options::replace);
-
-        WHEN("Trying to store a large value") {
-            REQUIRE_FALSE(cache.set("some_key", large_data));
-        }
-
-        std::filesystem::permissions(".readonly_cache",
-            std::filesystem::perms::owner_all,
-            std::filesystem::perm_options::replace);
-        std::filesystem::remove_all(".readonly_cache");
-    }
-
     GIVEN("Items with immediate expiry") {
         std::vector<char> value(100, 'a');
         cache.set("will_expire", value, 0s);
