@@ -37,8 +37,8 @@ class _Cache
         = { CompiledStatement { "SELECT COUNT(*) FROM cache;" },
             CompiledStatement { "SELECT key FROM cache;" },
             CompiledStatement { "SELECT 1 FROM cache WHERE key = ? LIMIT 1;" },
-            CompiledStatement { "SELECT value, path FROM cache WHERE key = ?;" },
-            CompiledStatement { "SELECT path FROM cache WHERE key = ?;" },
+            CompiledStatement { "SELECT value, path FROM cache WHERE key = ? AND (expire IS NULL OR expire > strftime('%s', 'now'));" },
+            CompiledStatement { "SELECT path FROM cache WHERE key = ? AND (expire IS NULL OR expire > strftime('%s', 'now'));" },
             CompiledStatement {
                 "REPLACE INTO cache (key, value, expire, size) VALUES (?, ?, ?, ?);" },
             CompiledStatement {
@@ -166,6 +166,13 @@ public:
     [[nodiscard]] inline std::size_t count()
     {
         if (auto r = db.exec<std::size_t>(statements[_COUNT_STMT]))
+            return *r;
+        return 0;
+    }
+
+    [[nodiscard]] inline size_t size()
+    {
+        if (auto r = db.exec<size_t>("SELECT value FROM meta WHERE key = 'size';"))
             return *r;
         return 0;
     }

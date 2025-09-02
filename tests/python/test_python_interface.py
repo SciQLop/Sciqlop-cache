@@ -41,8 +41,9 @@ class TestCache(unittest.TestCase):
         value = "test_expire_value"
         self.cache.set(key, value, expire=1)
         time.sleep(2)
-        self.cache.expire()
         assert self.cache.get(key) is None, "Cache should return None after expiration"
+
+
 
 
 if __name__ == "__main__":
