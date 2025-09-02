@@ -12,7 +12,7 @@ class TestCache(unittest.TestCase):
         Set up the test environment.
         """
         self.tmp_dir = TemporaryDirectory(delete=False)
-        self.cache = Cache(str(self.tmp_dir))
+        self.cache = Cache(self.tmp_dir.name)
 
     def tearDown(self):
         """
@@ -20,7 +20,7 @@ class TestCache(unittest.TestCase):
         """
         if hasattr(self, 'cache'):
             del self.cache
-        shutil.rmtree(str(self.tmp_dir))
+        shutil.rmtree(self.tmp_dir.name)
 
     def test_simple_set_get(self):
         """

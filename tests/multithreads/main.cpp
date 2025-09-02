@@ -22,6 +22,7 @@
 #include "sciqlop_cache/sciqlop_cache.hpp"
 #include "sciqlop_cache/database.hpp"
 #include "sciqlop_cache/utils/time.hpp"
+#include <cpp_utils/lifetime/scope_leaving_guards.hpp>
 
 
 void read_write_cache(std::filesystem::path db_path, const std::string& key, const std::vector<char>& value, int iterations)
@@ -54,6 +55,8 @@ SCENARIO("Testing time conversions", "[time]")
     std::generate(original_value.begin(), original_value.end(), std::rand);
     int thread_count = std::thread::hardware_concurrency()*2;
     int iterations_per_thread = 1000;
+    auto scope_guard = cpp_utils::lifetime::scope_leaving_guard<std::filesystem::path, [](std::filesystem::path* p) { std::filesystem::remove_all(*p); }>(&db_path);
+
     GIVEN("a cache accessed by multiple threads")
     {
         WHEN("multiple threads read and write to the cache concurrently")

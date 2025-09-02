@@ -22,6 +22,7 @@
 #include "sciqlop_cache/database.hpp"
 #include "sciqlop_cache/utils/time.hpp"
 using namespace std::chrono_literals;
+#include <cpp_utils/lifetime/scope_leaving_guards.hpp>
 
 SCENARIO("Limit testing sciqlop_cache", "[cache]")
 {
@@ -29,6 +30,7 @@ SCENARIO("Limit testing sciqlop_cache", "[cache]")
     if (std::filesystem::exists(db_path))
         std::filesystem::remove_all(db_path);
     Cache cache(db_path, 1000);
+    auto scope_guard = cpp_utils::lifetime::scope_leaving_guard<Cache, [](Cache* c) { std::filesystem::remove_all(c->path()); }>(&cache);
 
     std::string test_key = "random/test";
     std::vector<char> original_value1(128);
@@ -87,6 +89,4 @@ SCENARIO("Limit testing sciqlop_cache", "[cache]")
             REQUIRE(cache.count() == 1);
         }
     }
-
-    std::filesystem::remove_all(db_path);
 }
