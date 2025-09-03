@@ -21,15 +21,14 @@
 #include "sciqlop_cache/sciqlop_cache.hpp"
 #include "sciqlop_cache/database.hpp"
 #include "sciqlop_cache/utils/time.hpp"
+#include "../common.hpp"
 using namespace std::chrono_literals;
 #include <cpp_utils/lifetime/scope_leaving_guards.hpp>
 
 SCENARIO("Limit testing sciqlop_cache", "[cache]")
 {
-    std::filesystem::path db_path = std::filesystem::temp_directory_path() / "LimitTest01";
-    if (std::filesystem::exists(db_path))
-        std::filesystem::remove_all(db_path);
-    Cache cache(db_path, 1000);
+    AutoCleanDirectory db_path{ "LimitTest01"};
+    Cache cache(db_path.path(), 1000);
     auto scope_guard = cpp_utils::lifetime::scope_leaving_guard<Cache, [](Cache* c) { std::filesystem::remove_all(c->path()); }>(&cache);
 
     std::string test_key = "random/test";
@@ -69,19 +68,18 @@ SCENARIO("Limit testing sciqlop_cache", "[cache]")
     }
 
     GIVEN("A corrupt DB file") {
-        std::ofstream corrupt(db_path/Cache::db_fname, std::ios::binary);
+        AutoCleanDirectory db_path { "CorruptDBTest01"};
+        std::ofstream corrupt(db_path.path()/Cache::db_fname, std::ios::binary);
         corrupt << "NOT A REAL SQLITE FILE";
         corrupt.close();
 
         THEN("Cache initialization should throw") {
-            REQUIRE_THROWS_AS(Cache(db_path, 1000), std::runtime_error);
+            REQUIRE_THROWS_AS(Cache(db_path.path(), 1000), std::runtime_error);
         }
-
-        std::filesystem::remove_all(db_path);
     }
 
     GIVEN("A cache with max_size 0") {
-        Cache cache(db_path, 0);
+        Cache cache(db_path.path(), 0);
         std::vector<char> value(100, 'x');
 
         WHEN("We try to add an item") {
