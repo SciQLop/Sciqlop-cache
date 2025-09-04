@@ -15,6 +15,8 @@ if get_option('buildtype').contains('debug')
     add_project_arguments('-DCDFPP_HEDLEY', language : ['cpp'])
 endif
 
+add_global_arguments('-DSQLITE_THREADSAFE=2', language : ['c', 'cpp'])
+
 conf_data = configuration_data()
 conf_data.set_quoted('SCIQLOP_CACHE_VERSION', meson.project_version())
 
@@ -31,7 +33,7 @@ endif
 nanobind_dep = dependency('nanobind')
 hedley_dep = dependency('hedley')
 fmt_dep = dependency('fmt')
-sqlite3_dep = dependency('sqlite3')
+sqlite3_dep = subproject('sqlite3').get_variable('sqlite3_dep')
 cpp_utils = dependency('cpp_utils', required : true,  default_options : ['cpp_std=c++20', 'with_tests=false'])
 stduuid = dependency('stduuid', required : true)
 

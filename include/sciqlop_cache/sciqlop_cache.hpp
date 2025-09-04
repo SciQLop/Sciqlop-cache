@@ -30,7 +30,6 @@ class _Cache
     std::unique_ptr<Storage> storage;
     std::size_t _file_size_threshold = 8 * 1024;
 
-
     CompiledStatement COUNT_STMT {
         "SELECT COUNT(*) FROM cache WHERE (expire IS NULL OR expire > strftime('%s', 'now'));"
     };
@@ -38,35 +37,44 @@ class _Cache
         "SELECT key FROM cache WHERE (expire IS NULL OR expire > strftime('%s', 'now'));"
     };
     CompiledStatement EXISTS_STMT {
-        "SELECT 1 FROM cache WHERE key = ? AND (expire IS NULL OR expire > strftime('%s', 'now')) LIMIT 1;"
+        "SELECT 1 FROM cache WHERE key = ? AND (expire IS NULL OR expire > strftime('%s', 'now')) "
+        "LIMIT 1;"
     };
     CompiledStatement GET_STMT {
-        "SELECT value, path FROM cache WHERE key = ? AND (expire IS NULL OR expire > strftime('%s', 'now'));"
+        "SELECT value, path FROM cache WHERE key = ? AND (expire IS NULL OR expire > "
+        "strftime('%s', 'now'));"
     };
     CompiledStatement GET_PATH_STMT {
-        "SELECT path FROM cache WHERE key = ? AND (expire IS NULL OR expire > strftime('%s', 'now'));"
+        "SELECT path FROM cache WHERE key = ? AND (expire IS NULL OR expire > strftime('%s', "
+        "'now'));"
     };
+    CompiledStatement GET_PATH_SIMPLE_STMT { "SELECT path FROM cache WHERE key = ?;" };
     CompiledStatement REPLACE_VALUE_STMT {
         R"(
-            REPLACE INTO cache (key, value, expire, size)
-            VALUES (?, ?, (strftime('%s', 'now') + ?), ?);
+            REPLACE INTO cache (key, value, expire, size, path) VALUES (?, ?, (strftime('%s', 'now') + ?), ?, NULL);
         )"
     };
     CompiledStatement REPLACE_PATH_STMT {
         R"(
-            REPLACE INTO cache (key, path, expire, size)
-            VALUES (?, ?, (strftime('%s', 'now') + ?), ?);
+            REPLACE INTO cache (key, path, expire, size, value) VALUES (?, ?, (strftime('%s', 'now') + ?), ?, NULL);
+        )"
+    };
+    CompiledStatement CLEAR_PATH_STMT {
+        R"(
+            UPDATE cache SET path = NULL WHERE key = ?;
         )"
     };
     CompiledStatement INSERT_VALUE_STMT {
-        "INSERT INTO cache (key, value, expire, size) VALUES (?, ?, (strftime('%s', 'now') + ?), ?);"
+        "INSERT INTO cache (key, value, expire, size) VALUES (?, ?, (strftime('%s', 'now') + ?), "
+        "?);"
     };
     CompiledStatement INSERT_PATH_STMT {
         "INSERT INTO cache (key, path, expire, size) VALUES (?, ?, (strftime('%s', 'now') + ?), ?);"
     };
     CompiledStatement DELETE_STMT { "DELETE FROM cache WHERE key = ?;" };
     CompiledStatement TOUCH_STMT {
-        "UPDATE cache SET last_update = strftime('%s', 'now'), expire = strftime('%s', 'now') + ?, last_use = strftime('%s', 'now') WHERE key = ?;"
+        "UPDATE cache SET last_update = strftime('%s', 'now'), expire = strftime('%s', 'now') + ?, "
+        "last_use = strftime('%s', 'now') WHERE key = ?;"
     };
     CompiledStatement EXPIRE_STMT {
         "SELECT path FROM cache WHERE expire IS NOT NULL AND expire <= strftime('%s', 'now');"
@@ -75,17 +83,18 @@ class _Cache
         "DELETE FROM cache WHERE expire IS NOT NULL AND expire <= strftime('%s', 'now');"
     };
 
-    CompiledStatement* statements[13] = { &COUNT_STMT,      &KEYS_STMT,       &EXISTS_STMT,
-                           &GET_STMT,        &GET_PATH_STMT,   &REPLACE_VALUE_STMT,
-                           &REPLACE_PATH_STMT, &INSERT_VALUE_STMT, &INSERT_PATH_STMT,
-                           &DELETE_STMT,     &TOUCH_STMT,      &EXPIRE_STMT,
-                           &EVICT_STMT };
+    CompiledStatement* statements[14]
+        = { &COUNT_STMT,         &KEYS_STMT,         &EXISTS_STMT,
+            &GET_STMT,           &GET_PATH_STMT,     &GET_PATH_SIMPLE_STMT,
+            &REPLACE_VALUE_STMT, &REPLACE_PATH_STMT, &INSERT_VALUE_STMT,
+            &INSERT_PATH_STMT,   &DELETE_STMT,       &TOUCH_STMT,
+            &EXPIRE_STMT,        &EVICT_STMT };
 
 
     static inline constexpr auto _INIT_STMTS = {
         R"(
             -- Use Write-Ahead Logging for better concurrency
-            PRAGMA journal_mode=TRUNCATE;
+            PRAGMA journal_mode=WAL;
             -- Set synchronous mode to NORMAL for performance
             PRAGMA synchronous=NORMAL;
             -- Set the number of cache pages
@@ -157,7 +166,7 @@ class _Cache
     {
         bool result = true;
         for (auto& stmt : statements)
-            result &=stmt->finalize();
+            result &= stmt->finalize();
         return result;
     }
 
@@ -180,10 +189,7 @@ public:
 
     [[nodiscard]] inline bool opened() const { return db.opened(); }
 
-    inline bool close()
-    {
-        return _finalize_statements() & db.close();
-    }
+    inline bool close() { return _finalize_statements() & db.close(); }
 
     [[nodiscard]] inline std::filesystem::path path() { return cache_path; }
 
@@ -230,28 +236,40 @@ public:
             = std::chrono::duration_cast<std::chrono::seconds>(expire).count();
 
         if (std::size(value) <= _file_size_threshold)
-            return db.exec(REPLACE_VALUE_STMT, key, value, expires_secs,
-                           std::size(value));
-
-        if (const auto file_path = storage->store(value))
         {
-            const auto file_path_str = file_path->string();
-            if (!db.exec(REPLACE_PATH_STMT, key, file_path_str, expires_secs,
-                         std::size(value)))
-                return false;
+            auto transaction = db.begin_transaction(true);
+            auto filepath = db.exec<std::filesystem::path>(GET_PATH_SIMPLE_STMT, key);
+            db.exec(REPLACE_VALUE_STMT, key, value, expires_secs, std::size(value));
+            transaction.commit();
+            if (filepath)
+                storage->remove(*filepath);
+            return true;
         }
         else
         {
-            std::cerr << "Error storing file for key: " << key << std::endl;
-            return false;
+
+            auto transaction = db.begin_transaction(true);
+            auto filepath = db.exec<std::filesystem::path>(GET_PATH_SIMPLE_STMT, key);
+            auto new_filepath = storage->store(value);
+            if (new_filepath)
+            {
+                db.exec(REPLACE_PATH_STMT, key, *new_filepath, expires_secs, std::size(value));
+            }
+            else
+            {
+                std::cerr << "Error storing file for key: " << key << std::endl;
+                return false;
+            }
+            transaction.commit();
+            if (filepath)
+                storage->remove(*filepath);
         }
         return true;
     }
 
     inline std::optional<Buffer> get(const std::string& key)
     {
-        if (auto values
-            = db.exec<std::vector<char>, std::filesystem::path>(GET_STMT, key))
+        if (auto values = db.exec<std::vector<char>, std::filesystem::path>(GET_STMT, key))
         {
             const auto& [_, path] = *values;
 
@@ -260,7 +278,12 @@ public:
                 if (auto result = storage->load(path))
                     return result;
                 else
+                {
                     del(key);
+                    std::cerr << "Error loading file for key: " << key << ", deleting entry."
+                              << std::endl;
+                    return std::nullopt;
+                }
             }
             return Buffer(std::move(std::get<0>(*values)));
         }
@@ -278,21 +301,16 @@ public:
         const double expires_secs
             = std::chrono::duration_cast<std::chrono::seconds>(expire).count();
 
-        if (auto filepath = db.exec<std::filesystem::path>(GET_PATH_STMT, key))
-        {
-            if (!storage->remove(cache_path / *filepath))
-                std::cerr << "Error deleting existing file for key: " << key << std::endl;
-        }
+        if (exists(key))
+            return false;
 
         if (std::size(value) <= _file_size_threshold)
-            return db.exec(INSERT_VALUE_STMT, key, value, expires_secs,
-                           std::size(value));
+            return db.exec(INSERT_VALUE_STMT, key, value, expires_secs, std::size(value));
 
         if (const auto file_path = storage->store(value))
         {
             const auto file_path_str = file_path->string();
-            if (!db.exec(INSERT_PATH_STMT, key, file_path_str, expires_secs,
-                         std::size(value)))
+            if (!db.exec(INSERT_PATH_STMT, key, file_path_str, expires_secs, std::size(value)))
                 return false;
         }
         else

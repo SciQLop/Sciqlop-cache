@@ -78,10 +78,7 @@ NB_MODULE(_pysciqlop_cache, m)
                  }
 
                  return nb::borrow(memview);
-             })
-        .def_prop_ro("size", &Buffer::size)
-        .def_prop_ro("valid", &Buffer::operator bool)
-        .def_prop_ro("address", [](const Buffer& b) { return reinterpret_cast<std::uintptr_t>(b.data()); });
+             });
 
 
     nb::class_<Cache>(m, "Cache")

@@ -118,7 +118,7 @@ auto sql_get(const auto& stmt, int col)
             const char* v = reinterpret_cast<const char*>(sqlite3_column_text(stmt, col));
             if (v)
                 result.emplace_back(v);
-        }while (sqlite3_step(stmt) == SQLITE_ROW);
+        } while (sqlite3_step(stmt) == SQLITE_ROW);
         return result;
     }
     else
@@ -170,10 +170,7 @@ public:
         compile(db);
     }
 
-    ~CompiledStatement()
-    {
-        finalize();
-    }
+    ~CompiledStatement() { finalize(); }
 
     inline bool compile(sqlite3* db)
     {
@@ -223,6 +220,87 @@ public:
     }
 };
 
+class Transaction
+{
+    sqlite3* db;
+    bool committed;
+    bool exclusive;
+    static inline constexpr auto _begin_sql = "BEGIN TRANSACTION;";
+    static inline constexpr auto _begin_exclusive_sql = "BEGIN EXCLUSIVE TRANSACTION;";
+
+public:
+    Transaction(sqlite3* database, bool exclusive = false)
+            : db(database), committed(false), exclusive(exclusive)
+    {
+        if (db)
+        {
+            char* errMsg = nullptr;
+            auto begin = exclusive ? _begin_exclusive_sql : _begin_sql;
+
+                if (sqlite3_exec(db,begin, nullptr, nullptr, &errMsg)!= SQLITE_OK)
+                {
+                    std::cerr << "Error beginning exclusive transaction: "
+                              << (errMsg ? errMsg : "unknown error") << std::endl;
+                    if (errMsg)
+                        sqlite3_free(errMsg);
+                    db = nullptr; // Mark as invalid
+                    return;
+                }
+        }
+    }
+
+    Transaction(const Transaction&) = delete;
+    Transaction& operator=(const Transaction&) = delete;
+
+    Transaction(Transaction&& other) noexcept : db(other.db), committed(other.committed)
+    {
+        other.db = nullptr;
+        other.committed = true;
+    }
+
+    Transaction& operator=(Transaction&& other) = delete;
+
+    ~Transaction() { commit(); }
+
+    [[nodiscard]] inline bool rollback()
+    {
+        if (db && !committed)
+        {
+            char* errMsg = nullptr;
+            if (sqlite3_exec(db, "ROLLBACK;", nullptr, nullptr, &errMsg) != SQLITE_OK)
+            {
+                std::cerr << "Error rolling back transaction: "
+                          << (errMsg ? errMsg : "unknown error") << std::endl;
+                if (errMsg)
+                    sqlite3_free(errMsg);
+                return false;
+            }
+            committed = true; // Mark as completed
+            return true;
+        }
+        return false; // Either already committed or invalid
+    }
+
+    inline bool commit()
+    {
+        if (db && !committed)
+        {
+            char* errMsg = nullptr;
+            if (sqlite3_exec(db, "COMMIT;", nullptr, nullptr, &errMsg) != SQLITE_OK)
+            {
+                std::cerr << "Error committing transaction: " << (errMsg ? errMsg : "unknown error")
+                          << std::endl;
+                if (errMsg)
+                    sqlite3_free(errMsg);
+                return false;
+            }
+            committed = true;
+            return true;
+        }
+        return false; // Either already committed or invalid
+    }
+};
+
 class Database
 {
 private:
@@ -237,6 +315,9 @@ private:
         }
     }
 
+    CompiledStatement BEGIN_STMT { "BEGIN TRANSACTION;" };
+    CompiledStatement COMMIT_STMT { "COMMIT;" };
+
 public:
     Database() : db(nullptr, SQLiteDeleter()) { ; }
 
@@ -244,7 +325,7 @@ public:
 
     inline bool open(const std::filesystem::path& db_path, const auto init_sql)
     {
-        if(open(db_path))
+        if (open(db_path))
         {
             for (const auto& sql : init_sql)
             {
@@ -255,7 +336,7 @@ public:
                     return false;
                 }
             }
-            return true;
+            return BEGIN_STMT.compile(db.get()) && COMMIT_STMT.compile(db.get());
         }
         return false;
     }
@@ -272,7 +353,7 @@ public:
         // set busy timeout to 10 minutes if the handle was allocated
         if (tmp_db && check == SQLITE_OK)
         {
-            if(sqlite3_busy_timeout(tmp_db, 10000) != SQLITE_OK)
+            if (sqlite3_busy_timeout(tmp_db, 600'000) != SQLITE_OK)
             {
                 std::cerr << "Error setting busy timeout: " << sqlite3_errmsg(tmp_db) << std::endl;
                 sqlite3_close(tmp_db);
@@ -295,7 +376,7 @@ public:
         bool result = true;
         if (db)
         {
-            result =  sqlite3_close_v2(db.get()) == SQLITE_OK;
+            result = sqlite3_close_v2(db.get()) == SQLITE_OK;
             if (!result)
             {
                 std::cerr << "Error closing database: " << sqlite3_errmsg(db.get()) << std::endl;
@@ -412,4 +493,6 @@ public:
         return exec<rtypes...>(CompiledStatement { db.get(), sql },
                                std::forward<decltype(values)>(values)...);
     }
+
+    Transaction begin_transaction(bool exclusive = false) { return Transaction(db.get(),exclusive); }
 };

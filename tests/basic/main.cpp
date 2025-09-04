@@ -119,23 +119,24 @@ SCENARIO("Testing sciqlop_cache basic operations", "[cache]")
             {
                 REQUIRE(cache.get(test_key)->to_vector() == original_value1);
             }
-        }
-        cache.close();
-        AND_THEN("Closing the cache and openning again")
-        {
-            Cache reopened_cache(db_path.path(), 1000);
-            REQUIRE(reopened_cache.opened());
-            REQUIRE(reopened_cache.check() == true);
-            THEN("It should be opened")
+            AND_THEN("Closing the cache and openning again")
             {
+                REQUIRE(cache.close());
+                Cache reopened_cache(db_path.path(), 1000);
                 REQUIRE(reopened_cache.opened());
-            }
-            THEN("It should still contain previous data")
-            {
-                REQUIRE(reopened_cache.count() == 1);
-                REQUIRE(reopened_cache.get(test_key)->to_vector() == original_value1);
+                REQUIRE(reopened_cache.check() == true);
+                THEN("It should be opened")
+                {
+                    REQUIRE(reopened_cache.opened());
+                }
+                THEN("It should still contain previous data")
+                {
+                    REQUIRE(reopened_cache.count() == 1);
+                    REQUIRE(reopened_cache.get(test_key)->to_vector() == original_value1);
+                }
             }
         }
+
     }
 }
 
@@ -155,10 +156,10 @@ SCENARIO("Testing sciqlop_cache more advanced operations", "[cache]")
 
         THEN("we test set and get")
         {
-            REQUIRE(cache.set("set_key1", original_value1));
-            REQUIRE(cache.set("set_key2", original_value2));
-            auto value1 = cache.get("set_key1");
-            auto value2 = cache.get("set_key2");
+            REQUIRE(cache.set("key1", original_value1));
+            REQUIRE(cache.set("key2", original_value2));
+            auto value1 = cache.get("key1");
+            auto value2 = cache.get("key2");
             REQUIRE(value1.has_value());
             REQUIRE(value1.value().to_vector() == original_value1);
             REQUIRE(value2.has_value());
@@ -208,6 +209,11 @@ SCENARIO("Testing sciqlop_cache more advanced operations", "[cache]")
             REQUIRE(value1.value().to_vector() == original_value1);
             auto value2 = cache.get("key2");
             REQUIRE(value2.value().to_vector() == original_value2);
+            THEN("adding an already existing key should fail")
+            {
+                REQUIRE_FALSE(cache.add("key1", original_value2));
+                REQUIRE(cache.get("key1").value().to_vector() == original_value1);
+            }
         }
 
         WHEN("we test pop")
