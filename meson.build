@@ -36,6 +36,7 @@ fmt_dep = dependency('fmt')
 sqlite3_dep = subproject('sqlite3').get_variable('sqlite3_dep')
 cpp_utils = dependency('cpp_utils', required : true,  default_options : ['cpp_std=c++20', 'with_tests=false'])
 stduuid = dependency('stduuid', required : true)
+optional_deps = []
 
 if build_machine.system() == 'windows'
     link_args = ['-static-libstdc++','-static-libgcc','-static']
@@ -44,6 +45,17 @@ elif build_machine.system() == 'darwin' and cpp.get_id() != 'clang'
 else
     link_args = []
 endif
+
+
+if get_option ( 'tracy_enable')
+    if get_option ( 'buildtype') != 'debugoptimized'
+        warning ( 'Profiling builds should set -- buildtype = debugoptimized')
+    endif
+    tracy = dependency ( 'tracy', static : true )
+    optional_deps += [ tracy ]
+endif
+
+
 
 sciqlop_cache_headers = files(
     'include/sciqlop_cache/sciqlop_cache.hpp',
@@ -66,7 +78,13 @@ sciqlop_cache_extra_files = files(
 sciqlop_cache_dep_inc = include_directories('include', '.')
 
 sciqlop_cache_dep = declare_dependency(include_directories: sciqlop_cache_dep_inc,
-                                dependencies: [hedley_dep, fmt_dep, sqlite3_dep, cpp_utils, stduuid])
+                                dependencies: [hedley_dep,
+                                               fmt_dep,
+                                               sqlite3_dep,
+                                               cpp_utils,
+                                               stduuid]
+                                               + optional_deps
+                                )
 
 if get_option('disable_python_wrapper')
     message('building without Python wrapper')

@@ -9,6 +9,7 @@
 
 #include "sciqlop_cache/utils/concepts.hpp"
 #include "sciqlop_cache/utils/time.hpp"
+#include "sciqlop_cache/Profiling.hpp"
 #include <cpp_utils/lifetime/scope_leaving_guards.hpp>
 #include <cpp_utils/types/detectors.hpp>
 #include <filesystem>
@@ -19,6 +20,7 @@
 #include <string>
 #include <tuple>
 #include <vector>
+#include <source_location>
 
 struct SQLiteDeleter
 {
@@ -61,6 +63,7 @@ void sql_bind_all(const auto& stm, auto&&... values)
 template <typename rtype>
 auto sql_get(const auto& stmt, int col)
 {
+    PROFILE_HERE_N(std::source_location::current().function_name());
     static_assert(cpp_utils::types::detectors::is_any_of_v<rtype, std::vector<char>, std::string,
                                                            std::filesystem::path, bool, std::size_t,
                                                            std::vector<std::string>>
@@ -148,6 +151,7 @@ public:
 
     ~BindedCompiledStatement()
     {
+        PROFILE_HERE;
         if (stmt)
             sqlite3_reset(stmt);
     }
@@ -174,6 +178,7 @@ public:
 
     inline bool compile(sqlite3* db)
     {
+        PROFILE_HERE;
         finalize();
         if (sqlite3_prepare_v2(db, source_sql.c_str(), -1, &stmt, nullptr) != SQLITE_OK)
         {
@@ -211,6 +216,7 @@ public:
 
     [[nodiscard]] inline BindedCompiledStatement bind_all(const auto&... values) const
     {
+        PROFILE_HERE_N(std::source_location::current().function_name());
         if (valid())
         {
             sql_bind_all(stmt, values...);
@@ -224,16 +230,16 @@ class Transaction
 {
     sqlite3* db;
     bool committed;
-    bool exclusive;
     static inline constexpr auto _begin_sql = "BEGIN TRANSACTION;";
     static inline constexpr auto _begin_exclusive_sql = "BEGIN EXCLUSIVE TRANSACTION;";
 
 public:
     Transaction(sqlite3* database, bool exclusive = false)
-            : db(database), committed(false), exclusive(exclusive)
+            : db(database), committed(false)
     {
         if (db)
         {
+            PROFILE_HERE;
             char* errMsg = nullptr;
             auto begin = exclusive ? _begin_exclusive_sql : _begin_sql;
 
@@ -283,6 +289,7 @@ public:
 
     inline bool commit()
     {
+        PROFILE_HERE;
         if (db && !committed)
         {
             char* errMsg = nullptr;
@@ -343,6 +350,7 @@ public:
 
     inline bool open(const std::filesystem::path& db_path)
     {
+        PROFILE_HERE;
         sqlite3* tmp_db = nullptr;
         auto db_path_str = db_path.string();
         _ensure_parent_directory(db_path);
@@ -393,6 +401,7 @@ public:
 
     [[nodiscard]] inline bool exec(const std::string& sql)
     {
+        PROFILE_HERE_N(std::source_location::current().function_name());
         char* errMsg = nullptr;
 
         int rc = sqlite3_exec(db.get(), sql.c_str(), nullptr, nullptr, &errMsg);
@@ -426,6 +435,7 @@ public:
     template <typename... rtypes>
     auto step(const BindedCompiledStatement& stmt) -> decltype(exec_return_type<rtypes...>())
     {
+        PROFILE_HERE_N(std::source_location::current().function_name());
         int rc = sqlite3_step(stmt.get());
         if (rc == SQLITE_ROW)
         {
@@ -474,6 +484,7 @@ public:
     auto exec(const CompiledStatement& stmt, const auto&... values)
         -> decltype(exec_return_type<rtypes...>())
     {
+        PROFILE_HERE_N(std::source_location::current().function_name());
         using namespace cpp_utils::lifetime;
         if (stmt.valid())
         {
@@ -490,6 +501,7 @@ public:
     auto exec(const std::string& sql, const auto&... values)
         -> decltype(exec_return_type<rtypes...>())
     {
+        PROFILE_HERE_N(std::source_location::current().function_name());
         return exec<rtypes...>(CompiledStatement { db.get(), sql },
                                std::forward<decltype(values)>(values)...);
     }
