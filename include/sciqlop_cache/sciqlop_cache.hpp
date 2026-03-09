@@ -18,6 +18,9 @@
 #include <optional>
 #include <span>
 #include <sqlite3.h>
+#include <atomic>
+#include <condition_variable>
+#include <mutex>
 #include <string>
 #include <thread>
 
@@ -29,6 +32,46 @@ class _Cache
     bool auto_clean = false;
     std::unique_ptr<Storage> storage;
     std::size_t _file_size_threshold = 8 * 1024;
+
+    std::thread _checkpoint_thread;
+    std::atomic<bool> _stop_checkpoint { false };
+    std::mutex _checkpoint_mutex;
+    std::condition_variable _checkpoint_cv;
+
+    void _checkpoint_loop()
+    {
+        auto db_path = (cache_path / db_fname).string();
+        sqlite3* cp_db = nullptr;
+
+        while (!_stop_checkpoint.load(std::memory_order_relaxed))
+        {
+            if (sqlite3_open_v2(db_path.c_str(), &cp_db, SQLITE_OPEN_READWRITE | SQLITE_OPEN_NOMUTEX,
+                                nullptr)
+                == SQLITE_OK)
+                break;
+            if (cp_db)
+            {
+                sqlite3_close(cp_db);
+                cp_db = nullptr;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
+
+        if (!cp_db)
+            return;
+
+        while (!_stop_checkpoint.load(std::memory_order_relaxed))
+        {
+            std::unique_lock lock(_checkpoint_mutex);
+            _checkpoint_cv.wait_for(lock, std::chrono::seconds(1));
+            if (_stop_checkpoint.load(std::memory_order_relaxed))
+                break;
+            sqlite3_wal_checkpoint_v2(cp_db, nullptr, SQLITE_CHECKPOINT_PASSIVE, nullptr, nullptr);
+        }
+
+        sqlite3_wal_checkpoint_v2(cp_db, nullptr, SQLITE_CHECKPOINT_PASSIVE, nullptr, nullptr);
+        sqlite3_close(cp_db);
+    }
 
     CompiledStatement COUNT_STMT {
         "SELECT COUNT(*) FROM cache WHERE (expire IS NULL OR expire > unixepoch('now'));"
@@ -97,6 +140,7 @@ class _Cache
             PRAGMA journal_mode=WAL;
             -- Set synchronous mode to NORMAL for performance
             PRAGMA synchronous=NORMAL;
+            PRAGMA wal_autocheckpoint=0;
             -- Set the number of cache pages
             PRAGMA cache_size=10000;
             -- Store temporary tables in memory
@@ -172,11 +216,16 @@ public:
             : cache_path(cache_path)
             , max_size(max_size)
             , storage(std::make_unique<Storage>(cache_path))
+            , _checkpoint_thread(&_Cache::_checkpoint_loop, this)
     {
     }
 
     ~_Cache()
     {
+        _stop_checkpoint.store(true, std::memory_order_relaxed);
+        _checkpoint_cv.notify_one();
+        if (_checkpoint_thread.joinable())
+            _checkpoint_thread.join();
         try { close(); } catch (...) {}
     }
 
