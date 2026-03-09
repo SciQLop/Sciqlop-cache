@@ -115,12 +115,18 @@ endforeach
 
 
 if not get_option('disable_python_wrapper')
-    foreach test_name:['test_python_interface', 'test_python_multiprocess', 'test_perf_vs_diskcache']
+    foreach test_name:['test_python_interface', 'test_perf_vs_diskcache']
         test(test_name, python3,
             args:files('tests/python/@0@.py'.format(test_name)),
             env : {'PYTHONPATH': meson.current_build_dir()}
             )
     endforeach
+    test('test_python_multiprocess', python3,
+        args:files('tests/python/test_python_multiprocess.py'),
+        env : {'PYTHONPATH': meson.current_build_dir()},
+        is_parallel : false,
+        timeout : 60,
+    )
 endif
 
 

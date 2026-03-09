@@ -339,11 +339,11 @@ public:
         if (getpid() != _owner_pid)
         {
             // Forked child: the checkpoint thread doesn't exist in this
-            // process, but std::thread still thinks it's joinable. Detach
-            // to avoid blocking forever, and skip DB cleanup since the
-            // inherited SQLite handles are not fork-safe.
+            // process, but std::thread still thinks it's joinable.
+            // Move it to the heap to avoid std::terminate() from
+            // std::thread's destructor. The OS cleans up on process exit.
             if (_checkpoint_thread.joinable())
-                _checkpoint_thread.detach();
+                (void)new std::thread(std::move(_checkpoint_thread));
             return;
         }
         _stop_checkpoint.store(true, std::memory_order_relaxed);

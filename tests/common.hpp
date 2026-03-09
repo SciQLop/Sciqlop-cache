@@ -1,23 +1,26 @@
 #include <filesystem>
+#include <random>
 #include <cpp_utils/lifetime/scope_leaving_guards.hpp>
 
 class AutoCleanDirectory
 {
     std::filesystem::path path_;
 
+    static std::string unique_suffix()
+    {
+        return std::to_string(getpid()) + "_" + std::to_string(std::random_device{}());
+    }
+
 public:
 
     AutoCleanDirectory(const std::string& test_name, bool use_temp_dir = true)
     {
+        auto dir_name = test_name + "_" + unique_suffix();
         if (use_temp_dir)
-            path_ = std::filesystem::temp_directory_path() / test_name;
+            path_ = std::filesystem::temp_directory_path() / dir_name;
         else
-            path_ = std::filesystem::path{"."}/test_name;
+            path_ = std::filesystem::path{"."} / dir_name;
 
-        if (std::filesystem::exists(path_))
-        {
-            std::filesystem::remove_all(path_);
-        }
         std::filesystem::create_directories(path_);
     }
 

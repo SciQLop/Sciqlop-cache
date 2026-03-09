@@ -47,8 +47,7 @@ void read_write_cache(std::filesystem::path db_path, const std::string& key,
 SCENARIO("Testing time conversions", "[time]")
 {
     std::vector<std::thread> threads;
-    AutoCleanDirectory db_path { std::filesystem::temp_directory_path() / "MultiThreadTest"
-                                 / std::to_string(std::random_device{}()) };
+    AutoCleanDirectory db_path { "MultiThreadTest" };
     std::string test_key = "random/test";
     std::vector<char> original_value(128);
     std::generate(original_value.begin(), original_value.end(), std::rand);
