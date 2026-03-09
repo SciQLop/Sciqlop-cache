@@ -40,6 +40,73 @@ class _Cache
     std::mutex _checkpoint_mutex;
     std::condition_variable _checkpoint_cv;
 
+    void _bg_evict(sqlite3* bg_db)
+    {
+        // Remove expired entries and their files
+        sqlite3_stmt* stmt = nullptr;
+        sqlite3_prepare_v2(bg_db,
+            "SELECT path FROM cache WHERE expire IS NOT NULL AND expire <= unixepoch('now');",
+            -1, &stmt, nullptr);
+        std::vector<std::filesystem::path> files;
+        while (stmt && sqlite3_step(stmt) == SQLITE_ROW)
+        {
+            auto p = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
+            if (p && p[0])
+                files.emplace_back(p);
+        }
+        if (stmt) sqlite3_finalize(stmt);
+        sqlite3_exec(bg_db,
+            "DELETE FROM cache WHERE expire IS NOT NULL AND expire <= unixepoch('now');",
+            nullptr, nullptr, nullptr);
+        for (auto& f : files)
+            storage->remove(f);
+
+        if (max_size == 0)
+            return;
+
+        // LRU eviction if over budget
+        stmt = nullptr;
+        sqlite3_prepare_v2(bg_db, "SELECT COALESCE(SUM(size), 0) FROM cache;", -1, &stmt, nullptr);
+        std::size_t current_size = 0;
+        if (stmt && sqlite3_step(stmt) == SQLITE_ROW)
+            current_size = static_cast<std::size_t>(sqlite3_column_int64(stmt, 0));
+        if (stmt) sqlite3_finalize(stmt);
+
+        if (current_size <= max_size)
+            return;
+
+        auto target = max_size * 9 / 10;
+        stmt = nullptr;
+        sqlite3_prepare_v2(bg_db, "SELECT key, path, size FROM cache ORDER BY last_use ASC;",
+                           -1, &stmt, nullptr);
+        struct Entry { std::string key; std::filesystem::path path; };
+        std::vector<Entry> to_evict;
+        while (stmt && current_size > target && sqlite3_step(stmt) == SQLITE_ROW)
+        {
+            auto k = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
+            auto p = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
+            auto sz = static_cast<std::size_t>(sqlite3_column_int64(stmt, 2));
+            to_evict.push_back({ k ? k : "", p ? p : "" });
+            current_size -= std::min(current_size, sz);
+        }
+        if (stmt) sqlite3_finalize(stmt);
+
+        stmt = nullptr;
+        sqlite3_prepare_v2(bg_db, "DELETE FROM cache WHERE key = ?;", -1, &stmt, nullptr);
+        for (auto& [key, path] : to_evict)
+        {
+            if (stmt)
+            {
+                sqlite3_bind_text(stmt, 1, key.c_str(), -1, SQLITE_TRANSIENT);
+                sqlite3_step(stmt);
+                sqlite3_reset(stmt);
+            }
+            if (!path.empty())
+                storage->remove(path);
+        }
+        if (stmt) sqlite3_finalize(stmt);
+    }
+
     void _checkpoint_loop()
     {
         auto db_path = (cache_path / db_fname).string();
@@ -69,6 +136,7 @@ class _Cache
             if (_stop_checkpoint.load(std::memory_order_relaxed))
                 break;
             sqlite3_wal_checkpoint_v2(cp_db, nullptr, SQLITE_CHECKPOINT_PASSIVE, nullptr, nullptr);
+            _bg_evict(cp_db);
         }
 
         sqlite3_wal_checkpoint_v2(cp_db, nullptr, SQLITE_CHECKPOINT_PASSIVE, nullptr, nullptr);
@@ -297,7 +365,6 @@ private:
         if (std::size(value) <= _file_size_threshold)
         {
             db().exec(REPLACE_VALUE_STMT, key, value, expires_secs, std::size(value), seq);
-            evict();
             return true;
         }
 
@@ -314,7 +381,6 @@ private:
         transaction.commit();
         if (filepath && !filepath->empty())
             storage->remove(*filepath);
-        evict();
         return true;
     }
 
@@ -368,10 +434,7 @@ private:
         {
             _db.exec(INSERT_VALUE_STMT, key, value, expires_secs, std::size(value), seq);
             if (sqlite3_changes(_db.get()) > 0)
-            {
-                evict();
                 return true;
-            }
             return false;
         }
 
@@ -385,7 +448,6 @@ private:
             storage->remove(*file_path);
             return false;
         }
-        evict();
         return true;
     }
 

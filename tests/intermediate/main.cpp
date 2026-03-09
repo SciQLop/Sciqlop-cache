@@ -121,8 +121,10 @@ SCENARIO("LRU eviction enforces max_size in bytes", "[eviction]")
             // Access k1 to make it recently used
             cache.get("k1");
 
-            // Adding k4 pushes over 350 bytes, triggers eviction
             cache.set("k4", value);
+
+            // Eviction is deferred to background thread; call manually for test
+            cache.evict();
 
             THEN("the least recently used entry is evicted")
             {
