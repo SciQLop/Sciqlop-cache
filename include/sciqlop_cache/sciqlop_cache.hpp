@@ -26,7 +26,6 @@ class _Cache
     std::filesystem::path cache_path;
     size_t max_size;
     bool auto_clean = false;
-    Database db;
     std::unique_ptr<Storage> storage;
     std::size_t _file_size_threshold = 8 * 1024;
 
@@ -83,7 +82,7 @@ class _Cache
         "DELETE FROM cache WHERE expire IS NOT NULL AND expire <= strftime('%s', 'now');"
     };
 
-    CompiledStatement* statements[14]
+    mutable CompiledStatement* statements[14]
         = { &COUNT_STMT,         &KEYS_STMT,         &EXISTS_STMT,
             &GET_STMT,           &GET_PATH_STMT,     &GET_PATH_SIMPLE_STMT,
             &REPLACE_VALUE_STMT, &REPLACE_PATH_STMT, &INSERT_VALUE_STMT,
@@ -154,11 +153,11 @@ class _Cache
 
     };
 
-    inline bool _compile_statements()
+    inline bool _compile_statements() const
     {
         bool result = true;
         for (auto& stmt : statements)
-            result &= stmt->compile(db.get());
+            result &= stmt->compile(db().get());
         return result;
     }
 
@@ -170,6 +169,19 @@ class _Cache
         return result;
     }
 
+    Database& db() const
+    {
+        thread_local Database _db;
+        if (!_db.opened())
+        {
+            if (!_db.open(this->cache_path / db_fname, _INIT_STMTS) || !_compile_statements())
+            {
+                throw std::runtime_error("Failed to initialize database schema.");
+            }
+        }
+        return _db;
+    }
+
 
 public:
     static constexpr std::string_view db_fname = "sciqlop-cache.db";
@@ -179,17 +191,13 @@ public:
             , max_size(max_size)
             , storage(std::make_unique<Storage>(cache_path))
     {
-        if (!db.open(this->cache_path / db_fname, _INIT_STMTS) || !_compile_statements())
-        {
-            throw std::runtime_error("Failed to initialize database schema.");
-        }
     }
 
     ~_Cache() { close(); }
 
-    [[nodiscard]] inline bool opened() const { return db.opened(); }
+    [[nodiscard]] inline bool opened() const { return db().opened(); }
 
-    inline bool close() { return _finalize_statements() & db.close(); }
+    inline bool close() { return _finalize_statements() & db().close(); }
 
     [[nodiscard]] inline std::filesystem::path path() { return cache_path; }
 
@@ -199,28 +207,28 @@ public:
 
     [[nodiscard]] inline std::size_t count()
     {
-        if (auto r = db.exec<std::size_t>(COUNT_STMT))
+        if (auto r = db().template exec<std::size_t>(COUNT_STMT))
             return *r;
         return 0;
     }
 
     [[nodiscard]] inline size_t size()
     {
-        if (auto r = db.exec<size_t>("SELECT value FROM meta WHERE key = 'size';"))
+        if (auto r = db().template exec<size_t>("SELECT value FROM meta WHERE key = 'size';"))
             return *r;
         return 0;
     }
 
     [[nodiscard]] inline std::vector<std::string> keys()
     {
-        if (auto r = db.exec<std::vector<std::string>>(KEYS_STMT))
+        if (auto r = db().template exec<std::vector<std::string>>(KEYS_STMT))
             return *r;
         return {};
     }
 
     [[nodiscard]] inline bool exists(const std::string& key)
     {
-        if (auto r = db.exec<bool>(EXISTS_STMT, key))
+        if (auto r = db().template exec<bool>(EXISTS_STMT, key))
             return *r;
         return false;
     }
@@ -237,9 +245,10 @@ public:
 
         if (std::size(value) <= _file_size_threshold)
         {
-            auto transaction = db.begin_transaction(true);
-            auto filepath = db.exec<std::filesystem::path>(GET_PATH_SIMPLE_STMT, key);
-            db.exec(REPLACE_VALUE_STMT, key, value, expires_secs, std::size(value));
+            auto& _db = db();
+            auto transaction = _db.begin_transaction(true);
+            auto filepath = _db.template exec<std::filesystem::path>(GET_PATH_SIMPLE_STMT, key);
+            _db.exec(REPLACE_VALUE_STMT, key, value, expires_secs, std::size(value));
             transaction.commit();
             if (filepath)
                 storage->remove(*filepath);
@@ -247,13 +256,13 @@ public:
         }
         else
         {
-
-            auto transaction = db.begin_transaction(true);
-            auto filepath = db.exec<std::filesystem::path>(GET_PATH_SIMPLE_STMT, key);
+            auto& _db = db();
+            auto transaction = _db.begin_transaction(true);
+            auto filepath = _db.template exec<std::filesystem::path>(GET_PATH_SIMPLE_STMT, key);
             auto new_filepath = storage->store(value);
             if (new_filepath)
             {
-                db.exec(REPLACE_PATH_STMT, key, *new_filepath, expires_secs, std::size(value));
+                _db.exec(REPLACE_PATH_STMT, key, *new_filepath, expires_secs, std::size(value));
             }
             else
             {
@@ -269,7 +278,7 @@ public:
 
     inline std::optional<Buffer> get(const std::string& key)
     {
-        if (auto values = db.exec<std::vector<char>, std::filesystem::path>(GET_STMT, key))
+        if (auto values = db().template exec<std::vector<char>, std::filesystem::path>(GET_STMT, key))
         {
             const auto& [_, path] = *values;
 
@@ -304,13 +313,14 @@ public:
         if (exists(key))
             return false;
 
+        auto& _db = db();
         if (std::size(value) <= _file_size_threshold)
-            return db.exec(INSERT_VALUE_STMT, key, value, expires_secs, std::size(value));
+            return _db.exec(INSERT_VALUE_STMT, key, value, expires_secs, std::size(value));
 
         if (const auto file_path = storage->store(value))
         {
             const auto file_path_str = file_path->string();
-            if (!db.exec(INSERT_PATH_STMT, key, file_path_str, expires_secs, std::size(value)))
+            if (!_db.exec(INSERT_PATH_STMT, key, file_path_str, expires_secs, std::size(value)))
                 return false;
         }
         else
@@ -324,17 +334,18 @@ public:
     inline bool del(const std::string& key)
     {
         using namespace std;
+        auto& _db = db();
         if (!exists(key))
         {
             std::cerr << "Key not found: " << key << std::endl;
             return false;
         }
-        if (auto filepath = db.exec<filesystem::path>(GET_PATH_STMT, key))
+        if (auto filepath = _db.template exec<filesystem::path>(GET_PATH_STMT, key))
         {
             if (filesystem::exists(*filepath))
                 filesystem::remove(*filepath);
         }
-        if (db.exec(DELETE_STMT, key))
+        if (_db.exec(DELETE_STMT, key))
         {
             return true;
         }
@@ -358,14 +369,15 @@ public:
     inline bool touch(const std::string& key, DurationConcept auto expire)
     {
         auto expire_secs = std::chrono::duration_cast<std::chrono::seconds>(expire).count();
-        return db.exec(TOUCH_STMT, expire_secs, key);
+        return db().exec(TOUCH_STMT, expire_secs, key);
     }
 
     inline void expire()
     {
+        auto& _db = db();
         {
             auto binded = EXPIRE_STMT.bind_all();
-            while (auto r = db.step<std::filesystem::path>(binded))
+            while (auto r = _db.template step<std::filesystem::path>(binded))
             {
                 const auto file_path = *r;
                 if (!storage->remove(file_path))
@@ -375,7 +387,7 @@ public:
             }
         }
 
-        if (!db.exec(EVICT_STMT))
+        if (!_db.exec(EVICT_STMT))
             std::cerr << "Error deleting expired items from cache database." << std::endl;
     }
 
@@ -384,13 +396,14 @@ public:
 
     inline void clear()
     {
-        sqlite3_exec(db.get(), "DELETE FROM cache;", nullptr, nullptr, nullptr);
+        sqlite3_exec(db().get(), "DELETE FROM cache;", nullptr, nullptr, nullptr);
         if (std::filesystem::exists(cache_path) && std::filesystem::is_directory(cache_path))
         {
             for (const auto& entry : std::filesystem::directory_iterator(cache_path))
             {
-                if (entry != cache_path / db_fname)
-                    std::filesystem::remove(entry);
+                auto fname = entry.path().filename().string();
+                if (fname != db_fname && !fname.starts_with(std::string(db_fname)))
+                    std::filesystem::remove_all(entry);
             }
         }
     }
@@ -407,9 +420,9 @@ public:
     {
         const char* sql = "SELECT COUNT(*) FROM cache;";
         sqlite3_stmt* stmt;
-        if (sqlite3_prepare_v2(db.get(), sql, -1, &stmt, nullptr) != SQLITE_OK)
+        if (sqlite3_prepare_v2(db().get(), sql, -1, &stmt, nullptr) != SQLITE_OK)
         {
-            std::cerr << "Error preparing statement: " << sqlite3_errmsg(db.get()) << std::endl;
+            std::cerr << "Error preparing statement: " << sqlite3_errmsg(db().get()) << std::endl;
             return false;
         }
 

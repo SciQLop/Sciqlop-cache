@@ -8,6 +8,7 @@
 #include <vector>
 
 #include <catch2/catch_all.hpp>
+#include <catch2/catch_test_macros.hpp>
 
 
 #include "../common.hpp"
@@ -295,6 +296,50 @@ SCENARIO("Testing sciqlop_cache big values operations", "[cache]")
                 auto loaded_value = Buffer(filePath);
                 REQUIRE(loaded_value.size() == big_value.size());
                 REQUIRE(std::memcmp(loaded_value.data(), big_value.data(), big_value.size()) == 0);
+            }
+        }
+    }
+}
+
+SCENARIO("Testing sciqlop_cache clear with big values", "[cache]")
+{
+    AutoCleanDirectory db_path {"ClearTest01"};
+
+    GIVEN("a cache with large values stored as files")
+    {
+        Cache cache(db_path.path(), 1000);
+        std::vector<char> big_value(1024 * 1024);
+        std::generate(big_value.begin(), big_value.end(), std::rand);
+
+        cache.set("big1", big_value);
+        cache.set("big2", big_value);
+        REQUIRE(cache.count() == 2);
+
+        WHEN("we clear the cache")
+        {
+            cache.clear();
+
+            THEN("count should be zero")
+            {
+                REQUIRE(cache.count() == 0);
+            }
+
+            THEN("no data files should remain on disk")
+            {
+                namespace fs = std::filesystem;
+                int file_count = 0;
+                for (const auto& entry : fs::recursive_directory_iterator(db_path.path()))
+                {
+                    if (entry.is_regular_file())
+                    {
+                        auto fname = entry.path().filename().string();
+                        bool is_db_file = fname == "sciqlop-cache.db"
+                            || fname.ends_with("-wal") || fname.ends_with("-shm");
+                        if (!is_db_file)
+                            ++file_count;
+                    }
+                }
+                REQUIRE(file_count == 0);
             }
         }
     }
