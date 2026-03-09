@@ -54,8 +54,8 @@ static inline constexpr auto INIT_STMTS = {
                 path TEXT DEFAULT NULL,
                 value BLOB DEFAULT NULL,
                 expire REAL DEFAULT NULL,
-                last_update REAL NOT NULL DEFAULT (strftime('%s', 'now')),
-                last_use REAL NOT NULL DEFAULT (strftime('%s', 'now')),
+                last_update REAL NOT NULL DEFAULT (unixepoch('now')),
+                last_use REAL NOT NULL DEFAULT (unixepoch('now')),
                 access_count_since_last_update INT NOT NULL DEFAULT 0,
                 size INT NOT NULL DEFAULT 0
             );

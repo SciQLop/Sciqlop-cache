@@ -30,18 +30,18 @@ class _Cache
     std::size_t _file_size_threshold = 8 * 1024;
 
     CompiledStatement COUNT_STMT {
-        "SELECT COUNT(*) FROM cache WHERE (expire IS NULL OR expire > strftime('%s', 'now'));"
+        "SELECT COUNT(*) FROM cache WHERE (expire IS NULL OR expire > unixepoch('now'));"
     };
     CompiledStatement KEYS_STMT {
-        "SELECT key FROM cache WHERE (expire IS NULL OR expire > strftime('%s', 'now'));"
+        "SELECT key FROM cache WHERE (expire IS NULL OR expire > unixepoch('now'));"
     };
     CompiledStatement EXISTS_STMT {
-        "SELECT 1 FROM cache WHERE key = ? AND (expire IS NULL OR expire > strftime('%s', 'now')) "
+        "SELECT 1 FROM cache WHERE key = ? AND (expire IS NULL OR expire > unixepoch('now')) "
         "LIMIT 1;"
     };
     CompiledStatement GET_STMT {
         "SELECT value, path FROM cache WHERE key = ? AND (expire IS NULL OR expire > "
-        "strftime('%s', 'now'));"
+        "unixepoch('now'));"
     };
     CompiledStatement GET_PATH_STMT {
         "SELECT path FROM cache WHERE key = ? AND (expire IS NULL OR expire > strftime('%s', "
@@ -50,12 +50,12 @@ class _Cache
     CompiledStatement GET_PATH_SIMPLE_STMT { "SELECT path FROM cache WHERE key = ?;" };
     CompiledStatement REPLACE_VALUE_STMT {
         R"(
-            REPLACE INTO cache (key, value, expire, size, path) VALUES (?, ?, (strftime('%s', 'now') + ?), ?, NULL);
+            REPLACE INTO cache (key, value, expire, size, path) VALUES (?, ?, (unixepoch('now') + ?), ?, NULL);
         )"
     };
     CompiledStatement REPLACE_PATH_STMT {
         R"(
-            REPLACE INTO cache (key, path, expire, size, value) VALUES (?, ?, (strftime('%s', 'now') + ?), ?, NULL);
+            REPLACE INTO cache (key, path, expire, size, value) VALUES (?, ?, (unixepoch('now') + ?), ?, NULL);
         )"
     };
     CompiledStatement CLEAR_PATH_STMT {
@@ -64,22 +64,22 @@ class _Cache
         )"
     };
     CompiledStatement INSERT_VALUE_STMT {
-        "INSERT OR IGNORE INTO cache (key, value, expire, size) VALUES (?, ?, (strftime('%s', 'now') + ?), "
+        "INSERT OR IGNORE INTO cache (key, value, expire, size) VALUES (?, ?, (unixepoch('now') + ?), "
         "?);"
     };
     CompiledStatement INSERT_PATH_STMT {
-        "INSERT OR IGNORE INTO cache (key, path, expire, size) VALUES (?, ?, (strftime('%s', 'now') + ?), ?);"
+        "INSERT OR IGNORE INTO cache (key, path, expire, size) VALUES (?, ?, (unixepoch('now') + ?), ?);"
     };
     CompiledStatement DELETE_STMT { "DELETE FROM cache WHERE key = ?;" };
     CompiledStatement TOUCH_STMT {
-        "UPDATE cache SET last_update = strftime('%s', 'now'), expire = strftime('%s', 'now') + ?, "
-        "last_use = strftime('%s', 'now') WHERE key = ?;"
+        "UPDATE cache SET last_update = unixepoch('now'), expire = unixepoch('now') + ?, "
+        "last_use = unixepoch('now') WHERE key = ?;"
     };
     CompiledStatement EXPIRE_STMT {
-        "SELECT path FROM cache WHERE expire IS NOT NULL AND expire <= strftime('%s', 'now');"
+        "SELECT path FROM cache WHERE expire IS NOT NULL AND expire <= unixepoch('now');"
     };
     CompiledStatement EVICT_STMT {
-        "DELETE FROM cache WHERE expire IS NOT NULL AND expire <= strftime('%s', 'now');"
+        "DELETE FROM cache WHERE expire IS NOT NULL AND expire <= unixepoch('now');"
     };
 
     mutable CompiledStatement* statements[14]
@@ -115,8 +115,8 @@ class _Cache
                 path TEXT DEFAULT NULL,
                 value BLOB DEFAULT NULL,
                 expire REAL DEFAULT NULL,
-                last_update REAL NOT NULL DEFAULT (strftime('%s', 'now')),
-                last_use REAL NOT NULL DEFAULT (strftime('%s', 'now')),
+                last_update REAL NOT NULL DEFAULT (unixepoch('now')),
+                last_use REAL NOT NULL DEFAULT (unixepoch('now')),
                 access_count_since_last_update INT NOT NULL DEFAULT 0,
                 size INT NOT NULL DEFAULT 0
             );
