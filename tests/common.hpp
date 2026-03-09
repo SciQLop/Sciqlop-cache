@@ -68,24 +68,6 @@ static inline constexpr auto INIT_STMTS = {
             );
 
             INSERT OR IGNORE INTO meta (key, value) VALUES ('size', '0');
-
-            CREATE TRIGGER IF NOT EXISTS cache_size_insert
-            AFTER INSERT ON cache
-            BEGIN
-                UPDATE meta SET value = value + NEW.size WHERE key = 'size';
-            END;
-
-            CREATE TRIGGER IF NOT EXISTS cache_size_delete
-            AFTER DELETE ON cache
-            BEGIN
-                UPDATE meta SET value = value - OLD.size WHERE key = 'size';
-            END;
-
-            CREATE TRIGGER IF NOT EXISTS cache_size_update
-            AFTER UPDATE OF size ON cache
-            BEGIN
-                UPDATE meta SET value = value - OLD.size + NEW.size WHERE key = 'size';
-            END;
 )"
 
 };

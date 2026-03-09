@@ -130,24 +130,6 @@ class _Cache
             );
 
             INSERT OR IGNORE INTO meta (key, value) VALUES ('size', '0');
-
-            CREATE TRIGGER IF NOT EXISTS cache_size_insert
-            AFTER INSERT ON cache
-            BEGIN
-                UPDATE meta SET value = value + NEW.size WHERE key = 'size';
-            END;
-
-            CREATE TRIGGER IF NOT EXISTS cache_size_delete
-            AFTER DELETE ON cache
-            BEGIN
-                UPDATE meta SET value = value - OLD.size WHERE key = 'size';
-            END;
-
-            CREATE TRIGGER IF NOT EXISTS cache_size_update
-            AFTER UPDATE OF size ON cache
-            BEGIN
-                UPDATE meta SET value = value - OLD.size + NEW.size WHERE key = 'size';
-            END;
 )"
 
     };
@@ -220,7 +202,7 @@ public:
 
     [[nodiscard]] inline size_t size()
     {
-        if (auto r = db().template exec<size_t>("SELECT value FROM meta WHERE key = 'size';"))
+        if (auto r = db().template exec<size_t>("SELECT COALESCE(SUM(size), 0) FROM cache;"))
             return *r;
         return 0;
     }
@@ -251,34 +233,23 @@ public:
 
         if (std::size(value) <= _file_size_threshold)
         {
-            auto& _db = db();
-            auto transaction = _db.begin_transaction(true);
-            auto filepath = _db.template exec<std::filesystem::path>(GET_PATH_SIMPLE_STMT, key);
-            _db.exec(REPLACE_VALUE_STMT, key, value, expires_secs, std::size(value));
-            transaction.commit();
-            if (filepath)
-                storage->remove(*filepath);
+            db().exec(REPLACE_VALUE_STMT, key, value, expires_secs, std::size(value));
             return true;
         }
-        else
+
+        auto& _db = db();
+        auto transaction = _db.begin_transaction(true);
+        auto filepath = _db.template exec<std::filesystem::path>(GET_PATH_SIMPLE_STMT, key);
+        auto new_filepath = storage->store(value);
+        if (!new_filepath)
         {
-            auto& _db = db();
-            auto transaction = _db.begin_transaction(true);
-            auto filepath = _db.template exec<std::filesystem::path>(GET_PATH_SIMPLE_STMT, key);
-            auto new_filepath = storage->store(value);
-            if (new_filepath)
-            {
-                _db.exec(REPLACE_PATH_STMT, key, *new_filepath, expires_secs, std::size(value));
-            }
-            else
-            {
-                std::cerr << "Error storing file for key: " << key << std::endl;
-                return false;
-            }
-            transaction.commit();
-            if (filepath)
-                storage->remove(*filepath);
+            transaction.rollback();
+            return false;
         }
+        _db.exec(REPLACE_PATH_STMT, key, *new_filepath, expires_secs, std::size(value));
+        transaction.commit();
+        if (filepath && !filepath->empty())
+            storage->remove(*filepath);
         return true;
     }
 
