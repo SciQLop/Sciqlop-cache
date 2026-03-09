@@ -49,8 +49,7 @@ static inline constexpr auto INIT_STMTS = {
 
     R"(
             CREATE TABLE IF NOT EXISTS cache (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                key TEXT UNIQUE NOT NULL,
+                key TEXT PRIMARY KEY NOT NULL,
                 path TEXT DEFAULT NULL,
                 value BLOB DEFAULT NULL,
                 expire REAL DEFAULT NULL,
@@ -58,9 +57,7 @@ static inline constexpr auto INIT_STMTS = {
                 last_use REAL NOT NULL DEFAULT (unixepoch('now')),
                 access_count_since_last_update INT NOT NULL DEFAULT 0,
                 size INT NOT NULL DEFAULT 0
-            );
-
-            CREATE INDEX IF NOT EXISTS idx_key ON cache (key);
+            ) WITHOUT ROWID;
 
             CREATE TABLE IF NOT EXISTS meta (
                 key TEXT PRIMARY KEY,
