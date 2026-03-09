@@ -19,6 +19,7 @@
 #include <span>
 #include <sqlite3.h>
 #include <string>
+#include <thread>
 
 template <typename Storage>
 class _Cache
@@ -172,10 +173,14 @@ class _Cache
         thread_local Database _db;
         if (!_db.opened())
         {
-            if (!_db.open(this->cache_path / db_fname, _INIT_STMTS) || !_compile_statements())
+            for (int attempt = 0; attempt < 5; ++attempt)
             {
-                throw std::runtime_error("Failed to initialize database schema.");
+                if (_db.open(this->cache_path / db_fname, _INIT_STMTS) && _compile_statements())
+                    return _db;
+                _db.close();
+                std::this_thread::sleep_for(std::chrono::milliseconds(50 * (1 << attempt)));
             }
+            throw std::runtime_error("Failed to initialize database schema.");
         }
         return _db;
     }
