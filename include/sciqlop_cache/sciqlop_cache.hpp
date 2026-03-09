@@ -13,6 +13,7 @@
 #include "utils/concepts.hpp"
 #include <cpp_utils/io/memory_mapped_file.hpp>
 #include <cstdio>
+#include <cstring>
 #include <filesystem>
 #include <iostream>
 #include <optional>
@@ -215,14 +216,21 @@ class _Cache
     CompiledStatement EVICT_TAG_STMT {
         "DELETE FROM cache WHERE tag = ?;"
     };
+    CompiledStatement INCR_GET_STMT {
+        "SELECT value FROM cache WHERE key = ? AND (expire IS NULL OR expire > unixepoch('now'));"
+    };
+    CompiledStatement INCR_UPDATE_STMT {
+        "UPDATE cache SET value = ?, size = ?, last_use = ?, path = NULL WHERE key = ?;"
+    };
 
-    mutable CompiledStatement* statements[18]
+    mutable CompiledStatement* statements[20]
         = { &COUNT_STMT,         &KEYS_STMT,           &EXISTS_STMT,
             &GET_STMT,           &GET_PATH_STMT,       &GET_PATH_SIMPLE_STMT,
             &REPLACE_VALUE_STMT, &REPLACE_PATH_STMT,   &INSERT_VALUE_STMT,
             &INSERT_PATH_STMT,   &DELETE_STMT,         &TOUCH_STMT,
             &EXPIRE_STMT,        &EVICT_EXPIRED_STMT,  &UPDATE_LAST_USE_STMT,
-            &EVICT_LRU_STMT,     &EVICT_TAG_PATH_STMT, &EVICT_TAG_STMT };
+            &EVICT_LRU_STMT,     &EVICT_TAG_PATH_STMT, &EVICT_TAG_STMT,
+            &INCR_GET_STMT,      &INCR_UPDATE_STMT };
 
 
     static inline constexpr auto _INIT_STMTS = {
@@ -607,6 +615,39 @@ public:
         for (auto& f : files)
             storage->remove(f);
         return count;
+    }
+
+    inline int64_t incr(const std::string& key, int64_t delta = 1, int64_t default_value = 0)
+    {
+        auto& _db = db();
+        auto transaction = _db.begin_transaction(true);
+
+        int64_t current = default_value;
+        if (auto blob = _db.template exec<std::vector<char>>(INCR_GET_STMT, key))
+        {
+            if (blob->size() == sizeof(int64_t))
+                std::memcpy(&current, blob->data(), sizeof(int64_t));
+        }
+
+        int64_t new_value = current + delta;
+        auto seq = _access_seq.fetch_add(1, std::memory_order_relaxed);
+
+        std::array<char, sizeof(int64_t)> buf;
+        std::memcpy(buf.data(), &new_value, sizeof(int64_t));
+        auto data = std::span<const char>(buf.data(), buf.size());
+
+        _db.exec(INCR_UPDATE_STMT, data, sizeof(int64_t), seq, key);
+        if (sqlite3_changes(_db.get()) == 0)
+            _db.exec(REPLACE_VALUE_STMT, key, data, std::optional<double> {},
+                     sizeof(int64_t), seq, std::optional<std::string> {});
+
+        transaction.commit();
+        return new_value;
+    }
+
+    inline int64_t decr(const std::string& key, int64_t delta = 1, int64_t default_value = 0)
+    {
+        return incr(key, -delta, default_value);
     }
 
     inline void clear()

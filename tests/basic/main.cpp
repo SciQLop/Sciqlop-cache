@@ -415,6 +415,219 @@ SCENARIO("Testing sciqlop_cache tag operations", "[cache][tags]")
     }
 }
 
+SCENARIO("Testing sciqlop_cache incr/decr operations", "[cache][incr]")
+{
+    AutoCleanDirectory db_path {"IncrTest01"};
+
+    GIVEN("an empty cache")
+    {
+        Cache cache(db_path.path());
+
+        WHEN("we incr a non-existent key")
+        {
+            auto result = cache.incr("counter");
+            THEN("it returns default (0) + 1 = 1")
+            {
+                REQUIRE(result == 1);
+            }
+        }
+
+        WHEN("we incr a non-existent key with custom default")
+        {
+            auto result = cache.incr("counter", 1, 10);
+            THEN("it returns default (10) + 1 = 11")
+            {
+                REQUIRE(result == 11);
+            }
+        }
+
+        WHEN("we incr multiple times")
+        {
+            cache.incr("counter");
+            cache.incr("counter");
+            auto result = cache.incr("counter");
+            THEN("it accumulates correctly")
+            {
+                REQUIRE(result == 3);
+            }
+        }
+
+        WHEN("we decr a key")
+        {
+            cache.incr("counter", 5, 0);
+            auto result = cache.decr("counter", 2);
+            THEN("the value is decremented")
+            {
+                REQUIRE(result == 3);
+            }
+        }
+
+        WHEN("we incr with a custom delta")
+        {
+            auto result = cache.incr("counter", 42, 0);
+            THEN("it returns the delta")
+            {
+                REQUIRE(result == 42);
+            }
+        }
+
+        WHEN("we decr below zero")
+        {
+            auto result = cache.decr("counter", 5, 0);
+            THEN("it goes negative")
+            {
+                REQUIRE(result == -5);
+            }
+        }
+    }
+}
+
+SCENARIO("Testing sciqlop_cache keys()", "[cache]")
+{
+    AutoCleanDirectory db_path {"KeysTest01"};
+
+    GIVEN("a cache with several entries")
+    {
+        Cache cache(db_path.path());
+        std::vector<char> v(50, 'x');
+
+        cache.set("alpha", v);
+        cache.set("beta", v);
+        cache.set("gamma", v);
+
+        WHEN("we call keys()")
+        {
+            auto k = cache.keys();
+            THEN("all keys are returned")
+            {
+                REQUIRE(k.size() == 3);
+                std::sort(k.begin(), k.end());
+                REQUIRE(k == std::vector<std::string>{"alpha", "beta", "gamma"});
+            }
+        }
+
+        WHEN("one key expires and we call keys()")
+        {
+            cache.set("ephemeral", v, 0s);
+            usleep(2000);
+            auto k = cache.keys();
+            THEN("expired keys are excluded")
+            {
+                std::sort(k.begin(), k.end());
+                REQUIRE(k == std::vector<std::string>{"alpha", "beta", "gamma"});
+            }
+        }
+
+        WHEN("we clear and call keys()")
+        {
+            cache.clear();
+            THEN("no keys are returned")
+            {
+                REQUIRE(cache.keys().empty());
+            }
+        }
+    }
+}
+
+SCENARIO("Testing set and add with expire+tag combinations", "[cache][tags]")
+{
+    AutoCleanDirectory db_path {"CombinedTest01"};
+    std::vector<char> v(80, 'z');
+
+    GIVEN("a cache")
+    {
+        Cache cache(db_path.path());
+
+        WHEN("we set with both expire and tag")
+        {
+            cache.set("k1", v, 3600s, "group1");
+            REQUIRE(cache.count() == 1);
+            REQUIRE(cache.get("k1").has_value());
+
+            THEN("evict_tag removes it")
+            {
+                cache.evict_tag("group1");
+                REQUIRE(cache.count() == 0);
+            }
+        }
+
+        WHEN("we set with immediate expire and tag, then expire()")
+        {
+            cache.set("k2", v, 0s, "group2");
+            usleep(2000);
+            cache.expire();
+            THEN("the entry is gone")
+            {
+                REQUIRE_FALSE(cache.get("k2").has_value());
+                REQUIRE(cache.count() == 0);
+            }
+        }
+
+        WHEN("we add with expire")
+        {
+            REQUIRE(cache.add("k3", v, 3600s));
+            REQUIRE(cache.get("k3").has_value());
+            REQUIRE_FALSE(cache.add("k3", v, 3600s));
+        }
+
+        WHEN("we add with expire+tag")
+        {
+            REQUIRE(cache.add("k4", v, 3600s, "tagX"));
+            REQUIRE(cache.get("k4").has_value());
+            cache.evict_tag("tagX");
+            REQUIRE(cache.count() == 0);
+        }
+
+        WHEN("we add with immediate expire+tag")
+        {
+            cache.add("k5", v, 0s, "tagY");
+            usleep(2000);
+            THEN("the entry expires")
+            {
+                REQUIRE_FALSE(cache.get("k5").has_value());
+            }
+        }
+    }
+}
+
+SCENARIO("Testing del and pop edge cases", "[cache]")
+{
+    AutoCleanDirectory db_path {"EdgeTest01"};
+    std::vector<char> v(64, 'e');
+
+    GIVEN("a cache with one entry")
+    {
+        Cache cache(db_path.path());
+        cache.set("existing", v);
+
+        WHEN("we del a non-existent key")
+        {
+            THEN("it returns false")
+            {
+                REQUIRE_FALSE(cache.del("nonexistent"));
+            }
+        }
+
+        WHEN("we pop a non-existent key")
+        {
+            auto result = cache.pop("nonexistent");
+            THEN("it returns nullopt")
+            {
+                REQUIRE_FALSE(result.has_value());
+            }
+        }
+
+        WHEN("we del an existing key twice")
+        {
+            REQUIRE(cache.del("existing"));
+            THEN("the second del returns false")
+            {
+                REQUIRE_FALSE(cache.del("existing"));
+            }
+        }
+    }
+}
+
 SCENARIO("Testing sciqlop_cache clear with big values", "[cache]")
 {
     AutoCleanDirectory db_path {"ClearTest01"};

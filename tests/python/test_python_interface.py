@@ -46,5 +46,342 @@ class TestCache(unittest.TestCase):
 
 
 
+    def test_incr_new_key(self):
+        result = self.cache.incr("counter")
+        self.assertEqual(result, 1)
+
+    def test_incr_existing_key(self):
+        self.cache.set("counter", 10)
+        result = self.cache.incr("counter", 5)
+        self.assertEqual(result, 15)
+
+    def test_incr_with_default(self):
+        result = self.cache.incr("counter", 1, 100)
+        self.assertEqual(result, 101)
+
+    def test_decr(self):
+        self.cache.set("counter", 10)
+        result = self.cache.decr("counter", 3)
+        self.assertEqual(result, 7)
+
+    def test_decr_new_key(self):
+        result = self.cache.decr("counter")
+        self.assertEqual(result, -1)
+
+    def test_incr_multiple(self):
+        self.cache.incr("counter")
+        self.cache.incr("counter")
+        result = self.cache.incr("counter")
+        self.assertEqual(result, 3)
+
+    def test_incr_preserves_as_gettable(self):
+        self.cache.incr("counter", 42)
+        value = self.cache.get("counter")
+        self.assertEqual(value, 42)
+
+
+    def test_memoize_caches_result(self):
+        call_count = 0
+
+        @self.cache.memoize()
+        def add(a, b):
+            nonlocal call_count
+            call_count += 1
+            return a + b
+
+        self.assertEqual(add(1, 2), 3)
+        self.assertEqual(call_count, 1)
+        self.assertEqual(add(1, 2), 3)
+        self.assertEqual(call_count, 1)  # not called again
+
+    def test_memoize_different_args(self):
+        call_count = 0
+
+        @self.cache.memoize()
+        def multiply(a, b):
+            nonlocal call_count
+            call_count += 1
+            return a * b
+
+        self.assertEqual(multiply(2, 3), 6)
+        self.assertEqual(multiply(3, 4), 12)
+        self.assertEqual(call_count, 2)
+
+    def test_memoize_with_kwargs(self):
+        @self.cache.memoize()
+        def greet(name, greeting="hello"):
+            return f"{greeting} {name}"
+
+        self.assertEqual(greet("world"), "hello world")
+        self.assertEqual(greet("world", greeting="hi"), "hi world")
+        self.assertEqual(greet("world"), "hello world")  # from cache
+
+    def test_memoize_typed(self):
+        call_count = 0
+
+        @self.cache.memoize(typed=True)
+        def identity(x):
+            nonlocal call_count
+            call_count += 1
+            return x
+
+        identity(1)
+        identity(1.0)
+        self.assertEqual(call_count, 2)  # different types = different keys
+
+    def test_memoize_not_typed(self):
+        call_count = 0
+
+        @self.cache.memoize(typed=False)
+        def identity(x):
+            nonlocal call_count
+            call_count += 1
+            return x
+
+        identity(1)
+        identity(1.0)
+        self.assertEqual(call_count, 2)  # still different because repr differs
+
+    def test_memoize_with_tag(self):
+        @self.cache.memoize(tag="math")
+        def square(x):
+            return x * x
+
+        self.assertEqual(square(5), 25)
+        self.cache.evict_tag("math")
+        # After eviction, should recompute
+        call_count = 0
+        original_fn = square.__wrapped__
+
+        @self.cache.memoize(tag="math")
+        def square2(x):
+            nonlocal call_count
+            call_count += 1
+            return x * x
+
+        square2(5)
+        self.assertEqual(call_count, 1)  # recomputed after eviction
+
+    def test_memoize_with_expiry(self):
+        call_count = 0
+
+        @self.cache.memoize(expire=1)
+        def compute(x):
+            nonlocal call_count
+            call_count += 1
+            return x * 2
+
+        self.assertEqual(compute(3), 6)
+        self.assertEqual(call_count, 1)
+        self.assertEqual(compute(3), 6)
+        self.assertEqual(call_count, 1)
+        time.sleep(2)
+        self.assertEqual(compute(3), 6)
+        self.assertEqual(call_count, 2)  # expired, recomputed
+
+    def test_memoize_caches_none(self):
+        call_count = 0
+
+        @self.cache.memoize()
+        def returns_none(x):
+            nonlocal call_count
+            call_count += 1
+            return None
+
+        self.assertIsNone(returns_none(1))
+        self.assertEqual(call_count, 1)
+        self.assertIsNone(returns_none(1))
+        self.assertEqual(call_count, 1)  # None was cached
+
+    def test_memoize_cache_key(self):
+        @self.cache.memoize()
+        def func(x):
+            return x
+
+        key = func.__cache_key__(42)
+        self.assertIsInstance(key, str)
+        self.assertIn("func", key)
+
+
+    def test_del(self):
+        self.cache.set("to_delete", "value")
+        self.assertTrue(self.cache.exists("to_delete"))
+        self.cache.delete("to_delete")
+        self.assertFalse(self.cache.exists("to_delete"))
+
+    def test_del_nonexistent(self):
+        self.assertFalse(self.cache.delete("no_such_key"))
+
+    def test_pop(self):
+        self.cache.set("pop_key", [1, 2, 3])
+        result = self.cache.pop("pop_key")
+        self.assertEqual(result, [1, 2, 3])
+        self.assertIsNone(self.cache.get("pop_key"))
+
+    def test_pop_nonexistent(self):
+        result = self.cache.pop("no_such_key")
+        self.assertIsNone(result)
+
+    def test_pop_with_default(self):
+        result = self.cache.pop("no_such_key", default="fallback")
+        self.assertEqual(result, "fallback")
+
+    def test_getitem_setitem(self):
+        self.cache["dictkey"] = "dictval"
+        self.assertEqual(self.cache["dictkey"], "dictval")
+
+    def test_getitem_missing(self):
+        self.assertIsNone(self.cache["missing"])
+
+    def test_delitem(self):
+        self.cache.set("delme", 42)
+        del self.cache["delme"]
+        self.assertIsNone(self.cache.get("delme"))
+
+    def test_len(self):
+        self.assertEqual(len(self.cache), 0)
+        self.cache.set("a", 1)
+        self.cache.set("b", 2)
+        self.assertEqual(len(self.cache), 2)
+
+    def test_keys(self):
+        self.cache.set("x", 1)
+        self.cache.set("y", 2)
+        self.cache.set("z", 3)
+        keys = sorted(self.cache.keys())
+        self.assertEqual(keys, ["x", "y", "z"])
+
+    def test_keys_excludes_expired(self):
+        self.cache.set("alive", 1)
+        self.cache.set("dead", 2, expire=0)
+        time.sleep(0.1)
+        keys = self.cache.keys()
+        self.assertIn("alive", keys)
+        self.assertNotIn("dead", keys)
+
+    def test_exists(self):
+        self.cache.set("present", "yes")
+        self.assertTrue(self.cache.exists("present"))
+        self.assertFalse(self.cache.exists("absent"))
+
+    def test_exists_expired(self):
+        self.cache.set("temp", "val", expire=0)
+        time.sleep(0.1)
+        self.assertFalse(self.cache.exists("temp"))
+
+    def test_add(self):
+        self.assertTrue(self.cache.add("newkey", "newval"))
+        self.assertEqual(self.cache.get("newkey"), "newval")
+
+    def test_add_existing_key_fails(self):
+        self.cache.set("occupied", "original")
+        self.assertFalse(self.cache.add("occupied", "replacement"))
+        self.assertEqual(self.cache.get("occupied"), "original")
+
+    def test_add_with_expire(self):
+        self.cache.add("expiring", "val", expire=1)
+        self.assertEqual(self.cache.get("expiring"), "val")
+        time.sleep(2)
+        self.assertIsNone(self.cache.get("expiring"))
+
+    def test_add_with_tag(self):
+        self.cache.add("tagged", "val", tag="mytag")
+        self.assertEqual(self.cache.get("tagged"), "val")
+        self.cache.evict_tag("mytag")
+        self.assertIsNone(self.cache.get("tagged"))
+
+    def test_set_with_tag(self):
+        self.cache.set("t1", "v1", tag="grp")
+        self.cache.set("t2", "v2", tag="grp")
+        self.cache.set("t3", "v3")
+        self.cache.evict_tag("grp")
+        self.assertIsNone(self.cache.get("t1"))
+        self.assertIsNone(self.cache.get("t2"))
+        self.assertEqual(self.cache.get("t3"), "v3")
+
+    def test_set_with_expire_and_tag(self):
+        self.cache.set("combo", "val", expire=3600, tag="combo_tag")
+        self.assertEqual(self.cache.get("combo"), "val")
+        self.cache.evict_tag("combo_tag")
+        self.assertIsNone(self.cache.get("combo"))
+
+    def test_evict_tag_nonexistent(self):
+        evicted = self.cache.evict_tag("no_such_tag")
+        self.assertEqual(evicted, 0)
+
+    def test_clear(self):
+        self.cache.set("a", 1)
+        self.cache.set("b", 2)
+        self.cache.clear()
+        self.assertEqual(len(self.cache), 0)
+        self.assertIsNone(self.cache.get("a"))
+
+    def test_check(self):
+        self.assertTrue(self.cache.check())
+
+    def test_get_default(self):
+        self.assertEqual(self.cache.get("missing", "fallback"), "fallback")
+
+    def test_get_default_none(self):
+        self.assertIsNone(self.cache.get("missing"))
+
+    def test_touch(self):
+        from datetime import timedelta
+        self.cache.set("touchme", "val", expire=3600)
+        self.cache.touch("touchme", timedelta(seconds=0))
+        self.cache.expire()
+        time.sleep(0.1)
+        self.assertIsNone(self.cache.get("touchme"))
+
+    def test_expire(self):
+        self.cache.set("short", "val", expire=0)
+        self.cache.set("long", "val")
+        time.sleep(0.1)
+        self.cache.expire()
+        self.assertIsNone(self.cache.get("short"))
+        self.assertEqual(self.cache.get("long"), "val")
+
+    def test_big_value_roundtrip(self):
+        big = b"x" * (1024 * 1024)
+        self.cache.set("bigkey", big)
+        result = self.cache.get("bigkey")
+        self.assertEqual(result, big)
+
+    def test_big_value_clear(self):
+        big = b"x" * (1024 * 1024)
+        self.cache.set("big1", big)
+        self.cache.set("big2", big)
+        self.cache.clear()
+        self.assertEqual(len(self.cache), 0)
+
+    def test_max_size_constructor(self):
+        with TemporaryDirectory() as td:
+            cache = Cache(td, max_size=500)
+            data = b"a" * 100
+            for i in range(10):
+                cache.set(f"k{i}", data)
+            cache.evict()
+            self.assertLessEqual(len(cache), 5)
+
+    def test_various_python_types(self):
+        self.cache.set("int", 42)
+        self.assertEqual(self.cache.get("int"), 42)
+        self.cache.set("float", 3.14)
+        self.assertAlmostEqual(self.cache.get("float"), 3.14)
+        self.cache.set("list", [1, "two", 3.0])
+        self.assertEqual(self.cache.get("list"), [1, "two", 3.0])
+        self.cache.set("dict", {"a": 1})
+        self.assertEqual(self.cache.get("dict"), {"a": 1})
+        self.cache.set("none", None)
+        # None values need sentinel to distinguish from missing
+        self.cache.set("bool", True)
+        self.assertEqual(self.cache.get("bool"), True)
+
+    def test_set_overwrite(self):
+        self.cache.set("key", "first")
+        self.cache.set("key", "second")
+        self.assertEqual(self.cache.get("key"), "second")
+
+
 if __name__ == "__main__":
     unittest.main()

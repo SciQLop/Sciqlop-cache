@@ -1,15 +1,19 @@
 from ._pysciqlop_cache import Cache as _Cache
-import  pickle
-from  datetime import timedelta
+import functools
+import hashlib
+import pickle
+from datetime import timedelta
 from typing import Any, AnyStr, Optional, Union
+
+_MISSING = object()
 
 __all__ = ["Cache"]
 
 
 class Cache(_Cache):
 
-    def __init__(self, cache_path=".cache/"):
-        super().__init__(cache_path=cache_path)
+    def __init__(self, cache_path=".cache/", max_size=0):
+        super().__init__(cache_path=cache_path, max_size=max_size)
         self._pickle_protocol = pickle.HIGHEST_PROTOCOL
 
     @property
@@ -75,6 +79,81 @@ class Cache(_Cache):
         if type(expire) in (int, float):
             expire = timedelta(seconds=expire)
         return super().add(key, pickle.dumps(value, self._pickle_protocol), expire=expire, tag=tag)
+
+    def incr(self, key:AnyStr, delta:int=1, default:int=0) -> int:
+        """
+        Increment a value in the cache by delta, returning the new value.
+        If the key does not exist, sets it to default + delta.
+
+        Parameters:
+        key (str): The key to increment.
+        delta (int): The amount to increment by (default 1).
+        default (int): The default value if the key does not exist (default 0).
+        Returns:
+        int: The new value after incrementing.
+        """
+        value = self.get(key, default)
+        new_value = value + delta
+        self.set(key, new_value)
+        return new_value
+
+    def decr(self, key:AnyStr, delta:int=1, default:int=0) -> int:
+        """
+        Decrement a value in the cache by delta, returning the new value.
+        If the key does not exist, sets it to default - delta.
+
+        Parameters:
+        key (str): The key to decrement.
+        delta (int): The amount to decrement by (default 1).
+        default (int): The default value if the key does not exist (default 0).
+        Returns:
+        int: The new value after decrementing.
+        """
+        return self.incr(key, -delta, default)
+
+    def _memoize_key(self, base, args, kwargs, typed):
+        key_data = (args, tuple(sorted(kwargs.items())))
+        if typed:
+            key_data += (tuple(type(a) for a in args),
+                         tuple(type(v) for v in kwargs.values()))
+        key_hash = hashlib.sha256(pickle.dumps(key_data)).hexdigest()
+        return f"{base}:{key_hash}"
+
+    def memoize(self, expire=None, tag=None, typed=False):
+        """
+        Decorator to memoize function results in cache.
+
+        Parameters:
+        expire: Expiration time (timedelta, int seconds, or float seconds). None = no expiry.
+        tag (str): Optional tag for bulk eviction of memoized entries.
+        typed (bool): If True, arguments of different types are cached separately
+            (e.g. f(1) and f(1.0) get different cache entries).
+
+        Usage:
+            cache = Cache()
+
+            @cache.memoize()
+            def expensive(x, y):
+                return x + y
+        """
+        def decorator(func):
+            base = f"{func.__module__}.{func.__qualname__}"
+
+            @functools.wraps(func)
+            def wrapper(*args, **kwargs):
+                key = self._memoize_key(base, args, kwargs, typed)
+                result = self.get(key, _MISSING)
+                if result is not _MISSING:
+                    return result
+                result = func(*args, **kwargs)
+                self.set(key, result, expire=expire, tag=tag)
+                return result
+
+            wrapper.__cache_key__ = lambda *args, **kwargs: self._memoize_key(
+                base, args, kwargs, typed)
+            wrapper.__wrapped__ = func
+            return wrapper
+        return decorator
 
     def __getitem__(self, key:AnyStr):
         """

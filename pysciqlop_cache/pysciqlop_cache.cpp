@@ -110,6 +110,10 @@ NB_MODULE(_pysciqlop_cache, m)
         .def("expire", &Cache::expire)
         .def("evict", &Cache::evict)
         .def("evict_tag", &Cache::evict_tag, nb::arg("tag"))
+        .def("incr", &Cache::incr, nb::arg("key"), nb::arg("delta") = 1,
+             nb::arg("default_value") = 0)
+        .def("decr", &Cache::decr, nb::arg("key"), nb::arg("delta") = 1,
+             nb::arg("default_value") = 0)
         .def("clear", &Cache::clear)
         .def("check", &Cache::check);
 }
