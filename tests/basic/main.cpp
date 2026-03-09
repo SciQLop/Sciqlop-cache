@@ -103,7 +103,7 @@ SCENARIO("Testing sciqlop_cache basic operations", "[cache]")
 
     GIVEN("A new empty cache")
     {
-        Cache cache(db_path.path(), 1000);
+        Cache cache(db_path.path());
         THEN("It should be opened and empty")
         {
             REQUIRE(cache.opened());
@@ -123,7 +123,7 @@ SCENARIO("Testing sciqlop_cache basic operations", "[cache]")
             AND_THEN("Closing the cache and openning again")
             {
                 REQUIRE(cache.close());
-                Cache reopened_cache(db_path.path(), 1000);
+                Cache reopened_cache(db_path.path());
                 REQUIRE(reopened_cache.opened());
                 REQUIRE(reopened_cache.check() == true);
                 THEN("It should be opened")
@@ -152,7 +152,7 @@ SCENARIO("Testing sciqlop_cache more advanced operations", "[cache]")
 
     GIVEN("a cache used to store a small (<500 bytes) value")
     {
-        Cache cache(db_path.path(), 1000);
+        Cache cache(db_path.path());
         REQUIRE(cache.check() == true);
 
         THEN("we test set and get")
@@ -259,13 +259,13 @@ SCENARIO("Testing sciqlop_cache big values operations", "[cache]")
         WHEN("we set a big value in the cache")
         {
             {
-                Cache cache(db_path.path(), 1000);
+                Cache cache(db_path.path());
                 REQUIRE(cache.set(big_key, big_value));
             }
 
             THEN("the value should be correctly retrieved after reopening the cache")
             {
-                Cache reopened_cache(db_path.path(), 1000);
+                Cache reopened_cache(db_path.path());
                 REQUIRE(reopened_cache.check() == true);
 
                 auto loaded_value = reopened_cache.get(big_key);
@@ -276,7 +276,7 @@ SCENARIO("Testing sciqlop_cache big values operations", "[cache]")
 
             THEN("the cache should contain one item")
             {
-                Cache reopened_cache(db_path.path(), 1000);
+                Cache reopened_cache(db_path.path());
                 REQUIRE(reopened_cache.count() == 1);
             }
 
@@ -304,7 +304,7 @@ SCENARIO("Testing sciqlop_cache big values operations", "[cache]")
 SCENARIO("Testing cache size tracking", "[cache]")
 {
     AutoCleanDirectory db_path {"SizeTest01"};
-    Cache cache(db_path.path(), 1000);
+    Cache cache(db_path.path());
 
     GIVEN("an empty cache")
     {
@@ -339,7 +339,7 @@ SCENARIO("Testing sciqlop_cache clear with big values", "[cache]")
 
     GIVEN("a cache with large values stored as files")
     {
-        Cache cache(db_path.path(), 1000);
+        Cache cache(db_path.path());
         std::vector<char> big_value(1024 * 1024);
         std::generate(big_value.begin(), big_value.end(), std::rand);
 

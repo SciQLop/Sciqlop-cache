@@ -33,6 +33,8 @@ class _Cache
     std::unique_ptr<Storage> storage;
     std::size_t _file_size_threshold = 8 * 1024;
 
+    std::atomic<std::size_t> _access_seq { 0 };
+
     std::thread _checkpoint_thread;
     std::atomic<bool> _stop_checkpoint { false };
     std::mutex _checkpoint_mutex;
@@ -94,12 +96,12 @@ class _Cache
     CompiledStatement GET_PATH_SIMPLE_STMT { "SELECT path FROM cache WHERE key = ?;" };
     CompiledStatement REPLACE_VALUE_STMT {
         R"(
-            REPLACE INTO cache (key, value, expire, size, path) VALUES (?, ?, (unixepoch('now') + ?), ?, NULL);
+            REPLACE INTO cache (key, value, expire, size, path, last_use) VALUES (?, ?, (unixepoch('now') + ?), ?, NULL, ?);
         )"
     };
     CompiledStatement REPLACE_PATH_STMT {
         R"(
-            REPLACE INTO cache (key, path, expire, size, value) VALUES (?, ?, (unixepoch('now') + ?), ?, NULL);
+            REPLACE INTO cache (key, path, expire, size, value, last_use) VALUES (?, ?, (unixepoch('now') + ?), ?, NULL, ?);
         )"
     };
     CompiledStatement CLEAR_PATH_STMT {
@@ -108,30 +110,39 @@ class _Cache
         )"
     };
     CompiledStatement INSERT_VALUE_STMT {
-        "INSERT OR IGNORE INTO cache (key, value, expire, size) VALUES (?, ?, (unixepoch('now') + ?), "
-        "?);"
+        "INSERT OR IGNORE INTO cache (key, value, expire, size, last_use) VALUES (?, ?, (unixepoch('now') + ?), "
+        "?, ?);"
     };
     CompiledStatement INSERT_PATH_STMT {
-        "INSERT OR IGNORE INTO cache (key, path, expire, size) VALUES (?, ?, (unixepoch('now') + ?), ?);"
+        "INSERT OR IGNORE INTO cache (key, path, expire, size, last_use) VALUES (?, ?, (unixepoch('now') + ?), ?, ?);"
     };
     CompiledStatement DELETE_STMT { "DELETE FROM cache WHERE key = ?;" };
     CompiledStatement TOUCH_STMT {
-        "UPDATE cache SET last_update = unixepoch('now'), expire = unixepoch('now') + ?, "
-        "last_use = unixepoch('now') WHERE key = ?;"
+        "UPDATE cache SET last_update = unixepoch('now', 'subsec'), expire = unixepoch('now') + ?, "
+        "last_use = unixepoch('now', 'subsec') WHERE key = ?;"
     };
     CompiledStatement EXPIRE_STMT {
         "SELECT path FROM cache WHERE expire IS NOT NULL AND expire <= unixepoch('now');"
     };
-    CompiledStatement EVICT_STMT {
+    CompiledStatement EVICT_EXPIRED_STMT {
         "DELETE FROM cache WHERE expire IS NOT NULL AND expire <= unixepoch('now');"
     };
+    CompiledStatement UPDATE_LAST_USE_STMT {
+        "UPDATE cache SET last_use = ?, "
+        "access_count_since_last_update = access_count_since_last_update + 1 "
+        "WHERE key = ?;"
+    };
+    CompiledStatement EVICT_LRU_STMT {
+        "SELECT key, path, size FROM cache ORDER BY last_use ASC;"
+    };
 
-    mutable CompiledStatement* statements[14]
-        = { &COUNT_STMT,         &KEYS_STMT,         &EXISTS_STMT,
-            &GET_STMT,           &GET_PATH_STMT,     &GET_PATH_SIMPLE_STMT,
-            &REPLACE_VALUE_STMT, &REPLACE_PATH_STMT, &INSERT_VALUE_STMT,
-            &INSERT_PATH_STMT,   &DELETE_STMT,       &TOUCH_STMT,
-            &EXPIRE_STMT,        &EVICT_STMT };
+    mutable CompiledStatement* statements[16]
+        = { &COUNT_STMT,         &KEYS_STMT,           &EXISTS_STMT,
+            &GET_STMT,           &GET_PATH_STMT,       &GET_PATH_SIMPLE_STMT,
+            &REPLACE_VALUE_STMT, &REPLACE_PATH_STMT,   &INSERT_VALUE_STMT,
+            &INSERT_PATH_STMT,   &DELETE_STMT,         &TOUCH_STMT,
+            &EXPIRE_STMT,        &EVICT_EXPIRED_STMT,  &UPDATE_LAST_USE_STMT,
+            &EVICT_LRU_STMT };
 
 
     static inline constexpr auto _INIT_STMTS = {
@@ -159,8 +170,8 @@ class _Cache
                 path TEXT DEFAULT NULL,
                 value BLOB DEFAULT NULL,
                 expire REAL DEFAULT NULL,
-                last_update REAL NOT NULL DEFAULT (unixepoch('now')),
-                last_use REAL NOT NULL DEFAULT (unixepoch('now')),
+                last_update REAL NOT NULL DEFAULT (unixepoch('now', 'subsec')),
+                last_use REAL NOT NULL DEFAULT (unixepoch('now', 'subsec')),
                 access_count_since_last_update INT NOT NULL DEFAULT 0,
                 size INT NOT NULL DEFAULT 0
             ) WITHOUT ROWID;
@@ -212,7 +223,7 @@ class _Cache
 public:
     static constexpr std::string_view db_fname = "sciqlop-cache.db";
 
-    _Cache(const std::filesystem::path& cache_path = ".cache/", size_t max_size = 1000)
+    _Cache(const std::filesystem::path& cache_path = ".cache/", size_t max_size = 0)
             : cache_path(cache_path)
             , max_size(max_size)
             , storage(std::make_unique<Storage>(cache_path))
@@ -269,17 +280,24 @@ public:
 
     inline bool set(const std::string& key, const Bytes auto& value)
     {
-        return set(key, value, std::chrono::seconds { 3600 });
+        return _set_impl(key, value, std::optional<double> {});
     }
 
     inline bool set(const std::string& key, const Bytes auto& value, DurationConcept auto expire)
     {
-        const double expires_secs
-            = std::chrono::duration_cast<std::chrono::seconds>(expire).count();
+        return _set_impl(key, value,
+            std::optional<double> { static_cast<double>(std::chrono::duration_cast<std::chrono::seconds>(expire).count()) });
+    }
 
+private:
+    inline bool _set_impl(const std::string& key, const Bytes auto& value,
+                           std::optional<double> expires_secs)
+    {
+        auto seq = _access_seq.fetch_add(1, std::memory_order_relaxed);
         if (std::size(value) <= _file_size_threshold)
         {
-            db().exec(REPLACE_VALUE_STMT, key, value, expires_secs, std::size(value));
+            db().exec(REPLACE_VALUE_STMT, key, value, expires_secs, std::size(value), seq);
+            evict();
             return true;
         }
 
@@ -292,17 +310,24 @@ public:
             transaction.rollback();
             return false;
         }
-        _db.exec(REPLACE_PATH_STMT, key, *new_filepath, expires_secs, std::size(value));
+        _db.exec(REPLACE_PATH_STMT, key, *new_filepath, expires_secs, std::size(value), seq);
         transaction.commit();
         if (filepath && !filepath->empty())
             storage->remove(*filepath);
+        evict();
         return true;
     }
 
+public:
+
     inline std::optional<Buffer> get(const std::string& key)
     {
-        if (auto values = db().template exec<std::vector<char>, std::filesystem::path>(GET_STMT, key))
+        auto& _db = db();
+        if (auto values = _db.template exec<std::vector<char>, std::filesystem::path>(GET_STMT, key))
         {
+            if (max_size > 0)
+                _db.exec(UPDATE_LAST_USE_STMT,
+                         _access_seq.fetch_add(1, std::memory_order_relaxed), key);
             const auto& [_, path] = *values;
 
             if (!path.empty())
@@ -324,33 +349,47 @@ public:
 
     inline bool add(const std::string& key, const Bytes auto& value)
     {
-        return add(key, value, std::chrono::seconds { 3600 });
+        return _add_impl(key, value, std::optional<double> {});
     }
 
     inline bool add(const std::string& key, const Bytes auto& value, DurationConcept auto expire)
     {
-        const double expires_secs
-            = std::chrono::duration_cast<std::chrono::seconds>(expire).count();
+        return _add_impl(key, value,
+            std::optional<double> { static_cast<double>(std::chrono::duration_cast<std::chrono::seconds>(expire).count()) });
+    }
 
+private:
+    inline bool _add_impl(const std::string& key, const Bytes auto& value,
+                           std::optional<double> expires_secs)
+    {
         auto& _db = db();
+        auto seq = _access_seq.fetch_add(1, std::memory_order_relaxed);
         if (std::size(value) <= _file_size_threshold)
         {
-            _db.exec(INSERT_VALUE_STMT, key, value, expires_secs, std::size(value));
-            return sqlite3_changes(_db.get()) > 0;
+            _db.exec(INSERT_VALUE_STMT, key, value, expires_secs, std::size(value), seq);
+            if (sqlite3_changes(_db.get()) > 0)
+            {
+                evict();
+                return true;
+            }
+            return false;
         }
 
         auto file_path = storage->store(value);
         if (!file_path)
             return false;
 
-        _db.exec(INSERT_PATH_STMT, key, file_path->string(), expires_secs, std::size(value));
+        _db.exec(INSERT_PATH_STMT, key, file_path->string(), expires_secs, std::size(value), seq);
         if (sqlite3_changes(_db.get()) == 0)
         {
             storage->remove(*file_path);
             return false;
         }
+        evict();
         return true;
     }
+
+public:
 
     inline bool del(const std::string& key)
     {
@@ -395,12 +434,47 @@ public:
             }
         }
 
-        if (!_db.exec(EVICT_STMT))
+        if (!_db.exec(EVICT_EXPIRED_STMT))
             std::cerr << "Error deleting expired items from cache database." << std::endl;
     }
 
-    // Delete items based on policy
-    inline void evict() { ; }
+    inline std::size_t evict()
+    {
+        if (max_size == 0)
+            return 0;
+
+        expire();
+
+        auto current_size = size();
+        if (current_size <= max_size)
+            return 0;
+
+        auto target = max_size * 9 / 10;
+        auto& _db = db();
+
+        struct Entry { std::string key; std::filesystem::path path; std::size_t entry_size; };
+        std::vector<Entry> to_evict;
+        {
+            auto binded = EVICT_LRU_STMT.bind_all();
+            while (current_size > target)
+            {
+                auto r = _db.template step<std::string, std::filesystem::path, std::size_t>(binded);
+                if (!r) break;
+                auto& [key, path, entry_size] = *r;
+                to_evict.push_back({ std::move(key), std::move(path), entry_size });
+                current_size -= std::min(current_size, entry_size);
+            }
+        }
+
+        for (auto& [key, path, _] : to_evict)
+        {
+            _db.exec(DELETE_STMT, key);
+            if (!path.empty())
+                storage->remove(path);
+        }
+
+        return to_evict.size();
+    }
 
     inline void clear()
     {

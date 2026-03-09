@@ -24,7 +24,7 @@ void read_write_cache(std::filesystem::path db_path, const std::string& key,
 {
     try
     {
-        Cache cache(db_path, 1000);
+        Cache cache(db_path);
         REQUIRE(cache.check() == true);
 
         for (int i = 0; i < iterations; ++i)

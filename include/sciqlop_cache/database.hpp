@@ -53,6 +53,14 @@ void sql_bind(const auto& stmt, int col, const std::size_t value)
     sqlite3_bind_int64(stmt, col, value);
 }
 
+void sql_bind(const auto& stmt, int col, const std::optional<double>& value)
+{
+    if (value)
+        sqlite3_bind_double(stmt, col, *value);
+    else
+        sqlite3_bind_null(stmt, col);
+}
+
 void sql_bind_all(const auto& stm, auto&&... values)
 {
     int i = 1;

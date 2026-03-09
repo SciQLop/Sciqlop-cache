@@ -36,7 +36,7 @@ pip install meson-python numpy && python -m build --wheel
 
 **Core layer** (`include/sciqlop_cache/`):
 
-- `sciqlop_cache.hpp` — `_Cache<Storage>` template class, main API. Pre-compiles 14 SQL statements per thread-local connection. Instantiated as `Cache` with `DiskStorage`.
+- `sciqlop_cache.hpp` — `_Cache<Storage>` template class, main API. Pre-compiles 16 SQL statements per thread-local connection. Instantiated as `Cache` with `DiskStorage`.
 - `database.hpp` — SQLite wrapper: `Database`, `CompiledStatement`, `BindedCompiledStatement`, `Transaction`. Uses SQLITE_NOMUTEX with manual transaction control.
 - `disk_storage.hpp` — `DiskStorage` class. UUID-based two-level directory hierarchy for file storage.
 - `utils/concepts.hpp` — C++20 concepts: `DurationConcept`, `TimePoint`, `Bytes`
@@ -55,6 +55,8 @@ All vendored in `subprojects/`: SQLite amalgamation, fmt, nanobind, Catch2, stdu
 
 - Thread-local `Database` instances avoid SQLite threading issues
 - WAL mode + 600s busy_timeout for multi-process safety
-- SQLite triggers maintain aggregate size in a `meta` table for quota enforcement
+- `size()` computed on demand via `SUM(size)` query
 - Expiration handled at query time via SQL (`WHERE expire IS NULL OR expire > unixepoch('now')`)
+- No-expiry default: `set()`/`add()` without expire stores NULL (never expires)
+- LRU eviction: `max_size` in bytes (0 = unlimited, default). Auto-evicts on `set()`/`add()` using monotonic access counter for ordering
 - C++20 concepts enforce type safety at compile time

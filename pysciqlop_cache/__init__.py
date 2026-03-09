@@ -31,7 +31,7 @@ class Cache(_Cache):
         """
         if type(expire) in (int, float):
             expire = timedelta(seconds=expire)
-        super().set(key, pickle.dumps(value, self._pickle_protocol), expire=expire or timedelta(seconds=3600))
+        super().set(key, pickle.dumps(value, self._pickle_protocol), expire=expire)
 
     def get(self, key:AnyStr, default=None) -> Any:
         """
@@ -70,8 +70,7 @@ class Cache(_Cache):
         """
         if type(expire) in (int, float):
             expire = timedelta(seconds=expire)
-        return super().add(key, pickle.dumps(value, self._pickle_protocol),
-                    expire=expire or timedelta(seconds=3600))
+        return super().add(key, pickle.dumps(value, self._pickle_protocol), expire=expire)
 
     def __getitem__(self, key:AnyStr):
         """

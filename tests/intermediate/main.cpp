@@ -23,7 +23,7 @@ using namespace std::chrono_literals;
 SCENARIO("Limit testing sciqlop_cache", "[cache]")
 {
     AutoCleanDirectory db_path { "LimitTest01" };
-    Cache cache(db_path.path(), 1000);
+    Cache cache(db_path.path());
     auto scope_guard = cpp_utils::lifetime::scope_leaving_guard<
         Cache, [](Cache* c) { std::filesystem::remove_all(c->path()); }>(&cache);
 
@@ -96,6 +96,61 @@ SCENARIO("Limit testing sciqlop_cache", "[cache]")
         {
             REQUIRE(cache.set("key", value));
             REQUIRE(cache.count() == 1);
+        }
+    }
+}
+
+SCENARIO("LRU eviction enforces max_size in bytes", "[eviction]")
+{
+    AutoCleanDirectory db_path { "EvictionTest01" };
+    std::vector<char> value(100, 'v');
+
+    GIVEN("a cache with max_size = 350 bytes (fits ~3 entries of 100 bytes)")
+    {
+        Cache cache(db_path.path(), 350);
+
+        WHEN("we insert 5 entries and access some to affect LRU order")
+        {
+            cache.set("k1", value);
+            cache.set("k2", value);
+            cache.set("k3", value);
+
+            REQUIRE(cache.count() == 3);
+            REQUIRE(cache.size() == 300);
+
+            // Access k1 to make it recently used
+            cache.get("k1");
+
+            // Adding k4 pushes over 350 bytes, triggers eviction
+            cache.set("k4", value);
+
+            THEN("the least recently used entry is evicted")
+            {
+                // k2 is LRU (k1 was refreshed by get), so k2 gets evicted
+                REQUIRE_FALSE(cache.exists("k2"));
+                REQUIRE(cache.exists("k1"));
+                REQUIRE(cache.exists("k3"));
+                REQUIRE(cache.exists("k4"));
+                REQUIRE(cache.count() == 3);
+            }
+        }
+    }
+
+    GIVEN("a cache with max_size large enough for all entries")
+    {
+        Cache cache(db_path.path(), 10000);
+
+        WHEN("we insert entries within the limit")
+        {
+            cache.set("a", value);
+            cache.set("b", value);
+
+            THEN("no eviction occurs")
+            {
+                REQUIRE(cache.count() == 2);
+                REQUIRE(cache.exists("a"));
+                REQUIRE(cache.exists("b"));
+            }
         }
     }
 }
