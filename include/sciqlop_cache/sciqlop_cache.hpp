@@ -64,9 +64,15 @@ class _Cache
         if (max_size == 0)
             return;
 
+        // Recompute and cache total size in meta table
+        stmt = nullptr;
+        sqlite3_exec(bg_db,
+            "UPDATE meta SET value = (SELECT COALESCE(SUM(size), 0) FROM cache) WHERE key = 'size';",
+            nullptr, nullptr, nullptr);
+
         // LRU eviction if over budget
         stmt = nullptr;
-        sqlite3_prepare_v2(bg_db, "SELECT COALESCE(SUM(size), 0) FROM cache;", -1, &stmt, nullptr);
+        sqlite3_prepare_v2(bg_db, "SELECT value FROM meta WHERE key = 'size';", -1, &stmt, nullptr);
         std::size_t current_size = 0;
         if (stmt && sqlite3_step(stmt) == SQLITE_ROW)
             current_size = static_cast<std::size_t>(sqlite3_column_int64(stmt, 0));
