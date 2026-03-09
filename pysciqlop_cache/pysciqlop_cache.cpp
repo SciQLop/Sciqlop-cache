@@ -9,7 +9,6 @@
 
 #include <fmt/ranges.h>
 
-#include "include/sciqlop_cache/sciqlop_cache.hpp"
 using namespace std::chrono_literals;
 
 namespace nb = nanobind;
