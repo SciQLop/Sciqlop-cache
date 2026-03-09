@@ -63,7 +63,7 @@ static inline constexpr auto INIT_STMTS = {
                 tag TEXT DEFAULT NULL
             ) WITHOUT ROWID;
 
-            CREATE INDEX IF NOT EXISTS idx_cache_tag ON cache(tag);
+            CREATE INDEX IF NOT EXISTS idx_cache_tag ON cache(tag) WHERE tag IS NOT NULL;
 
             CREATE TABLE IF NOT EXISTS meta (
                 key TEXT PRIMARY KEY,

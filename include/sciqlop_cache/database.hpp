@@ -37,15 +37,13 @@ void sql_bind(const auto& stmt, int col, TimePoint auto&& value)
 
 void sql_bind(const auto& stmt, int col, Bytes auto&& value)
 {
-    // Use SQLITE_TRANSIENT so SQLite makes its own copy of the blob data.
     sqlite3_bind_blob(stmt, col, std::data(value), static_cast<int>(std::size(value)),
-                      SQLITE_TRANSIENT);
+                      SQLITE_STATIC);
 }
 
 void sql_bind(const auto& stmt, int col, const std::string& value)
 {
-    // Use SQLITE_TRANSIENT to ensure SQLite copies the string data.
-    sqlite3_bind_text(stmt, col, value.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, col, value.c_str(), -1, SQLITE_STATIC);
 }
 
 void sql_bind(const auto& stmt, int col, const std::size_t value)
@@ -64,7 +62,7 @@ void sql_bind(const auto& stmt, int col, const std::optional<double>& value)
 void sql_bind(const auto& stmt, int col, const std::optional<std::string>& value)
 {
     if (value)
-        sqlite3_bind_text(stmt, col, value->c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(stmt, col, value->c_str(), -1, SQLITE_STATIC);
     else
         sqlite3_bind_null(stmt, col);
 }

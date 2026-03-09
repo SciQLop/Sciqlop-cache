@@ -173,12 +173,12 @@ class _Cache
     CompiledStatement GET_PATH_SIMPLE_STMT { "SELECT path FROM cache WHERE key = ?;" };
     CompiledStatement REPLACE_VALUE_STMT {
         R"(
-            REPLACE INTO cache (key, value, expire, size, path, last_use, tag) VALUES (?, ?, (unixepoch('now') + ?), ?, NULL, ?, ?);
+            REPLACE INTO cache (key, value, expire, size, path, last_use, tag) VALUES (?, ?, ?, ?, NULL, ?, ?);
         )"
     };
     CompiledStatement REPLACE_PATH_STMT {
         R"(
-            REPLACE INTO cache (key, path, expire, size, value, last_use, tag) VALUES (?, ?, (unixepoch('now') + ?), ?, NULL, ?, ?);
+            REPLACE INTO cache (key, path, expire, size, value, last_use, tag) VALUES (?, ?, ?, ?, NULL, ?, ?);
         )"
     };
     CompiledStatement CLEAR_PATH_STMT {
@@ -187,16 +187,14 @@ class _Cache
         )"
     };
     CompiledStatement INSERT_VALUE_STMT {
-        "INSERT OR IGNORE INTO cache (key, value, expire, size, last_use, tag) VALUES (?, ?, (unixepoch('now') + ?), "
-        "?, ?, ?);"
+        "INSERT OR IGNORE INTO cache (key, value, expire, size, last_use, tag) VALUES (?, ?, ?, ?, ?, ?);"
     };
     CompiledStatement INSERT_PATH_STMT {
-        "INSERT OR IGNORE INTO cache (key, path, expire, size, last_use, tag) VALUES (?, ?, (unixepoch('now') + ?), ?, ?, ?);"
+        "INSERT OR IGNORE INTO cache (key, path, expire, size, last_use, tag) VALUES (?, ?, ?, ?, ?, ?);"
     };
     CompiledStatement DELETE_STMT { "DELETE FROM cache WHERE key = ?;" };
     CompiledStatement TOUCH_STMT {
-        "UPDATE cache SET last_update = unixepoch('now', 'subsec'), expire = unixepoch('now') + ?, "
-        "last_use = unixepoch('now', 'subsec') WHERE key = ?;"
+        "UPDATE cache SET expire = ? WHERE key = ?;"
     };
     CompiledStatement EXPIRE_STMT {
         "SELECT path FROM cache WHERE expire IS NOT NULL AND expire <= unixepoch('now');"
@@ -260,14 +258,14 @@ class _Cache
                 path TEXT DEFAULT NULL,
                 value BLOB DEFAULT NULL,
                 expire REAL DEFAULT NULL,
-                last_update REAL NOT NULL DEFAULT (unixepoch('now', 'subsec')),
-                last_use REAL NOT NULL DEFAULT (unixepoch('now', 'subsec')),
+                last_update REAL NOT NULL DEFAULT 0,
+                last_use REAL NOT NULL DEFAULT 0,
                 access_count_since_last_update INT NOT NULL DEFAULT 0,
                 size INT NOT NULL DEFAULT 0,
                 tag TEXT DEFAULT NULL
             ) WITHOUT ROWID;
 
-            CREATE INDEX IF NOT EXISTS idx_cache_tag ON cache(tag);
+            CREATE INDEX IF NOT EXISTS idx_cache_tag ON cache(tag) WHERE tag IS NOT NULL;
 
             CREATE TABLE IF NOT EXISTS meta (
                 key TEXT PRIMARY KEY,
@@ -309,7 +307,7 @@ class _Cache
                         "ALTER TABLE cache ADD COLUMN tag TEXT DEFAULT NULL;",
                         nullptr, nullptr, nullptr);
                     sqlite3_exec(_db.get(),
-                        "CREATE INDEX IF NOT EXISTS idx_cache_tag ON cache(tag);",
+                        "CREATE INDEX IF NOT EXISTS idx_cache_tag ON cache(tag) WHERE tag IS NOT NULL;",
                         nullptr, nullptr, nullptr);
                     return _db;
                 }
@@ -416,15 +414,24 @@ public:
             std::optional<std::string> { tag });
     }
 
+    static std::optional<double> _abs_expire(std::optional<double> offset_secs)
+    {
+        if (!offset_secs) return std::nullopt;
+        auto now = std::chrono::duration_cast<std::chrono::seconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count();
+        return static_cast<double>(now) + *offset_secs;
+    }
+
 private:
     inline bool _set_impl(const std::string& key, const Bytes auto& value,
                            std::optional<double> expires_secs,
                            std::optional<std::string> tag = std::nullopt)
     {
         auto seq = _access_seq.fetch_add(1, std::memory_order_relaxed);
+        auto abs_exp = _abs_expire(expires_secs);
         if (std::size(value) <= _file_size_threshold)
         {
-            db().exec(REPLACE_VALUE_STMT, key, value, expires_secs, std::size(value), seq, tag);
+            db().exec(REPLACE_VALUE_STMT, key, value, abs_exp, std::size(value), seq, tag);
             return true;
         }
 
@@ -437,7 +444,7 @@ private:
             transaction.rollback();
             return false;
         }
-        _db.exec(REPLACE_PATH_STMT, key, new_filepath->string(), expires_secs, std::size(value), seq, tag);
+        _db.exec(REPLACE_PATH_STMT, key, new_filepath->string(), abs_exp, std::size(value), seq, tag);
         transaction.commit();
         if (filepath && !filepath->empty())
             storage->remove(*filepath);
@@ -504,9 +511,10 @@ private:
     {
         auto& _db = db();
         auto seq = _access_seq.fetch_add(1, std::memory_order_relaxed);
+        auto abs_exp = _abs_expire(expires_secs);
         if (std::size(value) <= _file_size_threshold)
         {
-            _db.exec(INSERT_VALUE_STMT, key, value, expires_secs, std::size(value), seq, tag);
+            _db.exec(INSERT_VALUE_STMT, key, value, abs_exp, std::size(value), seq, tag);
             if (sqlite3_changes(_db.get()) > 0)
                 return true;
             return false;
@@ -516,7 +524,7 @@ private:
         if (!file_path)
             return false;
 
-        _db.exec(INSERT_PATH_STMT, key, file_path->string(), expires_secs, std::size(value), seq, tag);
+        _db.exec(INSERT_PATH_STMT, key, file_path->string(), abs_exp, std::size(value), seq, tag);
         if (sqlite3_changes(_db.get()) == 0)
         {
             storage->remove(*file_path);
@@ -551,8 +559,9 @@ public:
     // Touch a key to update its expiration time
     inline bool touch(const std::string& key, DurationConcept auto expire)
     {
-        auto expire_secs = std::chrono::duration_cast<std::chrono::seconds>(expire).count();
-        return db().exec(TOUCH_STMT, expire_secs, key);
+        auto expire_secs = static_cast<double>(std::chrono::duration_cast<std::chrono::seconds>(expire).count());
+        auto abs_exp = _abs_expire(std::optional<double>{expire_secs});
+        return db().exec(TOUCH_STMT, abs_exp, key);
     }
 
     inline void expire()
