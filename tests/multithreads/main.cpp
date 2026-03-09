@@ -11,13 +11,8 @@
 #include <unordered_map>
 #include <vector>
 
-#if __has_include(<catch2/catch_all.hpp>)
 #include <catch2/catch_all.hpp>
-// #include <catch2/catch_test_macros.hpp>
-#else
-#include <catch.hpp>
-#endif
-// #include "tests_config.hpp"
+#include <catch2/catch_test_macros.hpp>
 
 #include "../common.hpp"
 #include "sciqlop_cache/database.hpp"

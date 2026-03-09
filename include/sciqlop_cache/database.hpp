@@ -20,7 +20,6 @@
 #include <string>
 #include <tuple>
 #include <vector>
-#include <source_location>
 
 struct SQLiteDeleter
 {
