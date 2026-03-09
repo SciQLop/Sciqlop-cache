@@ -24,6 +24,7 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <unistd.h>
 
 template <typename Storage>
 class _Cache
@@ -40,6 +41,7 @@ class _Cache
     std::atomic<bool> _stop_checkpoint { false };
     std::mutex _checkpoint_mutex;
     std::condition_variable _checkpoint_cv;
+    pid_t _owner_pid;
 
     void _bg_evict(sqlite3* bg_db)
     {
@@ -328,11 +330,22 @@ public:
             , max_size(max_size)
             , storage(std::make_unique<Storage>(cache_path))
             , _checkpoint_thread(&_Cache::_checkpoint_loop, this)
+            , _owner_pid(getpid())
     {
     }
 
     ~_Cache()
     {
+        if (getpid() != _owner_pid)
+        {
+            // Forked child: the checkpoint thread doesn't exist in this
+            // process, but std::thread still thinks it's joinable. Detach
+            // to avoid blocking forever, and skip DB cleanup since the
+            // inherited SQLite handles are not fork-safe.
+            if (_checkpoint_thread.joinable())
+                _checkpoint_thread.detach();
+            return;
+        }
         _stop_checkpoint.store(true, std::memory_order_relaxed);
         _checkpoint_cv.notify_one();
         if (_checkpoint_thread.joinable())
