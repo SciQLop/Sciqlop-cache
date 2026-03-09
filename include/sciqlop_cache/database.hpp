@@ -61,6 +61,14 @@ void sql_bind(const auto& stmt, int col, const std::optional<double>& value)
         sqlite3_bind_null(stmt, col);
 }
 
+void sql_bind(const auto& stmt, int col, const std::optional<std::string>& value)
+{
+    if (value)
+        sqlite3_bind_text(stmt, col, value->c_str(), -1, SQLITE_TRANSIENT);
+    else
+        sqlite3_bind_null(stmt, col);
+}
+
 void sql_bind_all(const auto& stm, auto&&... values)
 {
     int i = 1;

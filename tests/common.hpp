@@ -56,8 +56,11 @@ static inline constexpr auto INIT_STMTS = {
                 last_update REAL NOT NULL DEFAULT (unixepoch('now')),
                 last_use REAL NOT NULL DEFAULT (unixepoch('now')),
                 access_count_since_last_update INT NOT NULL DEFAULT 0,
-                size INT NOT NULL DEFAULT 0
+                size INT NOT NULL DEFAULT 0,
+                tag TEXT DEFAULT NULL
             ) WITHOUT ROWID;
+
+            CREATE INDEX IF NOT EXISTS idx_cache_tag ON cache(tag);
 
             CREATE TABLE IF NOT EXISTS meta (
                 key TEXT PRIMARY KEY,

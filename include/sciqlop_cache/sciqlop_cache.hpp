@@ -170,12 +170,12 @@ class _Cache
     CompiledStatement GET_PATH_SIMPLE_STMT { "SELECT path FROM cache WHERE key = ?;" };
     CompiledStatement REPLACE_VALUE_STMT {
         R"(
-            REPLACE INTO cache (key, value, expire, size, path, last_use) VALUES (?, ?, (unixepoch('now') + ?), ?, NULL, ?);
+            REPLACE INTO cache (key, value, expire, size, path, last_use, tag) VALUES (?, ?, (unixepoch('now') + ?), ?, NULL, ?, ?);
         )"
     };
     CompiledStatement REPLACE_PATH_STMT {
         R"(
-            REPLACE INTO cache (key, path, expire, size, value, last_use) VALUES (?, ?, (unixepoch('now') + ?), ?, NULL, ?);
+            REPLACE INTO cache (key, path, expire, size, value, last_use, tag) VALUES (?, ?, (unixepoch('now') + ?), ?, NULL, ?, ?);
         )"
     };
     CompiledStatement CLEAR_PATH_STMT {
@@ -184,11 +184,11 @@ class _Cache
         )"
     };
     CompiledStatement INSERT_VALUE_STMT {
-        "INSERT OR IGNORE INTO cache (key, value, expire, size, last_use) VALUES (?, ?, (unixepoch('now') + ?), "
-        "?, ?);"
+        "INSERT OR IGNORE INTO cache (key, value, expire, size, last_use, tag) VALUES (?, ?, (unixepoch('now') + ?), "
+        "?, ?, ?);"
     };
     CompiledStatement INSERT_PATH_STMT {
-        "INSERT OR IGNORE INTO cache (key, path, expire, size, last_use) VALUES (?, ?, (unixepoch('now') + ?), ?, ?);"
+        "INSERT OR IGNORE INTO cache (key, path, expire, size, last_use, tag) VALUES (?, ?, (unixepoch('now') + ?), ?, ?, ?);"
     };
     CompiledStatement DELETE_STMT { "DELETE FROM cache WHERE key = ?;" };
     CompiledStatement TOUCH_STMT {
@@ -209,14 +209,20 @@ class _Cache
     CompiledStatement EVICT_LRU_STMT {
         "SELECT key, path, size FROM cache ORDER BY last_use ASC;"
     };
+    CompiledStatement EVICT_TAG_PATH_STMT {
+        "SELECT path FROM cache WHERE tag = ?;"
+    };
+    CompiledStatement EVICT_TAG_STMT {
+        "DELETE FROM cache WHERE tag = ?;"
+    };
 
-    mutable CompiledStatement* statements[16]
+    mutable CompiledStatement* statements[18]
         = { &COUNT_STMT,         &KEYS_STMT,           &EXISTS_STMT,
             &GET_STMT,           &GET_PATH_STMT,       &GET_PATH_SIMPLE_STMT,
             &REPLACE_VALUE_STMT, &REPLACE_PATH_STMT,   &INSERT_VALUE_STMT,
             &INSERT_PATH_STMT,   &DELETE_STMT,         &TOUCH_STMT,
             &EXPIRE_STMT,        &EVICT_EXPIRED_STMT,  &UPDATE_LAST_USE_STMT,
-            &EVICT_LRU_STMT };
+            &EVICT_LRU_STMT,     &EVICT_TAG_PATH_STMT, &EVICT_TAG_STMT };
 
 
     static inline constexpr auto _INIT_STMTS = {
@@ -247,8 +253,11 @@ class _Cache
                 last_update REAL NOT NULL DEFAULT (unixepoch('now', 'subsec')),
                 last_use REAL NOT NULL DEFAULT (unixepoch('now', 'subsec')),
                 access_count_since_last_update INT NOT NULL DEFAULT 0,
-                size INT NOT NULL DEFAULT 0
+                size INT NOT NULL DEFAULT 0,
+                tag TEXT DEFAULT NULL
             ) WITHOUT ROWID;
+
+            CREATE INDEX IF NOT EXISTS idx_cache_tag ON cache(tag);
 
             CREATE TABLE IF NOT EXISTS meta (
                 key TEXT PRIMARY KEY,
@@ -284,7 +293,16 @@ class _Cache
             for (int attempt = 0; attempt < 5; ++attempt)
             {
                 if (_db.open(this->cache_path / db_fname, _INIT_STMTS) && _compile_statements())
+                {
+                    // Migration: add tag column for databases created before tag support
+                    sqlite3_exec(_db.get(),
+                        "ALTER TABLE cache ADD COLUMN tag TEXT DEFAULT NULL;",
+                        nullptr, nullptr, nullptr);
+                    sqlite3_exec(_db.get(),
+                        "CREATE INDEX IF NOT EXISTS idx_cache_tag ON cache(tag);",
+                        nullptr, nullptr, nullptr);
                     return _db;
+                }
                 _db.close();
                 std::this_thread::sleep_for(std::chrono::milliseconds(50 * (1 << attempt)));
             }
@@ -363,14 +381,28 @@ public:
             std::optional<double> { static_cast<double>(std::chrono::duration_cast<std::chrono::seconds>(expire).count()) });
     }
 
+    inline bool set(const std::string& key, const Bytes auto& value, const std::string& tag)
+    {
+        return _set_impl(key, value, std::optional<double> {}, std::optional<std::string> { tag });
+    }
+
+    inline bool set(const std::string& key, const Bytes auto& value, DurationConcept auto expire,
+                    const std::string& tag)
+    {
+        return _set_impl(key, value,
+            std::optional<double> { static_cast<double>(std::chrono::duration_cast<std::chrono::seconds>(expire).count()) },
+            std::optional<std::string> { tag });
+    }
+
 private:
     inline bool _set_impl(const std::string& key, const Bytes auto& value,
-                           std::optional<double> expires_secs)
+                           std::optional<double> expires_secs,
+                           std::optional<std::string> tag = std::nullopt)
     {
         auto seq = _access_seq.fetch_add(1, std::memory_order_relaxed);
         if (std::size(value) <= _file_size_threshold)
         {
-            db().exec(REPLACE_VALUE_STMT, key, value, expires_secs, std::size(value), seq);
+            db().exec(REPLACE_VALUE_STMT, key, value, expires_secs, std::size(value), seq, tag);
             return true;
         }
 
@@ -383,7 +415,7 @@ private:
             transaction.rollback();
             return false;
         }
-        _db.exec(REPLACE_PATH_STMT, key, *new_filepath, expires_secs, std::size(value), seq);
+        _db.exec(REPLACE_PATH_STMT, key, new_filepath->string(), expires_secs, std::size(value), seq, tag);
         transaction.commit();
         if (filepath && !filepath->empty())
             storage->remove(*filepath);
@@ -430,15 +462,29 @@ public:
             std::optional<double> { static_cast<double>(std::chrono::duration_cast<std::chrono::seconds>(expire).count()) });
     }
 
+    inline bool add(const std::string& key, const Bytes auto& value, const std::string& tag)
+    {
+        return _add_impl(key, value, std::optional<double> {}, std::optional<std::string> { tag });
+    }
+
+    inline bool add(const std::string& key, const Bytes auto& value, DurationConcept auto expire,
+                    const std::string& tag)
+    {
+        return _add_impl(key, value,
+            std::optional<double> { static_cast<double>(std::chrono::duration_cast<std::chrono::seconds>(expire).count()) },
+            std::optional<std::string> { tag });
+    }
+
 private:
     inline bool _add_impl(const std::string& key, const Bytes auto& value,
-                           std::optional<double> expires_secs)
+                           std::optional<double> expires_secs,
+                           std::optional<std::string> tag = std::nullopt)
     {
         auto& _db = db();
         auto seq = _access_seq.fetch_add(1, std::memory_order_relaxed);
         if (std::size(value) <= _file_size_threshold)
         {
-            _db.exec(INSERT_VALUE_STMT, key, value, expires_secs, std::size(value), seq);
+            _db.exec(INSERT_VALUE_STMT, key, value, expires_secs, std::size(value), seq, tag);
             if (sqlite3_changes(_db.get()) > 0)
                 return true;
             return false;
@@ -448,7 +494,7 @@ private:
         if (!file_path)
             return false;
 
-        _db.exec(INSERT_PATH_STMT, key, file_path->string(), expires_secs, std::size(value), seq);
+        _db.exec(INSERT_PATH_STMT, key, file_path->string(), expires_secs, std::size(value), seq, tag);
         if (sqlite3_changes(_db.get()) == 0)
         {
             storage->remove(*file_path);
@@ -542,6 +588,25 @@ public:
         }
 
         return to_evict.size();
+    }
+
+    inline std::size_t evict_tag(const std::string& tag)
+    {
+        auto& _db = db();
+        std::vector<std::filesystem::path> files;
+        {
+            auto binded = EVICT_TAG_PATH_STMT.bind_all(tag);
+            while (auto r = _db.template step<std::filesystem::path>(binded))
+            {
+                if (!r->empty())
+                    files.push_back(std::move(*r));
+            }
+        }
+        _db.exec(EVICT_TAG_STMT, tag);
+        auto count = static_cast<std::size_t>(sqlite3_changes(_db.get()));
+        for (auto& f : files)
+            storage->remove(f);
+        return count;
     }
 
     inline void clear()

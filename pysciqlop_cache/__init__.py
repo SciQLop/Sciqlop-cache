@@ -20,18 +20,20 @@ class Cache(_Cache):
     def pickle_protocol(self, value):
         self._pickle_protocol = value
 
-    def set(self, key:AnyStr, value:Any, expire:Optional[Union[timedelta, int, float]]=None):
+    def set(self, key:AnyStr, value:Any, expire:Optional[Union[timedelta, int, float]]=None,
+            tag:Optional[str]=None):
         """
-        Set a value in the cache with an optional expiration time.
+        Set a value in the cache with an optional expiration time and tag.
 
         Parameters:
         key (str): The key under which to store the value.
         value: The value to store in the cache.
         expire (Optional[Union[timedelta, int, float]]): The expiration time for the cache entry. If provided, it can be a `timedelta`, an integer (seconds), or a float (seconds). If `None`, the entry will not expire.
+        tag (Optional[str]): An optional tag for grouping cache entries. Use `evict_tag()` to bulk-remove entries by tag.
         """
         if type(expire) in (int, float):
             expire = timedelta(seconds=expire)
-        super().set(key, pickle.dumps(value, self._pickle_protocol), expire=expire)
+        super().set(key, pickle.dumps(value, self._pickle_protocol), expire=expire, tag=tag)
 
     def get(self, key:AnyStr, default=None) -> Any:
         """
@@ -59,18 +61,20 @@ class Cache(_Cache):
             return pickle.loads(value.memoryview())
         return default
 
-    def add(self, key:AnyStr, value:Any, expire:Optional[Union[timedelta, int, float]]=None) -> bool:
+    def add(self, key:AnyStr, value:Any, expire:Optional[Union[timedelta, int, float]]=None,
+            tag:Optional[str]=None) -> bool:
         """
         Add a value to the cache if the key does not already exist.
         Parameters:
         key (str): The key under which to store the value.
         value: The value to store in the cache.
+        tag (Optional[str]): An optional tag for grouping cache entries.
         Returns:
         bool: `True` if the value was added, `False` if the key already exists.
         """
         if type(expire) in (int, float):
             expire = timedelta(seconds=expire)
-        return super().add(key, pickle.dumps(value, self._pickle_protocol), expire=expire)
+        return super().add(key, pickle.dumps(value, self._pickle_protocol), expire=expire, tag=tag)
 
     def __getitem__(self, key:AnyStr):
         """

@@ -8,10 +8,12 @@ SciQLop Cache is a C++/Python library for fast, persistent, and concurrent cachi
 
 ## Main Features
 
-- **Persistent cache**: Stores data on disk using SQLite and files.
+- **Persistent cache**: Stores data on disk using SQLite (small values as BLOBs, large values as files).
 - **Binary and text support**: Handles arbitrary byte buffers and strings.
-- **Expiration and eviction**: Supports time-based expiration and manual eviction.
-- **Multi-process safe**: Can be used from multiple processes.
+- **No-expiry default**: Entries persist until explicitly deleted or evicted. Optional time-based expiration.
+- **LRU eviction**: Set `max_size` in bytes to automatically evict least-recently-used entries.
+- **Tags**: Group cache entries with tags for bulk eviction.
+- **Multi-process safe**: WAL mode with busy timeout for concurrent access.
 - **Python bindings**: Easy integration with Python via `pysciqlop_cache`.
 
 ## User API (C++)
@@ -21,28 +23,32 @@ All user-facing functions are provided by the `Cache` class in `include/sciqlop_
 ### Construction
 
 ```cpp
-Cache(const std::filesystem::path &cache_path = ".cache/", size_t max_size = 1000);
+Cache(const std::filesystem::path &cache_path = ".cache/", size_t max_size = 0);
 ```
 
-Creates a cache at the given path, with an optional maximum size.
+Creates a cache at the given path. `max_size` is in bytes (0 = unlimited, default). When set, LRU eviction runs automatically in the background.
 
 Basic Operations
 
 * Set a value
 ```cpp
-cache.set(key, value); // value can be std::string, std::vector<char>, etc.
-cache.set(key, value, expire_duration); // set with expiration
+cache.set(key, value);                      // never expires
+cache.set(key, value, expire_duration);     // with expiration
+cache.set(key, value, "mytag");             // with tag
+cache.set(key, value, expire_duration, "mytag"); // both
 ```
 
 * Get a value
 ```cpp
-auto result = cache.get(key); // returns std::optional<std::vector<char>>
+auto result = cache.get(key); // returns std::optional<Buffer>
 ```
 
 * Add a value only if not present
 ```cpp
 cache.add(key, value);
 cache.add(key, value, expire_duration);
+cache.add(key, value, "mytag");
+cache.add(key, value, expire_duration, "mytag");
 ```
 
 * Delete a value
@@ -81,9 +87,14 @@ cache.touch(key, expire_duration);
 cache.expire();
 ```
 
-* Evict (manual removal, policy not implemented)
+* Evict (LRU removal when over max_size)
 ```cpp
 cache.evict();
+```
+
+* Evict by tag (remove all entries with a given tag)
+```cpp
+cache.evict_tag("mytag"); // returns number of entries removed
 ```
 
 * Clear all items
@@ -104,10 +115,14 @@ The Python API is provided by the pysciqlop_cache module. The main class is Cach
 ```py
 from pysciqlop_cache import Cache
 
-cache = Cache("path/to/cache", max_size=1000)
-cache.set("key", b"value")
+cache = Cache("path/to/cache", max_size=1_000_000_000)  # 1GB limit, 0 = unlimited
+cache.set("key", "value")                       # stores any picklable object
+cache.set("key", "value", expire=3600)           # expire in 1 hour
+cache.set("key", "value", tag="group1")          # with tag
+cache.set("key", "value", expire=3600, tag="group1")  # both
 value = cache.get("key")
 cache.delete("key")
+cache.evict_tag("group1")                        # bulk remove by tag
 cache.keys()
 cache.count()
 cache.expire()
@@ -131,10 +146,12 @@ Python
 from pysciqlop_cache import Cache
 
 cache = Cache(".cache/")
-cache.set("mykey", b"abc")
+cache.set("mykey", [1, 2, 3])              # any picklable object
+cache.set("sensor/temp", data, tag="sensor")
 value = cache.get("mykey")
 if value is not None:
     # use value
+cache.evict_tag("sensor")                  # remove all sensor data
 ```
 
 

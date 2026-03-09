@@ -333,6 +333,88 @@ SCENARIO("Testing cache size tracking", "[cache]")
     }
 }
 
+SCENARIO("Testing sciqlop_cache tag operations", "[cache][tags]")
+{
+    AutoCleanDirectory db_path {"TagTest01"};
+    std::vector<char> v1(100, 'a');
+    std::vector<char> v2(200, 'b');
+    std::vector<char> v3(150, 'c');
+
+    GIVEN("a cache with tagged entries")
+    {
+        Cache cache(db_path.path());
+
+        cache.set("k1", v1, "groupA");
+        cache.set("k2", v2, "groupA");
+        cache.set("k3", v3, "groupB");
+        cache.set("k4", v1);
+
+        REQUIRE(cache.count() == 4);
+
+        WHEN("we evict by tag")
+        {
+            auto evicted = cache.evict_tag("groupA");
+            THEN("only tagged entries are removed")
+            {
+                REQUIRE(evicted == 2);
+                REQUIRE(cache.count() == 2);
+                REQUIRE_FALSE(cache.get("k1").has_value());
+                REQUIRE_FALSE(cache.get("k2").has_value());
+                REQUIRE(cache.get("k3").has_value());
+                REQUIRE(cache.get("k4").has_value());
+            }
+        }
+
+        WHEN("we evict a non-existent tag")
+        {
+            auto evicted = cache.evict_tag("nosuchtag");
+            THEN("nothing is removed")
+            {
+                REQUIRE(evicted == 0);
+                REQUIRE(cache.count() == 4);
+            }
+        }
+    }
+
+    GIVEN("a cache with tagged entries using add()")
+    {
+        Cache cache(db_path.path());
+
+        REQUIRE(cache.add("a1", v1, "mytag"));
+        REQUIRE(cache.add("a2", v2, "mytag"));
+        REQUIRE_FALSE(cache.add("a1", v3, "mytag"));
+
+        WHEN("we evict the tag")
+        {
+            cache.evict_tag("mytag");
+            THEN("all tagged entries are gone")
+            {
+                REQUIRE(cache.count() == 0);
+            }
+        }
+    }
+
+    GIVEN("a cache with tagged big values")
+    {
+        Cache cache(db_path.path());
+        std::vector<char> big(1024 * 1024, 'x');
+
+        cache.set("big1", big, "filetag");
+        cache.set("big2", big, "filetag");
+        REQUIRE(cache.count() == 2);
+
+        WHEN("we evict by tag")
+        {
+            auto evicted = cache.evict_tag("filetag");
+            THEN("entries and files are removed")
+            {
+                REQUIRE(evicted == 2);
+                REQUIRE(cache.count() == 0);
+            }
+        }
+    }
+}
+
 SCENARIO("Testing sciqlop_cache clear with big values", "[cache]")
 {
     AutoCleanDirectory db_path {"ClearTest01"};

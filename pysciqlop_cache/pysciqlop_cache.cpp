@@ -15,23 +15,34 @@ namespace nb = nanobind;
 using namespace nb::literals;
 
 using OptDuration = std::optional<std::chrono::system_clock::duration>;
+using OptString = std::optional<std::string>;
 
 inline void _set_item(Cache& c, const std::string& key, nb::bytes& buffer,
-                      OptDuration expire = std::nullopt)
+                      OptDuration expire = std::nullopt,
+                      OptString tag = std::nullopt)
 {
     auto data = std::span<const char>(static_cast<const char*>(buffer.data()), buffer.size());
-    if (expire)
+    if (expire && tag)
+        c.set(key, data, *expire, *tag);
+    else if (expire)
         c.set(key, data, *expire);
+    else if (tag)
+        c.set(key, data, *tag);
     else
         c.set(key, data);
 }
 
 inline bool _add_item(Cache& c, const std::string& key, nb::bytes& buffer,
-                      OptDuration expire = std::nullopt)
+                      OptDuration expire = std::nullopt,
+                      OptString tag = std::nullopt)
 {
     auto data = std::span<const char>(static_cast<const char*>(buffer.data()), buffer.size());
-    if (expire)
+    if (expire && tag)
+        return c.add(key, data, *expire, *tag);
+    else if (expire)
         return c.add(key, data, *expire);
+    else if (tag)
+        return c.add(key, data, *tag);
     else
         return c.add(key, data);
 }
@@ -79,7 +90,8 @@ NB_MODULE(_pysciqlop_cache, m)
              "max_size"_a = 0)
         .def("count", &Cache::count)
         .def("__len__", &Cache::count)
-        .def("set", _set_item, nb::arg("key"), nb::arg("value"), nb::arg("expire") = nb::none())
+        .def("set", _set_item, nb::arg("key"), nb::arg("value"), nb::arg("expire") = nb::none(),
+             nb::arg("tag") = nb::none())
         .def(
             "__setitem__", [](Cache& c, const std::string& key, nb::bytes& buffer)
             { return _set_item(c, key, buffer); }, nb::arg("key"), nb::arg("value"))
@@ -88,7 +100,7 @@ NB_MODULE(_pysciqlop_cache, m)
         .def("keys", &Cache::keys)
         .def("exists", &Cache::exists, nb::arg("key"))
         .def("add", _add_item, nb::arg("key"), nb::arg("value"),
-             nb::arg("expire") = nb::none())
+             nb::arg("expire") = nb::none(), nb::arg("tag") = nb::none())
         .def("delete", &Cache::del, nb::arg("key"))
         .def("pop", &Cache::pop, nb::arg("key"))
         .def(
@@ -97,6 +109,7 @@ NB_MODULE(_pysciqlop_cache, m)
             { return c.touch(key, expire); }, nb::arg("key"), nb::arg("expire"))
         .def("expire", &Cache::expire)
         .def("evict", &Cache::evict)
+        .def("evict_tag", &Cache::evict_tag, nb::arg("tag"))
         .def("clear", &Cache::clear)
         .def("check", &Cache::check);
 }
