@@ -1,6 +1,7 @@
-pysciqlop_cache_python_sources = [files('__init__.py')]
+pysciqlop_cache_python_sources = [files('__init__.py', 'serializers.py')]
 fs = import('fs')
 fs.copyfile('__init__.py', '__init__.py')
+fs.copyfile('serializers.py', 'serializers.py')
 
 pymod = import('python')
 python3 = pymod.find_installation('python3')

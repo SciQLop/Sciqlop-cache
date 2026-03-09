@@ -115,5 +115,8 @@ NB_MODULE(_pysciqlop_cache, m)
         .def("decr", &Cache::decr, nb::arg("key"), nb::arg("delta") = 1,
              nb::arg("default_value") = 0)
         .def("clear", &Cache::clear)
-        .def("check", &Cache::check);
+        .def("check", &Cache::check)
+        .def("set_meta", &Cache::set_meta, nb::arg("key"), nb::arg("value"))
+        .def("get_meta", &Cache::get_meta, nb::arg("key"))
+        .def("set_max_cache_size", &Cache::set_max_cache_size, nb::arg("value"));
 }

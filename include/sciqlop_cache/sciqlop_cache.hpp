@@ -360,6 +360,7 @@ public:
     [[nodiscard]] inline std::filesystem::path path() { return cache_path; }
 
     [[nodiscard]] inline size_t max_cache_size() { return max_size; }
+    inline void set_max_cache_size(size_t value) { max_size = value; }
 
     [[nodiscard]] inline std::size_t file_size_threshold() { return _file_size_threshold; }
 
@@ -683,8 +684,30 @@ public:
     //     ;
     // }
 
-    // Check if the cache is valid
-    // need explaination and actually test everything
+    inline void set_meta(const std::string& key, const std::string& value)
+    {
+        sqlite3_stmt* stmt;
+        sqlite3_prepare_v2(db().get(),
+            "INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?);", -1, &stmt, nullptr);
+        sqlite3_bind_text(stmt, 1, key.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(stmt, 2, value.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_step(stmt);
+        sqlite3_finalize(stmt);
+    }
+
+    [[nodiscard]] inline std::optional<std::string> get_meta(const std::string& key)
+    {
+        sqlite3_stmt* stmt;
+        sqlite3_prepare_v2(db().get(),
+            "SELECT value FROM meta WHERE key = ?;", -1, &stmt, nullptr);
+        sqlite3_bind_text(stmt, 1, key.c_str(), -1, SQLITE_TRANSIENT);
+        std::optional<std::string> result;
+        if (sqlite3_step(stmt) == SQLITE_ROW)
+            result = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
+        sqlite3_finalize(stmt);
+        return result;
+    }
+
     inline bool check()
     {
         const char* sql = "SELECT COUNT(*) FROM cache;";
