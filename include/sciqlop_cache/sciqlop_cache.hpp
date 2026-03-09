@@ -64,11 +64,11 @@ class _Cache
         )"
     };
     CompiledStatement INSERT_VALUE_STMT {
-        "INSERT INTO cache (key, value, expire, size) VALUES (?, ?, (strftime('%s', 'now') + ?), "
+        "INSERT OR IGNORE INTO cache (key, value, expire, size) VALUES (?, ?, (strftime('%s', 'now') + ?), "
         "?);"
     };
     CompiledStatement INSERT_PATH_STMT {
-        "INSERT INTO cache (key, path, expire, size) VALUES (?, ?, (strftime('%s', 'now') + ?), ?);"
+        "INSERT OR IGNORE INTO cache (key, path, expire, size) VALUES (?, ?, (strftime('%s', 'now') + ?), ?);"
     };
     CompiledStatement DELETE_STMT { "DELETE FROM cache WHERE key = ?;" };
     CompiledStatement TOUCH_STMT {
@@ -304,28 +304,26 @@ public:
         return add(key, value, std::chrono::seconds { 3600 });
     }
 
-    // Add a value if the key doesn't already exist
     inline bool add(const std::string& key, const Bytes auto& value, DurationConcept auto expire)
     {
         const double expires_secs
             = std::chrono::duration_cast<std::chrono::seconds>(expire).count();
 
-        if (exists(key))
-            return false;
-
         auto& _db = db();
         if (std::size(value) <= _file_size_threshold)
-            return _db.exec(INSERT_VALUE_STMT, key, value, expires_secs, std::size(value));
-
-        if (const auto file_path = storage->store(value))
         {
-            const auto file_path_str = file_path->string();
-            if (!_db.exec(INSERT_PATH_STMT, key, file_path_str, expires_secs, std::size(value)))
-                return false;
+            _db.exec(INSERT_VALUE_STMT, key, value, expires_secs, std::size(value));
+            return sqlite3_changes(_db.get()) > 0;
         }
-        else
+
+        auto file_path = storage->store(value);
+        if (!file_path)
+            return false;
+
+        _db.exec(INSERT_PATH_STMT, key, file_path->string(), expires_secs, std::size(value));
+        if (sqlite3_changes(_db.get()) == 0)
         {
-            std::cerr << "Error storing file for key: " << key << std::endl;
+            storage->remove(*file_path);
             return false;
         }
         return true;
@@ -333,35 +331,22 @@ public:
 
     inline bool del(const std::string& key)
     {
-        using namespace std;
         auto& _db = db();
-        if (!exists(key))
-        {
-            std::cerr << "Key not found: " << key << std::endl;
+        auto filepath = _db.template exec<std::filesystem::path>(GET_PATH_SIMPLE_STMT, key);
+        if (!_db.exec(DELETE_STMT, key))
             return false;
-        }
-        if (auto filepath = _db.template exec<filesystem::path>(GET_PATH_STMT, key))
-        {
-            if (filesystem::exists(*filepath))
-                filesystem::remove(*filepath);
-        }
-        if (_db.exec(DELETE_STMT, key))
-        {
-            return true;
-        }
-        else
-        {
-            std::cerr << "Error deleting key: " << key << std::endl;
+        if (sqlite3_changes(_db.get()) == 0)
             return false;
-        }
+        if (filepath && !filepath->empty())
+            storage->remove(*filepath);
+        return true;
     }
 
     inline std::optional<Buffer> pop(const std::string& key)
     {
-        std::optional<Buffer> result = get(key);
-
-        if (!del(key))
-            std::cerr << "Error deleting key: " << key << std::endl;
+        auto result = get(key);
+        if (result)
+            del(key);
         return result;
     }
 
