@@ -301,6 +301,38 @@ SCENARIO("Testing sciqlop_cache big values operations", "[cache]")
     }
 }
 
+SCENARIO("Testing cache size tracking", "[cache]")
+{
+    AutoCleanDirectory db_path {"SizeTest01"};
+    Cache cache(db_path.path(), 1000);
+
+    GIVEN("an empty cache")
+    {
+        REQUIRE(cache.size() == 0);
+
+        WHEN("we add items and delete them")
+        {
+            std::vector<char> v100(100, 'a');
+            std::vector<char> v200(200, 'b');
+
+            cache.set("k1", v100);
+            REQUIRE(cache.size() == 100);
+
+            cache.set("k2", v200);
+            REQUIRE(cache.size() == 300);
+
+            cache.del("k1");
+            REQUIRE(cache.size() == 200);
+
+            cache.set("k2", v100);
+            REQUIRE(cache.size() == 100);
+
+            cache.clear();
+            REQUIRE(cache.size() == 0);
+        }
+    }
+}
+
 SCENARIO("Testing sciqlop_cache clear with big values", "[cache]")
 {
     AutoCleanDirectory db_path {"ClearTest01"};

@@ -105,6 +105,7 @@ class _Cache
             -- Limit the number of rows analyzed for query planning
             PRAGMA analysis_limit=1000;
             PRAGMA busy_timeout=600000;
+            PRAGMA recursive_triggers=ON;
             )",
 
         R"(
@@ -129,25 +130,22 @@ class _Cache
 
             INSERT OR IGNORE INTO meta (key, value) VALUES ('size', '0');
 
-            -- Trigger for INSERT
             CREATE TRIGGER IF NOT EXISTS cache_size_insert
             AFTER INSERT ON cache
             BEGIN
-                UPDATE meta SET value = COALESCE((SELECT SUM(size) FROM cache), 0) WHERE key = 'size';
+                UPDATE meta SET value = value + NEW.size WHERE key = 'size';
             END;
 
-            -- Trigger for DELETE
             CREATE TRIGGER IF NOT EXISTS cache_size_delete
             AFTER DELETE ON cache
             BEGIN
-                UPDATE meta SET value = COALESCE((SELECT SUM(size) FROM cache), 0) WHERE key = 'size';
+                UPDATE meta SET value = value - OLD.size WHERE key = 'size';
             END;
 
-            -- Trigger for UPDATE OF size
             CREATE TRIGGER IF NOT EXISTS cache_size_update
             AFTER UPDATE OF size ON cache
             BEGIN
-                UPDATE meta SET value = COALESCE((SELECT SUM(size) FROM cache), 0) WHERE key = 'size';
+                UPDATE meta SET value = value - OLD.size + NEW.size WHERE key = 'size';
             END;
 )"
 
