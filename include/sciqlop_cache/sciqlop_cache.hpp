@@ -193,7 +193,10 @@ public:
     {
     }
 
-    ~_Cache() { close(); }
+    ~_Cache()
+    {
+        try { close(); } catch (...) {}
+    }
 
     [[nodiscard]] inline bool opened() const { return db().opened(); }
 
