@@ -445,7 +445,12 @@ private:
             return false;
         }
         _db.exec(REPLACE_PATH_STMT, key, new_filepath->string(), abs_exp, std::size(value), seq, tag);
-        transaction.commit();
+        if (!transaction.commit())
+        {
+            transaction.rollback();
+            storage->remove(*new_filepath);
+            return false;
+        }
         if (filepath && !filepath->empty())
             storage->remove(*filepath);
         return true;
