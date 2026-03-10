@@ -161,11 +161,20 @@ Latency stays nearly flat from 100 to 1M cache entries (256-byte values):
 
 ![Scaling benchmark](benchmark/scaling_chart.png)
 
+Latency distribution at each cache size:
+
+![Latency distribution](benchmark/scaling_violin.png)
+
 Reproduce with:
 
 ```bash
+# Summary line chart
 PYTHONPATH=build python benchmark/scaling.py --max-entries 1000000 > results.csv
 python benchmark/plot_scaling.py results.csv -o benchmark/scaling_chart.png
+
+# Violin plot (per-op latency distributions)
+PYTHONPATH=build python benchmark/scaling.py --max-entries 1000000 --raw > raw.csv
+python benchmark/plot_scaling.py raw.csv --violin -o benchmark/scaling_violin.png
 ```
 
 MIT License
