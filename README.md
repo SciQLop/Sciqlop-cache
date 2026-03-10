@@ -157,7 +157,7 @@ cache.evict_tag("sensor")                  # remove all sensor data
 
 ## Scaling
 
-Latency stays nearly flat from 100 to 1M cache entries (256-byte values):
+Comparison with diskcache, from 100 to 1M cache entries (256-byte values):
 
 ![Scaling benchmark](benchmark/scaling_chart.png)
 
@@ -169,11 +169,11 @@ Reproduce with:
 
 ```bash
 # Summary line chart
-PYTHONPATH=build python benchmark/scaling.py --max-entries 1000000 > results.csv
+PYTHONPATH=build python benchmark/scaling.py --max-entries 1000000 --backend both > results.csv
 python benchmark/plot_scaling.py results.csv -o benchmark/scaling_chart.png
 
 # Violin plot (per-op latency distributions)
-PYTHONPATH=build python benchmark/scaling.py --max-entries 1000000 --raw > raw.csv
+PYTHONPATH=build python benchmark/scaling.py --max-entries 1000000 --raw --backend both > raw.csv
 python benchmark/plot_scaling.py raw.csv --violin -o benchmark/scaling_violin.png
 ```
 

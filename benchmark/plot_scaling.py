@@ -2,11 +2,11 @@
 """Generate scaling charts from benchmark CSV output.
 
 Usage:
-    # Summary line chart (from default CSV):
+    # Summary line chart:
     python benchmark/plot_scaling.py results.csv -o benchmark/scaling_chart.png
 
-    # Violin plot (from --raw CSV):
-    python benchmark/plot_scaling.py raw_results.csv --violin -o benchmark/scaling_violin.png
+    # Violin plot with comparison:
+    python benchmark/plot_scaling.py raw.csv --violin -o benchmark/scaling_violin.png
 """
 
 import argparse
@@ -21,21 +21,25 @@ import numpy as np
 def read_summary_csv(path):
     with open(path) as f:
         rows = list(csv.DictReader(f))
-    return {
-        "entries": [int(r["entries"]) for r in rows],
-        "set_us": [float(r["set_us"]) for r in rows],
-        "get_hit_us": [float(r["get_hit_us"]) for r in rows],
-        "get_miss_us": [float(r["get_miss_us"]) for r in rows],
-        "db_size_mb": [float(r["db_size_mb"]) for r in rows],
-    }
+
+    by_backend = defaultdict(lambda: defaultdict(list))
+    for r in rows:
+        b = r.get("backend", "sciqlop")
+        by_backend[b]["entries"].append(int(r["entries"]))
+        by_backend[b]["set_us"].append(float(r["set_us"]))
+        by_backend[b]["get_hit_us"].append(float(r["get_hit_us"]))
+        by_backend[b]["get_miss_us"].append(float(r["get_miss_us"]))
+    return dict(by_backend)
 
 
 def read_raw_csv(path):
-    by_op = defaultdict(lambda: defaultdict(list))
+    # by_backend -> by_op -> by_size -> [latencies]
+    data = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
     with open(path) as f:
         for row in csv.DictReader(f):
-            by_op[row["operation"]][int(row["entries"])].append(float(row["latency_us"]))
-    return by_op
+            b = row.get("backend", "sciqlop")
+            data[b][row["operation"]][int(row["entries"])].append(float(row["latency_us"]))
+    return data
 
 
 def fmt_entries(n):
@@ -46,58 +50,94 @@ def fmt_entries(n):
     return str(n)
 
 
-def plot_line(data, output):
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 7), sharex=True,
-                                    gridspec_kw={"height_ratios": [3, 1]})
-    entries = data["entries"]
+BACKEND_STYLES = {
+    "sciqlop": {"marker": "o", "ls": "-"},
+    "diskcache": {"marker": "x", "ls": "--"},
+}
 
-    ax1.semilogx(entries, data["set_us"], "o-", color="#e74c3c", label="set()", markersize=4)
-    ax1.semilogx(entries, data["get_hit_us"], "s-", color="#2ecc71", label="get() hit", markersize=4)
-    ax1.semilogx(entries, data["get_miss_us"], "^-", color="#3498db", label="get() miss", markersize=4)
-    ax1.set_ylabel("Latency (\u00b5s / op)")
-    ax1.set_title("Sciqlop-cache Scaling: Latency vs Cache Size")
-    ax1.legend()
-    ax1.grid(True, alpha=0.3)
+OP_COLORS = {
+    "set": "#e74c3c",
+    "get_hit": "#2ecc71",
+    "get_miss": "#3498db",
+}
 
-    ax2.semilogx(entries, data["db_size_mb"], "D-", color="#9b59b6", markersize=4)
-    ax2.set_xlabel("Cache entries")
-    ax2.set_ylabel("DB size (MB)")
-    ax2.grid(True, alpha=0.3)
+OP_LABELS = {
+    "set": "set()",
+    "get_hit": "get() hit",
+    "get_miss": "get() miss",
+}
+
+
+def plot_line(by_backend, output):
+    fig, ax = plt.subplots(figsize=(10, 5))
+
+    for backend, data in by_backend.items():
+        style = BACKEND_STYLES.get(backend, {"marker": "o", "ls": "-"})
+        for op, col in [("set", "set_us"), ("get_hit", "get_hit_us"), ("get_miss", "get_miss_us")]:
+            ax.semilogx(data["entries"], data[col], marker=style["marker"],
+                        linestyle=style["ls"], color=OP_COLORS[op],
+                        label=f"{backend} {OP_LABELS[op]}", markersize=4)
+
+    ax.set_ylabel("Latency (\u00b5s / op)")
+    ax.set_xlabel("Cache entries")
+    ax.set_title("Sciqlop-cache vs diskcache: Latency Scaling")
+    ax.legend(fontsize=9, ncol=2)
+    ax.grid(True, alpha=0.3)
 
     fig.tight_layout()
     fig.savefig(output, dpi=150, bbox_inches="tight")
     print(f"Wrote {output}", file=sys.stderr)
 
 
-def plot_violin(by_op, output):
-    ops = [
-        ("set", "#e74c3c", "set()"),
-        ("get_hit", "#2ecc71", "get() hit"),
-        ("get_miss", "#3498db", "get() miss"),
-    ]
+def plot_violin(data, output):
+    backends = sorted(data.keys())
+    ops = [("set", "set()"), ("get_hit", "get() hit"), ("get_miss", "get() miss")]
+    n_backends = len(backends)
 
-    fig, axes = plt.subplots(len(ops), 1, figsize=(12, 9), sharex=True)
-    fig.suptitle("Sciqlop-cache Latency Distribution vs Cache Size", fontsize=14)
+    all_sizes = sorted(set(
+        s for b in backends for op_key, _ in ops for s in data[b][op_key].keys()
+    ))
 
-    for ax, (op, color, label) in zip(axes, ops):
-        sizes = sorted(by_op[op].keys())
-        data_list = [by_op[op][s] for s in sizes]
-        positions = np.arange(len(sizes))
+    fig, axes = plt.subplots(len(ops), 1, figsize=(14, 10), sharex=True)
+    fig.suptitle("Latency Distribution: sciqlop-cache vs diskcache", fontsize=14)
 
-        parts = ax.violinplot(data_list, positions=positions, showmedians=True,
-                              showextrema=False, widths=0.8)
-        for pc in parts["bodies"]:
-            pc.set_facecolor(color)
-            pc.set_alpha(0.6)
-        parts["cmedians"].set_color("black")
+    backend_colors = {"sciqlop": "#e74c3c", "diskcache": "#3498db"}
+    width = 0.35
 
-        all_vals = [v for d in data_list for v in d]
-        ax.set_ylim(0, np.percentile(all_vals, 99) * 1.2)
+    for ax, (op_key, op_label) in zip(axes, ops):
+        for bi, backend in enumerate(backends):
+            by_size = data[backend][op_key]
+            sizes_present = [s for s in all_sizes if s in by_size]
+            data_list = [by_size[s] for s in sizes_present]
+            positions = [all_sizes.index(s) + (bi - (n_backends - 1) / 2) * width
+                         for s in sizes_present]
 
-        ax.set_ylabel(f"{label} (\u00b5s)")
-        ax.set_xticks(positions)
-        ax.set_xticklabels([fmt_entries(s) for s in sizes], rotation=45, ha="right")
+            if not data_list:
+                continue
+
+            parts = ax.violinplot(data_list, positions=positions, showmedians=True,
+                                  showextrema=False, widths=width * 0.9)
+            color = backend_colors.get(backend, "#999")
+            for pc in parts["bodies"]:
+                pc.set_facecolor(color)
+                pc.set_alpha(0.6)
+            parts["cmedians"].set_color("black")
+
+        all_vals = [v for b in backends for s in all_sizes
+                    if s in data[b].get(op_key, {}) for v in data[b][op_key][s]]
+        if all_vals:
+            ax.set_ylim(bottom=0, top=np.percentile(all_vals, 99) * 1.3)
+
+        ax.set_ylabel(f"{op_label} (\u00b5s)")
+        ax.set_xticks(range(len(all_sizes)))
+        ax.set_xticklabels([fmt_entries(s) for s in all_sizes], rotation=45, ha="right")
         ax.grid(True, axis="y", alpha=0.3)
+
+    # legend
+    from matplotlib.patches import Patch
+    legend_elements = [Patch(facecolor=backend_colors.get(b, "#999"), alpha=0.6, label=b)
+                       for b in backends]
+    axes[0].legend(handles=legend_elements, loc="upper left")
 
     axes[-1].set_xlabel("Cache entries")
     fig.tight_layout()
@@ -114,11 +154,11 @@ def main():
     args = parser.parse_args()
 
     if args.violin:
-        by_op = read_raw_csv(args.csv_file)
-        plot_violin(by_op, args.output)
+        data = read_raw_csv(args.csv_file)
+        plot_violin(data, args.output)
     else:
-        data = read_summary_csv(args.csv_file)
-        plot_line(data, args.output)
+        by_backend = read_summary_csv(args.csv_file)
+        plot_line(by_backend, args.output)
 
 
 if __name__ == "__main__":
