@@ -59,6 +59,8 @@ endif
 
 sciqlop_cache_headers = files(
     'include/sciqlop_cache/sciqlop_cache.hpp',
+    'include/sciqlop_cache/store.hpp',
+    'include/sciqlop_cache/policies.hpp',
     'include/sciqlop_cache/database.hpp'
 )
 
@@ -103,7 +105,7 @@ if get_option('with_tests')
 catch_dep = dependency('catch2-with-main', version:'>3.0.0', required : true)
 my_include = include_directories('include/sciqlop_cache')
 
-foreach test_name:['database', 'basic', 'intermediate', 'multithreads']
+foreach test_name:['database', 'basic', 'basic_index', 'intermediate', 'multithreads']
     exe = executable(
         'test-'+test_name,'tests/'+test_name+'/main.cpp',
         include_directories: my_include,

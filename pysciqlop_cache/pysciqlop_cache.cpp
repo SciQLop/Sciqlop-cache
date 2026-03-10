@@ -32,6 +32,18 @@ inline void _set_item(Cache& c, const std::string& key, nb::bytes& buffer,
         c.set(key, data);
 }
 
+inline void _index_set_item(Index& idx, const std::string& key, nb::bytes& buffer)
+{
+    auto data = std::span<const char>(static_cast<const char*>(buffer.data()), buffer.size());
+    idx.set(key, data);
+}
+
+inline bool _index_add_item(Index& idx, const std::string& key, nb::bytes& buffer)
+{
+    auto data = std::span<const char>(static_cast<const char*>(buffer.data()), buffer.size());
+    return idx.add(key, data);
+}
+
 inline bool _add_item(Cache& c, const std::string& key, nb::bytes& buffer,
                       OptDuration expire = std::nullopt,
                       OptString tag = std::nullopt)
@@ -128,4 +140,28 @@ NB_MODULE(_pysciqlop_cache, m)
             return d;
         })
         .def("reset_stats", &Cache::reset_stats);
+
+    nb::class_<Index>(m, "Index")
+        .def(nb::init<const std::string&>(), "path"_a = ".index/")
+        .def("count", &Index::count)
+        .def("__len__", &Index::count)
+        .def("set", _index_set_item, nb::arg("key"), nb::arg("value"))
+        .def("__setitem__", _index_set_item, nb::arg("key"), nb::arg("value"))
+        .def("get", &Index::get, nb::arg("key"))
+        .def("__getitem__", &Index::get, nb::arg("key"))
+        .def("keys", &Index::keys)
+        .def("exists", &Index::exists, nb::arg("key"))
+        .def("add", _index_add_item, nb::arg("key"), nb::arg("value"))
+        .def("delete", &Index::del, nb::arg("key"))
+        .def("pop", &Index::pop, nb::arg("key"))
+        .def("incr", &Index::incr, nb::arg("key"), nb::arg("delta") = 1,
+             nb::arg("default_value") = 0)
+        .def("decr", &Index::decr, nb::arg("key"), nb::arg("delta") = 1,
+             nb::arg("default_value") = 0)
+        .def("clear", &Index::clear)
+        .def("check", &Index::check)
+        .def("size", &Index::size)
+        .def("set_meta", &Index::set_meta, nb::arg("key"), nb::arg("value"))
+        .def("get_meta", &Index::get_meta, nb::arg("key"))
+        .def("path", [](Index& idx) { return idx.path().string(); });
 }

@@ -1,4 +1,4 @@
-from ._pysciqlop_cache import Cache as _Cache
+from ._pysciqlop_cache import Cache as _Cache, Index as _Index
 import functools
 import hashlib
 from datetime import timedelta
@@ -16,7 +16,7 @@ _META_SERIALIZER = "serializer"
 _META_MAX_SIZE = "max_size"
 _SENTINEL = object()
 
-__all__ = ["Cache", "Serializer", "PickleSerializer", "MsgspecSerializer"]
+__all__ = ["Cache", "Index", "Serializer", "PickleSerializer", "MsgspecSerializer"]
 
 
 class Cache(_Cache):
@@ -220,6 +220,85 @@ class Cache(_Cache):
 
     def __repr__(self) -> str:
         return f"Cache({str(super().path())!r}, count={len(self)})"
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+class Index(_Index):
+
+    def __init__(
+        self,
+        path: str = ".index/",
+        serializer: Serializer | None = None,
+    ):
+        super().__init__(path=path)
+        stored = super().get_meta(_META_SERIALIZER)
+        if serializer is not None:
+            if stored is not None and serializer.name != stored:
+                raise ValueError(
+                    f"Index metadata {_META_SERIALIZER!r} is {stored!r}, "
+                    f"but {serializer.name!r} was requested."
+                )
+            super().set_meta(_META_SERIALIZER, serializer.name)
+            self._serializer = serializer
+        elif stored is not None:
+            self._serializer = get_serializer_by_name(stored)
+        else:
+            self._serializer = PickleSerializer()
+            super().set_meta(_META_SERIALIZER, self._serializer.name)
+
+    @property
+    def serializer(self) -> Serializer:
+        return self._serializer
+
+    def set(self, key: AnyStr, value: Any):
+        super().set(key, self._serializer.dumps(value))
+
+    def get(self, key: AnyStr, default=None) -> Any:
+        value = super().get(key)
+        if value is not None:
+            return self._serializer.loads(value.memoryview())
+        return default
+
+    def pop(self, key: AnyStr, default=None) -> Any:
+        value = super().pop(key)
+        if value is not None:
+            return self._serializer.loads(value.memoryview())
+        return default
+
+    def add(self, key: AnyStr, value: Any) -> bool:
+        return super().add(key, self._serializer.dumps(value))
+
+    def incr(self, key: AnyStr, delta: int = 1, default: int = 0) -> int:
+        value = self.get(key, default)
+        new_value = value + delta
+        self.set(key, new_value)
+        return new_value
+
+    def decr(self, key: AnyStr, delta: int = 1, default: int = 0) -> int:
+        return self.incr(key, -delta, default)
+
+    def __getitem__(self, key: AnyStr):
+        return self.get(key)
+
+    def __setitem__(self, key: AnyStr, value: Any):
+        self.set(key, value)
+
+    def __delitem__(self, key: AnyStr):
+        super().delete(key)
+
+    def __contains__(self, key: AnyStr) -> bool:
+        return super().exists(key)
+
+    def __iter__(self):
+        return iter(super().keys())
+
+    def __repr__(self) -> str:
+        return f"Index({str(super().path())!r}, count={len(self)})"
 
     def __enter__(self):
         return self

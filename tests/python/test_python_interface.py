@@ -383,5 +383,99 @@ class TestCache(unittest.TestCase):
         self.assertEqual(self.cache.get("key"), "second")
 
 
+class TestIndex(unittest.TestCase):
+
+    def setUp(self):
+        self.tmp_dir = TemporaryDirectory(delete=False)
+        from pysciqlop_cache import Index
+        self.index = Index(self.tmp_dir.name)
+
+    def tearDown(self):
+        if hasattr(self, 'index'):
+            del self.index
+        shutil.rmtree(self.tmp_dir.name)
+
+    def test_set_get(self):
+        self.index.set("key", "hello")
+        self.assertEqual(self.index.get("key"), "hello")
+
+    def test_get_missing(self):
+        self.assertIsNone(self.index.get("nope"))
+        self.assertEqual(self.index.get("nope", "default"), "default")
+
+    def test_add(self):
+        self.assertTrue(self.index.add("k", 42))
+        self.assertFalse(self.index.add("k", 99))
+        self.assertEqual(self.index.get("k"), 42)
+
+    def test_delete(self):
+        self.index.set("k", "val")
+        self.index.delete("k")
+        self.assertIsNone(self.index.get("k"))
+
+    def test_pop(self):
+        self.index.set("k", [1, 2, 3])
+        self.assertEqual(self.index.pop("k"), [1, 2, 3])
+        self.assertIsNone(self.index.get("k"))
+
+    def test_pop_missing(self):
+        self.assertIsNone(self.index.pop("nope"))
+        self.assertEqual(self.index.pop("nope", "fallback"), "fallback")
+
+    def test_keys_count(self):
+        self.index.set("a", 1)
+        self.index.set("b", 2)
+        self.assertEqual(len(self.index), 2)
+        self.assertEqual(sorted(self.index.keys()), ["a", "b"])
+
+    def test_contains(self):
+        self.index.set("k", "v")
+        self.assertTrue("k" in self.index)
+        self.assertFalse("nope" in self.index)
+
+    def test_iter(self):
+        self.index.set("x", 1)
+        self.index.set("y", 2)
+        self.assertEqual(sorted(self.index), ["x", "y"])
+
+    def test_dict_interface(self):
+        self.index["key"] = "value"
+        self.assertEqual(self.index["key"], "value")
+        del self.index["key"]
+        self.assertIsNone(self.index.get("key"))
+
+    def test_incr_decr(self):
+        self.assertEqual(self.index.incr("c"), 1)
+        self.assertEqual(self.index.incr("c"), 2)
+        self.assertEqual(self.index.decr("c"), 1)
+
+    def test_clear(self):
+        self.index.set("a", 1)
+        self.index.set("b", 2)
+        self.index.clear()
+        self.assertEqual(len(self.index), 0)
+
+    def test_big_value(self):
+        big = b"x" * (1024 * 1024)
+        self.index.set("bigkey", big)
+        result = self.index.get("bigkey")
+        self.assertEqual(result, big)
+
+    def test_context_manager(self):
+        from pysciqlop_cache import Index
+        with Index(self.tmp_dir.name) as idx:
+            idx.set("k", "v")
+            self.assertEqual(idx.get("k"), "v")
+
+    def test_repr(self):
+        self.assertIn("Index(", repr(self.index))
+
+    def test_entries_never_expire(self):
+        self.index.set("permanent", "data")
+        import time
+        time.sleep(0.1)
+        self.assertEqual(self.index.get("permanent"), "data")
+
+
 if __name__ == "__main__":
     unittest.main()
