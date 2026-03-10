@@ -224,11 +224,12 @@ NB_MODULE(_pysciqlop_cache, m)
             d["misses"] = s.misses;
             return d;
         })
-        .def("reset_stats", &FanoutCache::reset_stats);
+        .def("reset_stats", &FanoutCache::reset_stats)
+        .def("begin_user_transaction", &FanoutCache::begin_user_transaction, nb::arg("key"));
 
     nb::class_<FanoutIndex>(m, "FanoutIndex")
-        .def(nb::init<const std::string&, std::size_t, std::size_t>(),
-             "path"_a = ".index/", "shard_count"_a = 8, "max_size"_a = 0)
+        .def(nb::init<const std::string&, std::size_t>(),
+             "path"_a = ".index/", "shard_count"_a = 8)
         .def("count", &FanoutIndex::count)
         .def("__len__", &FanoutIndex::count)
         .def("set", _simple_set_item<FanoutIndex>, nb::arg("key"), nb::arg("value"))
@@ -250,5 +251,6 @@ NB_MODULE(_pysciqlop_cache, m)
         .def("shard_count", &FanoutIndex::shard_count)
         .def("set_meta", &FanoutIndex::set_meta, nb::arg("key"), nb::arg("value"))
         .def("get_meta", &FanoutIndex::get_meta, nb::arg("key"))
-        .def("path", [](FanoutIndex& idx) { return idx.path().string(); });
+        .def("path", [](FanoutIndex& idx) { return idx.path().string(); })
+        .def("begin_user_transaction", &FanoutIndex::begin_user_transaction, nb::arg("key"));
 }

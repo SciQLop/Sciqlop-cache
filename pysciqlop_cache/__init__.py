@@ -385,9 +385,10 @@ class FanoutCache(_FanoutCache):
         return super().add(key, self._serializer.dumps(value), expire=expire, tag=tag)
 
     def incr(self, key: AnyStr, delta: int = 1, default: int = 0) -> int:
-        value = self.get(key, default)
-        new_value = value + delta
-        self.set(key, new_value)
+        with self.transact(key):
+            value = self.get(key, default)
+            new_value = value + delta
+            self.set(key, new_value)
         return new_value
 
     def decr(self, key: AnyStr, delta: int = 1, default: int = 0) -> int:
@@ -455,9 +456,10 @@ class FanoutIndex(_FanoutIndex):
         return super().add(key, self._serializer.dumps(value))
 
     def incr(self, key: AnyStr, delta: int = 1, default: int = 0) -> int:
-        value = self.get(key, default)
-        new_value = value + delta
-        self.set(key, new_value)
+        with self.transact(key):
+            value = self.get(key, default)
+            new_value = value + delta
+            self.set(key, new_value)
         return new_value
 
     def decr(self, key: AnyStr, delta: int = 1, default: int = 0) -> int:

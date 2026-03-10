@@ -638,6 +638,21 @@ class TestFanoutCache(unittest.TestCase):
         self.assertEqual(self.cache.get("newkey"), "newval")
 
 
+    def test_transact_commits(self):
+        with self.cache.transact("k") as txn:
+            txn.set("k", "v")
+        self.assertEqual(self.cache.get("k"), "v")
+
+    def test_transact_rollback(self):
+        self.cache.set("pre", "existing")
+        with self.assertRaises(ValueError):
+            with self.cache.transact("x"):
+                self.cache.set("x", 10)
+                raise ValueError("boom")
+        self.assertIsNone(self.cache.get("x"))
+        self.assertEqual(self.cache.get("pre"), "existing")
+
+
 class TestFanoutIndex(unittest.TestCase):
 
     def setUp(self):
@@ -681,6 +696,20 @@ class TestFanoutIndex(unittest.TestCase):
 
     def test_repr(self):
         self.assertIn("FanoutIndex(", repr(self.index))
+
+    def test_transact_commits(self):
+        with self.index.transact("k") as txn:
+            txn.set("k", "v")
+        self.assertEqual(self.index.get("k"), "v")
+
+    def test_transact_rollback(self):
+        self.index.set("pre", "existing")
+        with self.assertRaises(ValueError):
+            with self.index.transact("x"):
+                self.index.set("x", 42)
+                raise ValueError("rollback")
+        self.assertIsNone(self.index.get("x"))
+        self.assertEqual(self.index.get("pre"), "existing")
 
 
 if __name__ == "__main__":

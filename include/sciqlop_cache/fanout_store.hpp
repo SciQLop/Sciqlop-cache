@@ -12,11 +12,10 @@ template <typename StoreType>
 class FanoutStore
 {
     std::vector<std::unique_ptr<StoreType>> _shards;
-    std::size_t _shard_count;
 
     std::size_t _shard_for(const std::string& key) const
     {
-        return std::hash<std::string> {}(key) % _shard_count;
+        return std::hash<std::string> {}(key) % _shards.size();
     }
 
     StoreType& _shard(const std::string& key) { return *_shards[_shard_for(key)]; }
@@ -37,10 +36,9 @@ public:
     explicit FanoutStore(const std::filesystem::path& path,
                          std::size_t shard_count = 8,
                          std::size_t max_size = 0)
-        : _shard_count(shard_count)
     {
-        _shards.reserve(_shard_count);
-        for (std::size_t i = 0; i < _shard_count; ++i)
+        _shards.reserve(shard_count);
+        for (std::size_t i = 0; i < shard_count; ++i)
         {
             auto shard_path = path / fmt::format("{:02d}", i);
             std::filesystem::create_directories(shard_path);
@@ -48,7 +46,7 @@ public:
         }
     }
 
-    [[nodiscard]] std::size_t shard_count() const { return _shard_count; }
+    [[nodiscard]] std::size_t shard_count() const { return _shards.size(); }
 
     [[nodiscard]] bool exists(const std::string& key) { return _shard(key).exists(key); }
 
