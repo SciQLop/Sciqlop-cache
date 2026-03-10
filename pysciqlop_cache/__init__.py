@@ -19,6 +19,26 @@ _SENTINEL = object()
 __all__ = ["Cache", "Index", "Serializer", "PickleSerializer", "MsgspecSerializer"]
 
 
+class _TransactionContext:
+    __slots__ = ("_store", "_guard")
+
+    def __init__(self, store):
+        self._store = store
+        self._guard = None
+
+    def __enter__(self):
+        self._guard = self._store.begin_user_transaction()
+        return self._store
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if exc_type is not None:
+            self._guard.rollback()
+        else:
+            self._guard.commit()
+        self._guard = None
+        return False
+
+
 class Cache(_Cache):
 
     def __init__(
@@ -221,6 +241,9 @@ class Cache(_Cache):
     def __repr__(self) -> str:
         return f"Cache({str(super().path())!r}, count={len(self)})"
 
+    def transact(self):
+        return _TransactionContext(self)
+
     def __enter__(self):
         return self
 
@@ -299,6 +322,9 @@ class Index(_Index):
 
     def __repr__(self) -> str:
         return f"Index({str(super().path())!r}, count={len(self)})"
+
+    def transact(self):
+        return _TransactionContext(self)
 
     def __enter__(self):
         return self

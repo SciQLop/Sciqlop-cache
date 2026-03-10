@@ -39,6 +39,7 @@ class _Store : private Policies...
     pid_t _owner_pid;
     mutable Database _db;
     mutable std::recursive_mutex _mtx;
+    bool _in_transaction = false;
 
     // --- SQL building helpers (derived from policy fold expressions) ---
 
@@ -374,6 +375,58 @@ class _Store : private Policies...
 
     DbGuard db() const { return { _db, std::unique_lock(_mtx) }; }
 
+public:
+    class TransactionGuard
+    {
+        _Store& _store;
+        std::unique_lock<std::recursive_mutex> _lock;
+        Transaction _txn;
+        bool _finished = false;
+
+    public:
+        TransactionGuard(_Store& store)
+            : _store(store)
+            , _lock(store._mtx)
+            , _txn(store._db.get(), true)
+        {
+        }
+
+        TransactionGuard(const TransactionGuard&) = delete;
+        TransactionGuard& operator=(const TransactionGuard&) = delete;
+        TransactionGuard(TransactionGuard&& other) noexcept
+            : _store(other._store)
+            , _lock(std::move(other._lock))
+            , _txn(std::move(other._txn))
+            , _finished(other._finished)
+        {
+            other._finished = true;
+        }
+
+        ~TransactionGuard()
+        {
+            if (!_finished)
+                rollback();
+        }
+
+        bool commit()
+        {
+            if (_finished) return false;
+            _finished = true;
+            _store._in_transaction = false;
+            return _txn.commit();
+        }
+
+        bool rollback()
+        {
+            if (_finished) return false;
+            _finished = true;
+            _store._in_transaction = false;
+            return _txn.rollback();
+        }
+    };
+
+private:
+
     // --- Bind helpers for policy-aware INSERT/REPLACE ---
 
     void _bind_core_and_policies(sqlite3_stmt* stmt, const std::string& col1,
@@ -535,6 +588,22 @@ public:
     }
 
     [[nodiscard]] inline bool opened() const { return db()->opened(); }
+
+    TransactionGuard begin_user_transaction()
+    {
+        std::unique_lock lock(_mtx);
+        if (_in_transaction)
+            throw std::runtime_error("Nested transactions are not supported");
+        _in_transaction = true;
+        lock.unlock();
+        try {
+            return TransactionGuard(*this);
+        } catch (...) {
+            std::lock_guard g(_mtx);
+            _in_transaction = false;
+            throw;
+        }
+    }
 
     inline bool close()
     {

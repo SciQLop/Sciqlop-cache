@@ -97,6 +97,14 @@ NB_MODULE(_pysciqlop_cache, m)
              });
 
 
+    nb::class_<Cache::TransactionGuard>(m, "CacheTransactionGuard")
+        .def("commit", &Cache::TransactionGuard::commit)
+        .def("rollback", &Cache::TransactionGuard::rollback);
+
+    nb::class_<Index::TransactionGuard>(m, "IndexTransactionGuard")
+        .def("commit", &Index::TransactionGuard::commit)
+        .def("rollback", &Index::TransactionGuard::rollback);
+
     nb::class_<Cache>(m, "Cache")
         .def(nb::init<const std::string&, size_t>(), "cache_path"_a = ".cache/",
              "max_size"_a = 0)
@@ -139,7 +147,8 @@ NB_MODULE(_pysciqlop_cache, m)
             d["misses"] = s.misses;
             return d;
         })
-        .def("reset_stats", &Cache::reset_stats);
+        .def("reset_stats", &Cache::reset_stats)
+        .def("begin_user_transaction", &Cache::begin_user_transaction);
 
     nb::class_<Index>(m, "Index")
         .def(nb::init<const std::string&>(), "path"_a = ".index/")
@@ -163,5 +172,6 @@ NB_MODULE(_pysciqlop_cache, m)
         .def("size", &Index::size)
         .def("set_meta", &Index::set_meta, nb::arg("key"), nb::arg("value"))
         .def("get_meta", &Index::get_meta, nb::arg("key"))
-        .def("path", [](Index& idx) { return idx.path().string(); });
+        .def("path", [](Index& idx) { return idx.path().string(); })
+        .def("begin_user_transaction", &Index::begin_user_transaction);
 }

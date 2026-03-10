@@ -477,5 +477,66 @@ class TestIndex(unittest.TestCase):
         self.assertEqual(self.index.get("permanent"), "data")
 
 
+class TestTransact(unittest.TestCase):
+
+    def setUp(self):
+        self.tmp_dir = TemporaryDirectory(delete=False)
+        self.cache = Cache(self.tmp_dir.name)
+
+    def tearDown(self):
+        if hasattr(self, 'cache'):
+            del self.cache
+        shutil.rmtree(self.tmp_dir.name)
+
+    def test_transact_commits_on_clean_exit(self):
+        with self.cache.transact():
+            self.cache.set("a", 1)
+            self.cache.set("b", 2)
+        self.assertEqual(self.cache.get("a"), 1)
+        self.assertEqual(self.cache.get("b"), 2)
+
+    def test_transact_rolls_back_on_exception(self):
+        self.cache.set("pre", "existing")
+        with self.assertRaises(ValueError):
+            with self.cache.transact():
+                self.cache.set("x", 10)
+                raise ValueError("boom")
+        self.assertIsNone(self.cache.get("x"))
+        self.assertEqual(self.cache.get("pre"), "existing")
+
+    def test_transact_as_txn_syntax(self):
+        with self.cache.transact() as txn:
+            txn.set("k", "v")
+        self.assertEqual(self.cache.get("k"), "v")
+
+    def test_transact_returns_self(self):
+        with self.cache.transact() as txn:
+            self.assertIs(txn, self.cache)
+
+    def test_nested_transact_raises(self):
+        with self.cache.transact():
+            with self.assertRaises(RuntimeError):
+                with self.cache.transact():
+                    pass
+
+    def test_transact_on_index(self):
+        from pysciqlop_cache import Index
+        with TemporaryDirectory() as td:
+            idx = Index(td)
+            with idx.transact() as txn:
+                txn.set("a", 1)
+            self.assertEqual(idx.get("a"), 1)
+
+    def test_transact_index_rollback(self):
+        from pysciqlop_cache import Index
+        with TemporaryDirectory() as td:
+            idx = Index(td)
+            with self.assertRaises(ValueError):
+                with idx.transact():
+                    idx.set("x", 42)
+                    raise ValueError("rollback")
+            self.assertIsNone(idx.get("x"))
+
+
 if __name__ == "__main__":
     unittest.main()
