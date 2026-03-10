@@ -5,6 +5,7 @@
 #include <optional>
 #include <random>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include <catch2/catch_all.hpp>
@@ -752,6 +753,95 @@ SCENARIO("Cache statistics track hits and misses", "[stats]")
                 auto s = cache.stats();
                 REQUIRE(s.hits == 0);
                 REQUIRE(s.misses == 0);
+            }
+        }
+    }
+}
+
+SCENARIO("expire() correctly updates size and count counters", "[cache][expire]")
+{
+    AutoCleanDirectory db_path { "ExpireCounters01" };
+    std::vector<char> v100(100, 'a');
+    std::vector<char> v200(200, 'b');
+
+    GIVEN("a cache with expiring and non-expiring entries")
+    {
+        Cache cache(db_path.path());
+        cache.set("permanent1", v100);
+        cache.set("permanent2", v200);
+        cache.set("expiring1", v100, 1s);
+        cache.set("expiring2", v200, 1s);
+
+        REQUIRE(cache.size() == 600);
+
+        WHEN("entries expire and expire() is called")
+        {
+            std::this_thread::sleep_for(2s);
+            cache.expire();
+
+            THEN("size reflects only the remaining entries")
+            {
+                REQUIRE(cache.size() == 300);
+                REQUIRE(cache.count() == 2);
+            }
+        }
+
+        WHEN("we add more entries between expiration check and expire()")
+        {
+            std::this_thread::sleep_for(2s);
+            cache.set("late_arrival", v100);
+            cache.expire();
+
+            THEN("late arrival is preserved and counters are correct")
+            {
+                REQUIRE(cache.get("late_arrival").has_value());
+                REQUIRE(cache.size() == 400);
+                REQUIRE(cache.count() == 3);
+            }
+        }
+    }
+
+    GIVEN("a cache where all entries expire")
+    {
+        Cache cache(db_path.path());
+        cache.set("e1", v100, 1s);
+        cache.set("e2", v100, 1s);
+        cache.set("e3", v100, 1s);
+
+        REQUIRE(cache.size() == 300);
+        REQUIRE(cache.count() == 3);
+
+        WHEN("all entries expire")
+        {
+            std::this_thread::sleep_for(2s);
+            cache.expire();
+
+            THEN("counters are zero")
+            {
+                REQUIRE(cache.size() == 0);
+                REQUIRE(cache.count() == 0);
+            }
+        }
+    }
+
+    GIVEN("a cache with large (file-backed) expiring entries")
+    {
+        Cache cache(db_path.path());
+        std::vector<char> big(16000, 'x');
+        cache.set("big_expire", big, 1s);
+        cache.set("big_keep", big);
+
+        REQUIRE(cache.size() == 32000);
+
+        WHEN("the expiring entry expires")
+        {
+            std::this_thread::sleep_for(2s);
+            cache.expire();
+
+            THEN("size accounts for the removed file-backed entry")
+            {
+                REQUIRE(cache.size() == 16000);
+                REQUIRE(cache.count() == 1);
             }
         }
     }

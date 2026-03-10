@@ -85,7 +85,6 @@ class _Store : private Policies...
     CompiledStatement GET_STMT {
         std::string("SELECT value, path FROM cache WHERE key = ?") + _where_valid() + ";"
     };
-    CompiledStatement GET_PATH_SIMPLE_STMT { "SELECT path FROM cache WHERE key = ?;" };
     CompiledStatement GET_PATH_SIZE_STMT { "SELECT path, size FROM cache WHERE key = ?;" };
     CompiledStatement REPLACE_VALUE_STMT {
         std::string("REPLACE INTO cache (key, value, size") + _insert_extra_cols()
@@ -133,7 +132,7 @@ class _Store : private Policies...
     [[no_unique_address]] std::conditional_t<has_expiration, CompiledStatement, NoStmt>
         TOUCH_STMT { "UPDATE cache SET expire = ? WHERE key = ?;" };
     [[no_unique_address]] std::conditional_t<has_expiration, CompiledStatement, NoStmt>
-        EXPIRE_STMT { "SELECT path FROM cache WHERE expire IS NOT NULL AND expire <= unixepoch('now');" };
+        EXPIRE_STMT { "SELECT path, size FROM cache WHERE expire IS NOT NULL AND expire <= unixepoch('now');" };
     [[no_unique_address]] std::conditional_t<has_expiration, CompiledStatement, NoStmt>
         EVICT_EXPIRED_STMT { "DELETE FROM cache WHERE expire IS NOT NULL AND expire <= unixepoch('now');" };
 
@@ -155,7 +154,7 @@ class _Store : private Policies...
     {
         std::vector<CompiledStatement*> stmts = {
             &COUNT_STMT, &KEYS_STMT, &EXISTS_STMT, &GET_STMT,
-            &GET_PATH_SIMPLE_STMT, &GET_PATH_SIZE_STMT,
+            &GET_PATH_SIZE_STMT,
             &REPLACE_VALUE_STMT, &REPLACE_PATH_STMT,
             &INSERT_VALUE_STMT, &INSERT_PATH_STMT, &DELETE_STMT,
             &SET_META_STMT, &GET_META_STMT,
@@ -567,13 +566,13 @@ private:
     {
         if (old_size)
         {
-            // Overwrite: adjust size difference
-            _total_size.fetch_add(new_size, std::memory_order_relaxed);
-            _total_size.fetch_sub(*old_size, std::memory_order_relaxed);
+            if (new_size >= *old_size)
+                _total_size.fetch_add(new_size - *old_size, std::memory_order_relaxed);
+            else
+                _total_size.fetch_sub(*old_size - new_size, std::memory_order_relaxed);
         }
         else
         {
-            // New entry
             _total_size.fetch_add(new_size, std::memory_order_relaxed);
             _total_count.fetch_add(1, std::memory_order_relaxed);
         }
@@ -880,29 +879,25 @@ public:
         requires (has_expiration)
     {
         auto db = this->db();
-        // Get count and size of expired entries before deleting
-        auto expired_stats = db->template exec<std::size_t, std::size_t>(
-            "SELECT COUNT(*), COALESCE(SUM(size), 0) FROM cache "
-            "WHERE expire IS NOT NULL AND expire <= unixepoch('now');");
+        std::size_t exp_count = 0;
+        std::size_t exp_size = 0;
         {
             auto binded = EXPIRE_STMT.bind_all();
-            while (auto r = db->template step<std::filesystem::path>(binded))
+            while (auto r = db->template step<std::filesystem::path, std::size_t>(binded))
             {
-                const auto file_path = *r;
-                if (!storage->remove(file_path))
+                auto [file_path, entry_size] = *r;
+                ++exp_count;
+                exp_size += entry_size;
+                if (!file_path.empty() && !storage->remove(file_path))
                     std::cerr << "Failed to delete file: " << file_path << std::endl;
             }
         }
         if (!db->exec(EVICT_EXPIRED_STMT))
             std::cerr << "Error deleting expired items from cache database." << std::endl;
-        else if (expired_stats)
+        else if (exp_count > 0)
         {
-            auto [exp_count, exp_size] = *expired_stats;
-            if (exp_count > 0)
-            {
-                _total_count.fetch_sub(exp_count, std::memory_order_relaxed);
-                _total_size.fetch_sub(exp_size, std::memory_order_relaxed);
-            }
+            _total_count.fetch_sub(exp_count, std::memory_order_relaxed);
+            _total_size.fetch_sub(exp_size, std::memory_order_relaxed);
         }
     }
 
