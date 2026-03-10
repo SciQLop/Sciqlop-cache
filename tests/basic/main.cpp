@@ -671,3 +671,88 @@ SCENARIO("Testing sciqlop_cache clear with big values", "[cache]")
         }
     }
 }
+
+SCENARIO("Cache statistics track hits and misses", "[stats]")
+{
+    AutoCleanDirectory db_path { "StatsTest" };
+    std::vector<char> value(64, 'x');
+
+    GIVEN("a fresh cache")
+    {
+        Cache cache(db_path.path());
+        auto s = cache.stats();
+        REQUIRE(s.hits == 0);
+        REQUIRE(s.misses == 0);
+
+        WHEN("getting an existing key")
+        {
+            cache.set("k1", value);
+            cache.get("k1");
+
+            THEN("hits increments")
+            {
+                auto s = cache.stats();
+                REQUIRE(s.hits == 1);
+                REQUIRE(s.misses == 0);
+            }
+        }
+
+        WHEN("getting a missing key")
+        {
+            cache.get("nonexistent");
+
+            THEN("misses increments")
+            {
+                auto s = cache.stats();
+                REQUIRE(s.hits == 0);
+                REQUIRE(s.misses == 1);
+            }
+        }
+
+        WHEN("getting an expired key")
+        {
+            cache.set("k2", value, 1s);
+            std::this_thread::sleep_for(2s);
+            cache.get("k2");
+
+            THEN("it counts as a miss")
+            {
+                auto s = cache.stats();
+                REQUIRE(s.hits == 0);
+                REQUIRE(s.misses == 1);
+            }
+        }
+
+        WHEN("performing a mix of hits and misses")
+        {
+            cache.set("a", value);
+            cache.set("b", value);
+            cache.get("a");
+            cache.get("b");
+            cache.get("c");
+            cache.get("d");
+
+            THEN("counts are accurate")
+            {
+                auto s = cache.stats();
+                REQUIRE(s.hits == 2);
+                REQUIRE(s.misses == 2);
+            }
+        }
+
+        WHEN("reset_stats is called")
+        {
+            cache.set("k", value);
+            cache.get("k");
+            cache.get("missing");
+            cache.reset_stats();
+
+            THEN("counters return to zero")
+            {
+                auto s = cache.stats();
+                REQUIRE(s.hits == 0);
+                REQUIRE(s.misses == 0);
+            }
+        }
+    }
+}

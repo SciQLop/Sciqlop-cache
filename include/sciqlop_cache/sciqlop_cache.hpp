@@ -36,6 +36,8 @@ class _Cache
     std::size_t _file_size_threshold = 8 * 1024;
 
     std::atomic<std::size_t> _access_seq { 0 };
+    std::atomic<uint64_t> _hits { 0 };
+    std::atomic<uint64_t> _misses { 0 };
 
     std::thread _checkpoint_thread;
     std::atomic<bool> _stop_checkpoint { false };
@@ -475,6 +477,7 @@ public:
         auto db = this->db();
         if (auto values = db->template exec<std::vector<char>, std::filesystem::path>(GET_STMT, key))
         {
+            _hits.fetch_add(1, std::memory_order_relaxed);
             if (max_size > 0)
                 db->exec(UPDATE_LAST_USE_STMT,
                          _access_seq.fetch_add(1, std::memory_order_relaxed), key);
@@ -494,6 +497,7 @@ public:
             }
             return Buffer(std::move(std::get<0>(*values)));
         }
+        _misses.fetch_add(1, std::memory_order_relaxed);
         return std::nullopt;
     }
 
@@ -744,6 +748,24 @@ public:
         bool valid = (sqlite3_step(stmt) == SQLITE_ROW && sqlite3_column_int(stmt, 0) >= 0);
         sqlite3_finalize(stmt);
         return valid;
+    }
+
+    struct Stats
+    {
+        uint64_t hits;
+        uint64_t misses;
+    };
+
+    Stats stats() const
+    {
+        return { _hits.load(std::memory_order_relaxed),
+                 _misses.load(std::memory_order_relaxed) };
+    }
+
+    void reset_stats()
+    {
+        _hits.store(0, std::memory_order_relaxed);
+        _misses.store(0, std::memory_order_relaxed);
     }
 };
 
