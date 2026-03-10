@@ -295,6 +295,7 @@ class _Cache
         return result;
     }
 
+    // Only used during construction (single-threaded, no lock needed)
     void _init_db()
     {
         for (int attempt = 0; attempt < 5; ++attempt)
@@ -316,6 +317,15 @@ class _Cache
         throw std::runtime_error("Failed to initialize database schema.");
     }
 
+    struct DbGuard
+    {
+        Database& ref;
+        std::unique_lock<std::recursive_mutex> lock;
+        Database* operator->() { return &ref; }
+        Database& operator*() { return ref; }
+    };
+
+    DbGuard db() const { return { _db, std::unique_lock(_mtx) }; }
 
 public:
     static constexpr std::string_view db_fname = "sciqlop-cache.db";
@@ -349,9 +359,13 @@ public:
         try { close(); } catch (...) {}
     }
 
-    [[nodiscard]] inline bool opened() const { std::lock_guard lock(_mtx); return _db.opened(); }
+    [[nodiscard]] inline bool opened() const { return db()->opened(); }
 
-    inline bool close() { std::lock_guard lock(_mtx); return _finalize_statements() & _db.close(); }
+    inline bool close()
+    {
+        auto g = db();
+        return _finalize_statements() & g->close();
+    }
 
     [[nodiscard]] inline std::filesystem::path path() { return cache_path; }
 
@@ -362,59 +376,51 @@ public:
 
     [[nodiscard]] inline std::size_t count()
     {
-        std::lock_guard lock(_mtx);
-        if (auto r = _db.template exec<std::size_t>(COUNT_STMT))
+        if (auto r = db()->template exec<std::size_t>(COUNT_STMT))
             return *r;
         return 0;
     }
 
     [[nodiscard]] inline size_t size()
     {
-        std::lock_guard lock(_mtx);
-        if (auto r = _db.template exec<size_t>("SELECT COALESCE(SUM(size), 0) FROM cache;"))
+        if (auto r = db()->template exec<size_t>("SELECT COALESCE(SUM(size), 0) FROM cache;"))
             return *r;
         return 0;
     }
 
     [[nodiscard]] inline std::vector<std::string> keys()
     {
-        std::lock_guard lock(_mtx);
-        if (auto r = _db.template exec<std::vector<std::string>>(KEYS_STMT))
+        if (auto r = db()->template exec<std::vector<std::string>>(KEYS_STMT))
             return *r;
         return {};
     }
 
     [[nodiscard]] inline bool exists(const std::string& key)
     {
-        std::lock_guard lock(_mtx);
-        if (auto r = _db.template exec<bool>(EXISTS_STMT, key))
+        if (auto r = db()->template exec<bool>(EXISTS_STMT, key))
             return *r;
         return false;
     }
 
     inline bool set(const std::string& key, const Bytes auto& value)
     {
-        std::lock_guard lock(_mtx);
         return _set_impl(key, value, std::optional<double> {});
     }
 
     inline bool set(const std::string& key, const Bytes auto& value, DurationConcept auto expire)
     {
-        std::lock_guard lock(_mtx);
         return _set_impl(key, value,
             std::optional<double> { static_cast<double>(std::chrono::duration_cast<std::chrono::seconds>(expire).count()) });
     }
 
     inline bool set(const std::string& key, const Bytes auto& value, const std::string& tag)
     {
-        std::lock_guard lock(_mtx);
         return _set_impl(key, value, std::optional<double> {}, std::optional<std::string> { tag });
     }
 
     inline bool set(const std::string& key, const Bytes auto& value, DurationConcept auto expire,
                     const std::string& tag)
     {
-        std::lock_guard lock(_mtx);
         return _set_impl(key, value,
             std::optional<double> { static_cast<double>(std::chrono::duration_cast<std::chrono::seconds>(expire).count()) },
             std::optional<std::string> { tag });
@@ -433,24 +439,24 @@ private:
                            std::optional<double> expires_secs,
                            std::optional<std::string> tag = std::nullopt)
     {
+        auto db = this->db();
         auto seq = _access_seq.fetch_add(1, std::memory_order_relaxed);
         auto abs_exp = _abs_expire(expires_secs);
         if (std::size(value) <= _file_size_threshold)
         {
-            _db.exec(REPLACE_VALUE_STMT, key, value, abs_exp, std::size(value), seq, tag);
+            db->exec(REPLACE_VALUE_STMT, key, value, abs_exp, std::size(value), seq, tag);
             return true;
         }
 
-
-        auto transaction = _db.begin_transaction(true);
-        auto filepath = _db.template exec<std::filesystem::path>(GET_PATH_SIMPLE_STMT, key);
+        auto transaction = db->begin_transaction(true);
+        auto filepath = db->template exec<std::filesystem::path>(GET_PATH_SIMPLE_STMT, key);
         auto new_filepath = storage->store(value);
         if (!new_filepath)
         {
             transaction.rollback();
             return false;
         }
-        _db.exec(REPLACE_PATH_STMT, key, new_filepath->string(), abs_exp, std::size(value), seq, tag);
+        db->exec(REPLACE_PATH_STMT, key, new_filepath->string(), abs_exp, std::size(value), seq, tag);
         if (!transaction.commit())
         {
             transaction.rollback();
@@ -466,11 +472,11 @@ public:
 
     inline std::optional<Buffer> get(const std::string& key)
     {
-        std::lock_guard lock(_mtx);
-        if (auto values = _db.template exec<std::vector<char>, std::filesystem::path>(GET_STMT, key))
+        auto db = this->db();
+        if (auto values = db->template exec<std::vector<char>, std::filesystem::path>(GET_STMT, key))
         {
             if (max_size > 0)
-                _db.exec(UPDATE_LAST_USE_STMT,
+                db->exec(UPDATE_LAST_USE_STMT,
                          _access_seq.fetch_add(1, std::memory_order_relaxed), key);
             const auto& [_, path] = *values;
 
@@ -493,27 +499,23 @@ public:
 
     inline bool add(const std::string& key, const Bytes auto& value)
     {
-        std::lock_guard lock(_mtx);
         return _add_impl(key, value, std::optional<double> {});
     }
 
     inline bool add(const std::string& key, const Bytes auto& value, DurationConcept auto expire)
     {
-        std::lock_guard lock(_mtx);
         return _add_impl(key, value,
             std::optional<double> { static_cast<double>(std::chrono::duration_cast<std::chrono::seconds>(expire).count()) });
     }
 
     inline bool add(const std::string& key, const Bytes auto& value, const std::string& tag)
     {
-        std::lock_guard lock(_mtx);
         return _add_impl(key, value, std::optional<double> {}, std::optional<std::string> { tag });
     }
 
     inline bool add(const std::string& key, const Bytes auto& value, DurationConcept auto expire,
                     const std::string& tag)
     {
-        std::lock_guard lock(_mtx);
         return _add_impl(key, value,
             std::optional<double> { static_cast<double>(std::chrono::duration_cast<std::chrono::seconds>(expire).count()) },
             std::optional<std::string> { tag });
@@ -524,13 +526,13 @@ private:
                            std::optional<double> expires_secs,
                            std::optional<std::string> tag = std::nullopt)
     {
-
+        auto db = this->db();
         auto seq = _access_seq.fetch_add(1, std::memory_order_relaxed);
         auto abs_exp = _abs_expire(expires_secs);
         if (std::size(value) <= _file_size_threshold)
         {
-            _db.exec(INSERT_VALUE_STMT, key, value, abs_exp, std::size(value), seq, tag);
-            if (sqlite3_changes(_db.get()) > 0)
+            db->exec(INSERT_VALUE_STMT, key, value, abs_exp, std::size(value), seq, tag);
+            if (sqlite3_changes(db->get()) > 0)
                 return true;
             return false;
         }
@@ -539,8 +541,8 @@ private:
         if (!file_path)
             return false;
 
-        _db.exec(INSERT_PATH_STMT, key, file_path->string(), abs_exp, std::size(value), seq, tag);
-        if (sqlite3_changes(_db.get()) == 0)
+        db->exec(INSERT_PATH_STMT, key, file_path->string(), abs_exp, std::size(value), seq, tag);
+        if (sqlite3_changes(db->get()) == 0)
         {
             storage->remove(*file_path);
             return false;
@@ -552,11 +554,11 @@ public:
 
     inline bool del(const std::string& key)
     {
-        std::lock_guard lock(_mtx);
-        auto filepath = _db.template exec<std::filesystem::path>(GET_PATH_SIMPLE_STMT, key);
-        if (!_db.exec(DELETE_STMT, key))
+        auto db = this->db();
+        auto filepath = db->template exec<std::filesystem::path>(GET_PATH_SIMPLE_STMT, key);
+        if (!db->exec(DELETE_STMT, key))
             return false;
-        if (sqlite3_changes(_db.get()) == 0)
+        if (sqlite3_changes(db->get()) == 0)
             return false;
         if (filepath && !filepath->empty())
             storage->remove(*filepath);
@@ -565,28 +567,25 @@ public:
 
     inline std::optional<Buffer> pop(const std::string& key)
     {
-        std::lock_guard lock(_mtx);
         auto result = get(key);
         if (result)
             del(key);
         return result;
     }
 
-    // Touch a key to update its expiration time
     inline bool touch(const std::string& key, DurationConcept auto expire)
     {
-        std::lock_guard lock(_mtx);
         auto expire_secs = static_cast<double>(std::chrono::duration_cast<std::chrono::seconds>(expire).count());
         auto abs_exp = _abs_expire(std::optional<double>{expire_secs});
-        return _db.exec(TOUCH_STMT, abs_exp, key);
+        return db()->exec(TOUCH_STMT, abs_exp, key);
     }
 
     inline void expire()
     {
-        std::lock_guard lock(_mtx);
+        auto db = this->db();
         {
             auto binded = EXPIRE_STMT.bind_all();
-            while (auto r = _db.template step<std::filesystem::path>(binded))
+            while (auto r = db->template step<std::filesystem::path>(binded))
             {
                 const auto file_path = *r;
                 if (!storage->remove(file_path))
@@ -596,13 +595,12 @@ public:
             }
         }
 
-        if (!_db.exec(EVICT_EXPIRED_STMT))
+        if (!db->exec(EVICT_EXPIRED_STMT))
             std::cerr << "Error deleting expired items from cache database." << std::endl;
     }
 
     inline std::size_t evict()
     {
-        std::lock_guard lock(_mtx);
         if (max_size == 0)
             return 0;
 
@@ -613,7 +611,7 @@ public:
             return 0;
 
         auto target = max_size * 9 / 10;
-
+        auto db = this->db();
 
         struct Entry { std::string key; std::filesystem::path path; std::size_t entry_size; };
         std::vector<Entry> to_evict;
@@ -621,7 +619,7 @@ public:
             auto binded = EVICT_LRU_STMT.bind_all();
             while (current_size > target)
             {
-                auto r = _db.template step<std::string, std::filesystem::path, std::size_t>(binded);
+                auto r = db->template step<std::string, std::filesystem::path, std::size_t>(binded);
                 if (!r) break;
                 auto& [key, path, entry_size] = *r;
                 to_evict.push_back({ std::move(key), std::move(path), entry_size });
@@ -631,7 +629,7 @@ public:
 
         for (auto& [key, path, _] : to_evict)
         {
-            _db.exec(DELETE_STMT, key);
+            db->exec(DELETE_STMT, key);
             if (!path.empty())
                 storage->remove(path);
         }
@@ -641,18 +639,18 @@ public:
 
     inline std::size_t evict_tag(const std::string& tag)
     {
-        std::lock_guard lock(_mtx);
+        auto db = this->db();
         std::vector<std::filesystem::path> files;
         {
             auto binded = EVICT_TAG_PATH_STMT.bind_all(tag);
-            while (auto r = _db.template step<std::filesystem::path>(binded))
+            while (auto r = db->template step<std::filesystem::path>(binded))
             {
                 if (!r->empty())
                     files.push_back(std::move(*r));
             }
         }
-        _db.exec(EVICT_TAG_STMT, tag);
-        auto count = static_cast<std::size_t>(sqlite3_changes(_db.get()));
+        db->exec(EVICT_TAG_STMT, tag);
+        auto count = static_cast<std::size_t>(sqlite3_changes(db->get()));
         for (auto& f : files)
             storage->remove(f);
         return count;
@@ -660,11 +658,11 @@ public:
 
     inline int64_t incr(const std::string& key, int64_t delta = 1, int64_t default_value = 0)
     {
-        std::lock_guard lock(_mtx);
-        auto transaction = _db.begin_transaction(true);
+        auto db = this->db();
+        auto transaction = db->begin_transaction(true);
 
         int64_t current = default_value;
-        if (auto blob = _db.template exec<std::vector<char>>(INCR_GET_STMT, key))
+        if (auto blob = db->template exec<std::vector<char>>(INCR_GET_STMT, key))
         {
             if (blob->size() == sizeof(int64_t))
                 std::memcpy(&current, blob->data(), sizeof(int64_t));
@@ -677,9 +675,9 @@ public:
         std::memcpy(buf.data(), &new_value, sizeof(int64_t));
         auto data = std::span<const char>(buf.data(), buf.size());
 
-        _db.exec(INCR_UPDATE_STMT, data, sizeof(int64_t), seq, key);
-        if (sqlite3_changes(_db.get()) == 0)
-            _db.exec(REPLACE_VALUE_STMT, key, data, std::optional<double> {},
+        db->exec(INCR_UPDATE_STMT, data, sizeof(int64_t), seq, key);
+        if (sqlite3_changes(db->get()) == 0)
+            db->exec(REPLACE_VALUE_STMT, key, data, std::optional<double> {},
                      sizeof(int64_t), seq, std::optional<std::string> {});
 
         transaction.commit();
@@ -688,14 +686,13 @@ public:
 
     inline int64_t decr(const std::string& key, int64_t delta = 1, int64_t default_value = 0)
     {
-        std::lock_guard lock(_mtx);
         return incr(key, -delta, default_value);
     }
 
     inline void clear()
     {
-        std::lock_guard lock(_mtx);
-        sqlite3_exec(_db.get(), "DELETE FROM cache;", nullptr, nullptr, nullptr);
+        auto db = this->db();
+        sqlite3_exec(db->get(), "DELETE FROM cache;", nullptr, nullptr, nullptr);
         if (std::filesystem::exists(cache_path) && std::filesystem::is_directory(cache_path))
         {
             for (const auto& entry : std::filesystem::directory_iterator(cache_path))
@@ -707,17 +704,11 @@ public:
         }
     }
 
-    // Check the cache statistics
-    // CacheStats stats()
-    // {
-    //     ;
-    // }
-
     inline void set_meta(const std::string& key, const std::string& value)
     {
-        std::lock_guard lock(_mtx);
+        auto db = this->db();
         sqlite3_stmt* stmt;
-        sqlite3_prepare_v2(_db.get(),
+        sqlite3_prepare_v2(db->get(),
             "INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?);", -1, &stmt, nullptr);
         sqlite3_bind_text(stmt, 1, key.c_str(), -1, SQLITE_TRANSIENT);
         sqlite3_bind_text(stmt, 2, value.c_str(), -1, SQLITE_TRANSIENT);
@@ -727,9 +718,9 @@ public:
 
     [[nodiscard]] inline std::optional<std::string> get_meta(const std::string& key)
     {
-        std::lock_guard lock(_mtx);
+        auto db = this->db();
         sqlite3_stmt* stmt;
-        sqlite3_prepare_v2(_db.get(),
+        sqlite3_prepare_v2(db->get(),
             "SELECT value FROM meta WHERE key = ?;", -1, &stmt, nullptr);
         sqlite3_bind_text(stmt, 1, key.c_str(), -1, SQLITE_TRANSIENT);
         std::optional<std::string> result;
@@ -741,12 +732,12 @@ public:
 
     inline bool check()
     {
-        std::lock_guard lock(_mtx);
+        auto db = this->db();
         const char* sql = "SELECT COUNT(*) FROM cache;";
         sqlite3_stmt* stmt;
-        if (sqlite3_prepare_v2(_db.get(), sql, -1, &stmt, nullptr) != SQLITE_OK)
+        if (sqlite3_prepare_v2(db->get(), sql, -1, &stmt, nullptr) != SQLITE_OK)
         {
-            std::cerr << "Error preparing statement: " << sqlite3_errmsg(_db.get()) << std::endl;
+            std::cerr << "Error preparing statement: " << sqlite3_errmsg(db->get()) << std::endl;
             return false;
         }
 
