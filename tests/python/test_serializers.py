@@ -6,6 +6,12 @@ import numpy as np
 
 from pysciqlop_cache import Cache, MsgspecSerializer, PickleSerializer
 
+try:
+    import msgspec
+    _has_msgspec = True
+except ImportError:
+    _has_msgspec = False
+
 
 class NestedAxis:
     def __init__(self, name="", data=None):
@@ -75,6 +81,7 @@ class TestPickleSerializer(unittest.TestCase):
         self.assertEqual(result.meta, var.meta)
 
 
+@unittest.skipUnless(_has_msgspec, "msgspec not installed")
 class TestMsgspecSerializer(unittest.TestCase):
     def setUp(self):
         self.tmp_dir = TemporaryDirectory(delete=False)
@@ -199,6 +206,7 @@ class TestSerializerPersistence(unittest.TestCase):
     def tearDown(self):
         shutil.rmtree(self.tmp_dir.name)
 
+    @unittest.skipUnless(_has_msgspec, "msgspec not installed")
     def test_reopen_without_serializer_arg(self):
         cache = Cache(self.tmp_dir.name, serializer=MsgspecSerializer())
         cache.set("key", "value")
@@ -217,6 +225,7 @@ class TestSerializerPersistence(unittest.TestCase):
         cache2 = Cache(self.tmp_dir.name, serializer=PickleSerializer())
         self.assertEqual(cache2.get("key"), 42)
 
+    @unittest.skipUnless(_has_msgspec, "msgspec not installed")
     def test_reopen_with_wrong_serializer_raises(self):
         cache = Cache(self.tmp_dir.name, serializer=MsgspecSerializer())
         cache.set("key", "value")
