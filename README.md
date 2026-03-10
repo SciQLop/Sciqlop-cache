@@ -2,160 +2,127 @@
 [![CPP20](https://img.shields.io/badge/Language-C++20-blue.svg)]()
 [![PyPi](https://img.shields.io/pypi/v/Sciqlop-cache.svg)](https://pypi.python.org/pypi/Sciqlop-cache)
 [![Coverage](https://codecov.io/gh/SciQLop/Sciqlop-cache/coverage.svg?branch=main)](https://codecov.io/gh/SciQLop/Sciqlop-cache/branch/main)
+
 # SciQLop Cache
 
-SciQLop Cache is a C++/Python library for fast, persistent, and concurrent caching of binary and text data. It is designed for scientific and general-purpose applications that require efficient storage and retrieval of key-value pairs, with support for expiration, eviction, and multi-process access.
+A fast, persistent key-value cache for Python and C++20. Built on SQLite with hybrid blob/file storage, it stays flat from 100 to 1M+ entries while being **2x faster than diskcache on writes**.
 
-## Main Features
-
-- **Persistent cache**: Stores data on disk using SQLite (small values as BLOBs, large values as files).
-- **Binary and text support**: Handles arbitrary byte buffers and strings.
-- **No-expiry default**: Entries persist until explicitly deleted or evicted. Optional time-based expiration.
-- **LRU eviction**: Set `max_size` in bytes to automatically evict least-recently-used entries.
-- **Tags**: Group cache entries with tags for bulk eviction.
-- **Multi-process safe**: WAL mode with busy timeout for concurrent access.
-- **Python bindings**: Easy integration with Python via `pysciqlop_cache`.
-
-## User API (C++)
-
-All user-facing functions are provided by the `Cache` class in `include/sciqlop_cache/sciqlop_cache.hpp`. Below are the most useful methods:
-
-### Construction
-
-```cpp
-Cache(const std::filesystem::path &cache_path = ".cache/", size_t max_size = 0);
+```python
+pip install sciqlop-cache
 ```
 
-Creates a cache at the given path. `max_size` is in bytes (0 = unlimited, default). When set, LRU eviction runs automatically in the background.
+## Quick Start (Python)
 
-Basic Operations
-
-* Set a value
-```cpp
-cache.set(key, value);                      // never expires
-cache.set(key, value, expire_duration);     // with expiration
-cache.set(key, value, "mytag");             // with tag
-cache.set(key, value, expire_duration, "mytag"); // both
-```
-
-* Get a value
-```cpp
-auto result = cache.get(key); // returns std::optional<Buffer>
-```
-
-* Add a value only if not present
-```cpp
-cache.add(key, value);
-cache.add(key, value, expire_duration);
-cache.add(key, value, "mytag");
-cache.add(key, value, expire_duration, "mytag");
-```
-
-* Delete a value
-```cpp
-cache.del(key);
-```
-
-* Pop a value (get and delete)
-```cpp
-auto result = cache.pop(key);
-```
-
-* Check if a key exists
-```cpp
-cache.exists(key);
-```
-
-* List all keys
-```cpp
-auto keys = cache.keys(); // returns std::vector<std::string>
-```
-
-* Count items
-```cpp
-size_t n = cache.count();
-```
-Expiration and Eviction
-
-* Touch (update expiration)
-```cpp
-cache.touch(key, expire_duration);
-```
-
-* Expire (remove expired items)
-```cpp
-cache.expire();
-```
-
-* Evict (LRU removal when over max_size)
-```cpp
-cache.evict();
-```
-
-* Evict by tag (remove all entries with a given tag)
-```cpp
-cache.evict_tag("mytag"); // returns number of entries removed
-```
-
-* Clear all items
-```cpp
-cache.clear();
-```
-Validation
-
-* Check cache validity
-```cpp
-cache.check();
-```
-
-## Python API
-
-The Python API is provided by the pysciqlop_cache module. The main class is Cache, which mirrors the C++ API:
-
-```py
+```python
 from pysciqlop_cache import Cache
 
-cache = Cache("path/to/cache", max_size=1_000_000_000)  # 1GB limit, 0 = unlimited
-cache.set("key", "value")                       # stores any picklable object
-cache.set("key", "value", expire=3600)           # expire in 1 hour
-cache.set("key", "value", tag="group1")          # with tag
-cache.set("key", "value", expire=3600, tag="group1")  # both
-value = cache.get("key")
-cache.delete("key")
-cache.evict_tag("group1")                        # bulk remove by tag
-cache.keys()
-cache.count()
-cache.expire()
-cache.clear()
+cache = Cache("/tmp/my-cache")
+cache["sensor/temperature"] = {"ts": 1710000000, "values": [21.3, 21.5, 21.4]}
+print(cache["sensor/temperature"])
 ```
 
-## Example Usage
+Any picklable Python object works out of the box. For better performance with structured data, use the msgspec serializer:
 
-C++
+```python
+from pysciqlop_cache import Cache, MsgspecSerializer
+
+cache = Cache("/tmp/my-cache", serializer=MsgspecSerializer())
+```
+
+### Expiration and Tags
+
+```python
+cache.set("session/abc", token, expire=3600)          # expires in 1 hour
+cache.set("sensor/temp", data, tag="sensor")           # tagged entry
+cache.set("sensor/hum", data, expire=600, tag="sensor")
+
+cache.evict_tag("sensor")   # bulk-remove all "sensor" entries
+cache.expire()               # remove all expired entries
+```
+
+### LRU Eviction
+
+```python
+cache = Cache("/tmp/bounded", max_size=1_000_000_000)  # 1 GB limit
+# Least-recently-used entries are evicted automatically in the background
+```
+
+### Atomic Transactions
+
+```python
+with cache.transact():
+    cache["balance"] = cache.get("balance", 0) - amount
+    cache["log"] = f"withdrew {amount}"
+# Automatically commits on success, rolls back on exception
+```
+
+### Sharded Concurrency with FanoutCache
+
+For write-heavy concurrent workloads, `FanoutCache` shards keys across N independent stores:
+
+```python
+from pysciqlop_cache import FanoutCache
+
+cache = FanoutCache("/tmp/sharded", shard_count=8, max_size=1_000_000_000)
+cache["key"] = "value"         # routed to shard via hash(key) % 8
+
+with cache.transact("key"):   # transaction scoped to key's shard
+    cache["key"] = transform(cache["key"])
+```
+
+### Lightweight Index
+
+`Index` and `FanoutIndex` are bare key-value stores with no expiration, eviction, tags, or stats overhead:
+
+```python
+from pysciqlop_cache import Index
+
+idx = Index("/tmp/my-index")
+idx["dataset/v2"] = metadata
+```
+
+### Dict-like Interface
+
+All store types support the standard Python dict interface:
+
+```python
+cache["key"] = value           # set
+value = cache["key"]           # get
+del cache["key"]               # delete
+"key" in cache                 # exists
+for key in cache: ...          # iterate keys
+len(cache)                     # count
+```
+
+## C++ API
+
 ```cpp
-Cache cache(".cache/");
-cache.set("mykey", std::vector<char>{'a', 'b', 'c'});
-auto value = cache.get("mykey");
-if (value) {
-    // use *value
-}
+#include "sciqlop_cache/sciqlop_cache.hpp"
+
+// Full-featured cache with expiration, LRU eviction, tags, and stats
+Cache cache(".cache/", /*max_size=*/1'000'000'000);
+
+cache.set("key", std::vector<char>{'a', 'b', 'c'});
+cache.set("key", data, 60s);                  // with expiration
+cache.set("key", data, "mytag");               // with tag
+cache.set("key", data, 60s, "mytag");          // both
+
+auto value = cache.get("key");                 // std::optional<Buffer>
+cache.del("key");
+cache.pop("key");                              // get + delete
+cache.add("key", data);                        // set only if absent
+cache.touch("key", 120s);                      // update expiration
+cache.evict_tag("mytag");                      // bulk remove by tag
+
+// Bare key-value store (no expiration/eviction/tags overhead)
+Index index(".index/");
+
+// Sharded variants for write concurrency
+FanoutCache fc(".fc/", /*shard_count=*/8, /*max_size=*/0);
+FanoutIndex fi(".fi/", /*shard_count=*/8);
 ```
 
-Python
-```py
-from pysciqlop_cache import Cache
-
-cache = Cache(".cache/")
-cache.set("mykey", [1, 2, 3])              # any picklable object
-cache.set("sensor/temp", data, tag="sensor")
-value = cache.get("mykey")
-if value is not None:
-    # use value
-cache.evict_tag("sensor")                  # remove all sensor data
-```
-
-
-## Scaling
+## Performance
 
 Comparison with diskcache, from 100 to 1M cache entries (256-byte values):
 
@@ -168,16 +135,22 @@ Latency distribution at each cache size:
 Reproduce with:
 
 ```bash
-# Summary line chart
 PYTHONPATH=build python benchmark/scaling.py --max-entries 1000000 --backend both > results.csv
 python benchmark/plot_scaling.py results.csv -o benchmark/scaling_chart.png
 
-# Violin plot (per-op latency distributions)
 PYTHONPATH=build python benchmark/scaling.py --max-entries 1000000 --raw --backend both > raw.csv
 python benchmark/plot_scaling.py raw.csv --violin -o benchmark/scaling_violin.png
 ```
 
-MIT License
+## Building from Source
 
-## Contact
-For questions or contributions, please open an issue or pull request on GitHub.
+```bash
+pip install meson-python numpy
+meson setup build -Dwith_tests=true
+meson compile -C build
+meson test -C build
+```
+
+## License
+
+MIT
