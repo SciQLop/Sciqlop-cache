@@ -29,6 +29,11 @@ class FanoutStore
     }
 
 public:
+    FanoutStore(const FanoutStore&) = delete;
+    FanoutStore& operator=(const FanoutStore&) = delete;
+    FanoutStore(FanoutStore&&) = default;
+    FanoutStore& operator=(FanoutStore&&) = default;
+
     explicit FanoutStore(const std::filesystem::path& path,
                          std::size_t shard_count = 8,
                          std::size_t max_size = 0)

@@ -17,9 +17,10 @@ using namespace nb::literals;
 using OptDuration = std::optional<std::chrono::system_clock::duration>;
 using OptString = std::optional<std::string>;
 
-inline void _set_item(Cache& c, const std::string& key, nb::bytes& buffer,
-                      OptDuration expire = std::nullopt,
-                      OptString tag = std::nullopt)
+template <typename T>
+inline void _set_item_impl(T& c, const std::string& key, nb::bytes& buffer,
+                            OptDuration expire = std::nullopt,
+                            OptString tag = std::nullopt)
 {
     auto data = std::span<const char>(static_cast<const char*>(buffer.data()), buffer.size());
     if (expire && tag)
@@ -32,21 +33,10 @@ inline void _set_item(Cache& c, const std::string& key, nb::bytes& buffer,
         c.set(key, data);
 }
 
-inline void _index_set_item(Index& idx, const std::string& key, nb::bytes& buffer)
-{
-    auto data = std::span<const char>(static_cast<const char*>(buffer.data()), buffer.size());
-    idx.set(key, data);
-}
-
-inline bool _index_add_item(Index& idx, const std::string& key, nb::bytes& buffer)
-{
-    auto data = std::span<const char>(static_cast<const char*>(buffer.data()), buffer.size());
-    return idx.add(key, data);
-}
-
-inline bool _add_item(Cache& c, const std::string& key, nb::bytes& buffer,
-                      OptDuration expire = std::nullopt,
-                      OptString tag = std::nullopt)
+template <typename T>
+inline bool _add_item_impl(T& c, const std::string& key, nb::bytes& buffer,
+                            OptDuration expire = std::nullopt,
+                            OptString tag = std::nullopt)
 {
     auto data = std::span<const char>(static_cast<const char*>(buffer.data()), buffer.size());
     if (expire && tag)
@@ -57,6 +47,20 @@ inline bool _add_item(Cache& c, const std::string& key, nb::bytes& buffer,
         return c.add(key, data, *tag);
     else
         return c.add(key, data);
+}
+
+template <typename T>
+inline void _simple_set_item(T& s, const std::string& key, nb::bytes& buffer)
+{
+    auto data = std::span<const char>(static_cast<const char*>(buffer.data()), buffer.size());
+    s.set(key, data);
+}
+
+template <typename T>
+inline bool _simple_add_item(T& s, const std::string& key, nb::bytes& buffer)
+{
+    auto data = std::span<const char>(static_cast<const char*>(buffer.data()), buffer.size());
+    return s.add(key, data);
 }
 
 NB_MODULE(_pysciqlop_cache, m)
@@ -110,16 +114,16 @@ NB_MODULE(_pysciqlop_cache, m)
              "max_size"_a = 0)
         .def("count", &Cache::count)
         .def("__len__", &Cache::count)
-        .def("set", _set_item, nb::arg("key"), nb::arg("value"), nb::arg("expire") = nb::none(),
-             nb::arg("tag") = nb::none())
+        .def("set", _set_item_impl<Cache>, nb::arg("key"), nb::arg("value"),
+             nb::arg("expire") = nb::none(), nb::arg("tag") = nb::none())
         .def(
             "__setitem__", [](Cache& c, const std::string& key, nb::bytes& buffer)
-            { return _set_item(c, key, buffer); }, nb::arg("key"), nb::arg("value"))
+            { _set_item_impl(c, key, buffer); }, nb::arg("key"), nb::arg("value"))
         .def("get", &Cache::get, nb::arg("key"))
         .def("__getitem__", &Cache::get, nb::arg("key"))
         .def("keys", &Cache::keys)
         .def("exists", &Cache::exists, nb::arg("key"))
-        .def("add", _add_item, nb::arg("key"), nb::arg("value"),
+        .def("add", _add_item_impl<Cache>, nb::arg("key"), nb::arg("value"),
              nb::arg("expire") = nb::none(), nb::arg("tag") = nb::none())
         .def("delete", &Cache::del, nb::arg("key"))
         .def("pop", &Cache::pop, nb::arg("key"))
@@ -155,13 +159,13 @@ NB_MODULE(_pysciqlop_cache, m)
         .def(nb::init<const std::string&>(), "path"_a = ".index/")
         .def("count", &Index::count)
         .def("__len__", &Index::count)
-        .def("set", _index_set_item, nb::arg("key"), nb::arg("value"))
-        .def("__setitem__", _index_set_item, nb::arg("key"), nb::arg("value"))
+        .def("set", _simple_set_item<Index>, nb::arg("key"), nb::arg("value"))
+        .def("__setitem__", _simple_set_item<Index>, nb::arg("key"), nb::arg("value"))
         .def("get", &Index::get, nb::arg("key"))
         .def("__getitem__", &Index::get, nb::arg("key"))
         .def("keys", &Index::keys)
         .def("exists", &Index::exists, nb::arg("key"))
-        .def("add", _index_add_item, nb::arg("key"), nb::arg("value"))
+        .def("add", _simple_add_item<Index>, nb::arg("key"), nb::arg("value"))
         .def("delete", &Index::del, nb::arg("key"))
         .def("pop", &Index::pop, nb::arg("key"))
         .def("incr", &Index::incr, nb::arg("key"), nb::arg("delta") = 1,
@@ -175,4 +179,76 @@ NB_MODULE(_pysciqlop_cache, m)
         .def("get_meta", &Index::get_meta, nb::arg("key"))
         .def("path", [](Index& idx) { return idx.path().string(); })
         .def("begin_user_transaction", &Index::begin_user_transaction);
+
+    nb::class_<FanoutCache>(m, "FanoutCache")
+        .def(nb::init<const std::string&, std::size_t, std::size_t>(),
+             "cache_path"_a = ".cache/", "shard_count"_a = 8, "max_size"_a = 0)
+        .def("count", &FanoutCache::count)
+        .def("__len__", &FanoutCache::count)
+        .def("set", _set_item_impl<FanoutCache>, nb::arg("key"), nb::arg("value"),
+             nb::arg("expire") = nb::none(), nb::arg("tag") = nb::none())
+        .def(
+            "__setitem__", [](FanoutCache& c, const std::string& key, nb::bytes& buffer)
+            { _set_item_impl(c, key, buffer); }, nb::arg("key"), nb::arg("value"))
+        .def("get", &FanoutCache::get, nb::arg("key"))
+        .def("__getitem__", &FanoutCache::get, nb::arg("key"))
+        .def("keys", &FanoutCache::keys)
+        .def("exists", &FanoutCache::exists, nb::arg("key"))
+        .def("add", _add_item_impl<FanoutCache>, nb::arg("key"), nb::arg("value"),
+             nb::arg("expire") = nb::none(), nb::arg("tag") = nb::none())
+        .def("delete", &FanoutCache::del, nb::arg("key"))
+        .def("pop", &FanoutCache::pop, nb::arg("key"))
+        .def(
+            "touch",
+            [](FanoutCache& c, const std::string& key, std::chrono::system_clock::duration expire)
+            { return c.touch(key, expire); }, nb::arg("key"), nb::arg("expire"))
+        .def("expire", &FanoutCache::expire)
+        .def("evict", &FanoutCache::evict)
+        .def("evict_tag", &FanoutCache::evict_tag, nb::arg("tag"))
+        .def("incr", &FanoutCache::incr, nb::arg("key"), nb::arg("delta") = 1,
+             nb::arg("default_value") = 0)
+        .def("decr", &FanoutCache::decr, nb::arg("key"), nb::arg("delta") = 1,
+             nb::arg("default_value") = 0)
+        .def("clear", &FanoutCache::clear)
+        .def("check", &FanoutCache::check)
+        .def("set_meta", &FanoutCache::set_meta, nb::arg("key"), nb::arg("value"))
+        .def("get_meta", &FanoutCache::get_meta, nb::arg("key"))
+        .def("size", &FanoutCache::size)
+        .def("shard_count", &FanoutCache::shard_count)
+        .def("set_max_cache_size", &FanoutCache::set_max_cache_size, nb::arg("value"))
+        .def("path", [](FanoutCache& c) { return c.path().string(); })
+        .def("stats", [](FanoutCache& c) {
+            auto s = c.stats();
+            nb::dict d;
+            d["hits"] = s.hits;
+            d["misses"] = s.misses;
+            return d;
+        })
+        .def("reset_stats", &FanoutCache::reset_stats);
+
+    nb::class_<FanoutIndex>(m, "FanoutIndex")
+        .def(nb::init<const std::string&, std::size_t, std::size_t>(),
+             "path"_a = ".index/", "shard_count"_a = 8, "max_size"_a = 0)
+        .def("count", &FanoutIndex::count)
+        .def("__len__", &FanoutIndex::count)
+        .def("set", _simple_set_item<FanoutIndex>, nb::arg("key"), nb::arg("value"))
+        .def("__setitem__", _simple_set_item<FanoutIndex>, nb::arg("key"), nb::arg("value"))
+        .def("get", &FanoutIndex::get, nb::arg("key"))
+        .def("__getitem__", &FanoutIndex::get, nb::arg("key"))
+        .def("keys", &FanoutIndex::keys)
+        .def("exists", &FanoutIndex::exists, nb::arg("key"))
+        .def("add", _simple_add_item<FanoutIndex>, nb::arg("key"), nb::arg("value"))
+        .def("delete", &FanoutIndex::del, nb::arg("key"))
+        .def("pop", &FanoutIndex::pop, nb::arg("key"))
+        .def("incr", &FanoutIndex::incr, nb::arg("key"), nb::arg("delta") = 1,
+             nb::arg("default_value") = 0)
+        .def("decr", &FanoutIndex::decr, nb::arg("key"), nb::arg("delta") = 1,
+             nb::arg("default_value") = 0)
+        .def("clear", &FanoutIndex::clear)
+        .def("check", &FanoutIndex::check)
+        .def("size", &FanoutIndex::size)
+        .def("shard_count", &FanoutIndex::shard_count)
+        .def("set_meta", &FanoutIndex::set_meta, nb::arg("key"), nb::arg("value"))
+        .def("get_meta", &FanoutIndex::get_meta, nb::arg("key"))
+        .def("path", [](FanoutIndex& idx) { return idx.path().string(); });
 }

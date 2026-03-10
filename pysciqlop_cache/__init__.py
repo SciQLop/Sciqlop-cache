@@ -1,4 +1,4 @@
-from ._pysciqlop_cache import Cache as _Cache, Index as _Index
+from ._pysciqlop_cache import Cache as _Cache, Index as _Index, FanoutCache as _FanoutCache, FanoutIndex as _FanoutIndex
 import functools
 import hashlib
 from datetime import timedelta
@@ -16,18 +16,19 @@ _META_SERIALIZER = "serializer"
 _META_MAX_SIZE = "max_size"
 _SENTINEL = object()
 
-__all__ = ["Cache", "Index", "Serializer", "PickleSerializer", "MsgspecSerializer"]
+__all__ = ["Cache", "Index", "FanoutCache", "FanoutIndex", "Serializer", "PickleSerializer", "MsgspecSerializer"]
 
 
 class _TransactionContext:
-    __slots__ = ("_store", "_guard")
+    __slots__ = ("_store", "_guard", "_begin_args")
 
-    def __init__(self, store):
+    def __init__(self, store, *begin_args):
         self._store = store
         self._guard = None
+        self._begin_args = begin_args
 
     def __enter__(self):
-        self._guard = self._store.begin_user_transaction()
+        self._guard = self._store.begin_user_transaction(*self._begin_args)
         return self._store
 
     def __exit__(self, exc_type, exc_val, exc_tb):
@@ -325,6 +326,163 @@ class Index(_Index):
 
     def transact(self):
         return _TransactionContext(self)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+class FanoutCache(_FanoutCache):
+
+    def __init__(
+        self,
+        cache_path: str = ".cache/",
+        shard_count: int = 8,
+        max_size: int = 0,
+        serializer: Serializer | None = None,
+    ):
+        super().__init__(cache_path=cache_path, shard_count=shard_count, max_size=max_size)
+        self._serializer = serializer or PickleSerializer()
+
+    @property
+    def serializer(self) -> Serializer:
+        return self._serializer
+
+    def set(
+        self,
+        key: AnyStr,
+        value: Any,
+        expire: Optional[Union[timedelta, int, float]] = None,
+        tag: Optional[str] = None,
+    ):
+        if type(expire) in (int, float):
+            expire = timedelta(seconds=expire)
+        super().set(key, self._serializer.dumps(value), expire=expire, tag=tag)
+
+    def get(self, key: AnyStr, default=None) -> Any:
+        value = super().get(key)
+        if value is not None:
+            return self._serializer.loads(value.memoryview())
+        return default
+
+    def pop(self, key: AnyStr, default=None) -> Any:
+        value = super().pop(key)
+        if value is not None:
+            return self._serializer.loads(value.memoryview())
+        return default
+
+    def add(
+        self,
+        key: AnyStr,
+        value: Any,
+        expire: Optional[Union[timedelta, int, float]] = None,
+        tag: Optional[str] = None,
+    ) -> bool:
+        if type(expire) in (int, float):
+            expire = timedelta(seconds=expire)
+        return super().add(key, self._serializer.dumps(value), expire=expire, tag=tag)
+
+    def incr(self, key: AnyStr, delta: int = 1, default: int = 0) -> int:
+        value = self.get(key, default)
+        new_value = value + delta
+        self.set(key, new_value)
+        return new_value
+
+    def decr(self, key: AnyStr, delta: int = 1, default: int = 0) -> int:
+        return self.incr(key, -delta, default)
+
+    def __getitem__(self, key: AnyStr):
+        return self.get(key)
+
+    def __setitem__(self, key: AnyStr, value: Any):
+        self.set(key, value)
+
+    def __delitem__(self, key: AnyStr):
+        super().delete(key)
+
+    def __contains__(self, key: AnyStr) -> bool:
+        return super().exists(key)
+
+    def __iter__(self):
+        return iter(super().keys())
+
+    def __repr__(self) -> str:
+        return f"FanoutCache({str(super().path())!r}, shards={self.shard_count()}, count={len(self)})"
+
+    def transact(self, key: str):
+        return _TransactionContext(self, key)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+class FanoutIndex(_FanoutIndex):
+
+    def __init__(
+        self,
+        path: str = ".index/",
+        shard_count: int = 8,
+        serializer: Serializer | None = None,
+    ):
+        super().__init__(path=path, shard_count=shard_count)
+        self._serializer = serializer or PickleSerializer()
+
+    @property
+    def serializer(self) -> Serializer:
+        return self._serializer
+
+    def set(self, key: AnyStr, value: Any):
+        super().set(key, self._serializer.dumps(value))
+
+    def get(self, key: AnyStr, default=None) -> Any:
+        value = super().get(key)
+        if value is not None:
+            return self._serializer.loads(value.memoryview())
+        return default
+
+    def pop(self, key: AnyStr, default=None) -> Any:
+        value = super().pop(key)
+        if value is not None:
+            return self._serializer.loads(value.memoryview())
+        return default
+
+    def add(self, key: AnyStr, value: Any) -> bool:
+        return super().add(key, self._serializer.dumps(value))
+
+    def incr(self, key: AnyStr, delta: int = 1, default: int = 0) -> int:
+        value = self.get(key, default)
+        new_value = value + delta
+        self.set(key, new_value)
+        return new_value
+
+    def decr(self, key: AnyStr, delta: int = 1, default: int = 0) -> int:
+        return self.incr(key, -delta, default)
+
+    def __getitem__(self, key: AnyStr):
+        return self.get(key)
+
+    def __setitem__(self, key: AnyStr, value: Any):
+        self.set(key, value)
+
+    def __delitem__(self, key: AnyStr):
+        super().delete(key)
+
+    def __contains__(self, key: AnyStr) -> bool:
+        return super().exists(key)
+
+    def __iter__(self):
+        return iter(super().keys())
+
+    def __repr__(self) -> str:
+        return f"FanoutIndex({str(super().path())!r}, shards={self.shard_count()}, count={len(self)})"
+
+    def transact(self, key: str):
+        return _TransactionContext(self, key)
 
     def __enter__(self):
         return self

@@ -538,5 +538,150 @@ class TestTransact(unittest.TestCase):
             self.assertIsNone(idx.get("x"))
 
 
+class TestFanoutCache(unittest.TestCase):
+
+    def setUp(self):
+        self.tmp_dir = TemporaryDirectory(delete=False)
+        from pysciqlop_cache import FanoutCache
+        self.cache = FanoutCache(self.tmp_dir.name, shard_count=4)
+
+    def tearDown(self):
+        if hasattr(self, 'cache'):
+            del self.cache
+        shutil.rmtree(self.tmp_dir.name)
+
+    def test_set_get(self):
+        self.cache.set("key1", "value1")
+        self.assertEqual(self.cache.get("key1"), "value1")
+
+    def test_count_and_size(self):
+        self.cache.set("k1", "aaa")
+        self.cache.set("k2", "bbbbb")
+        self.assertEqual(self.cache.count(), 2)
+
+    def test_keys(self):
+        self.cache.set("k1", "v1")
+        self.cache.set("k2", "v2")
+        self.assertEqual(sorted(self.cache.keys()), ["k1", "k2"])
+
+    def test_delete(self):
+        self.cache.set("k1", "v1")
+        self.cache.delete("k1")
+        self.assertIsNone(self.cache.get("k1"))
+
+    def test_clear(self):
+        for i in range(10):
+            self.cache.set(f"key{i}", "val")
+        self.cache.clear()
+        self.assertEqual(self.cache.count(), 0)
+
+    def test_shard_count(self):
+        self.assertEqual(self.cache.shard_count(), 4)
+
+    def test_stats(self):
+        self.cache.set("k1", "v1")
+        self.cache.get("k1")
+        self.cache.get("missing")
+        s = self.cache.stats()
+        self.assertEqual(s["hits"], 1)
+        self.assertEqual(s["misses"], 1)
+
+    def test_evict_tag(self):
+        self.cache.set("t1", "v1", tag="group")
+        self.cache.set("t2", "v2", tag="group")
+        self.cache.set("t3", "v3")
+        evicted = self.cache.evict_tag("group")
+        self.assertEqual(evicted, 2)
+        self.assertEqual(self.cache.count(), 1)
+
+    def test_dict_interface(self):
+        self.cache["dictkey"] = "dictval"
+        self.assertEqual(self.cache["dictkey"], "dictval")
+
+    def test_contains(self):
+        self.cache.set("k", "v")
+        self.assertTrue("k" in self.cache)
+        self.assertFalse("nope" in self.cache)
+
+    def test_iter(self):
+        self.cache.set("x", 1)
+        self.cache.set("y", 2)
+        self.assertEqual(sorted(self.cache), ["x", "y"])
+
+    def test_repr(self):
+        self.assertIn("FanoutCache(", repr(self.cache))
+
+    def test_various_types(self):
+        self.cache.set("int", 42)
+        self.assertEqual(self.cache.get("int"), 42)
+        self.cache.set("list", [1, 2, 3])
+        self.assertEqual(self.cache.get("list"), [1, 2, 3])
+
+    def test_expiration(self):
+        self.cache.set("exp", "val", expire=1)
+        time.sleep(2)
+        self.assertIsNone(self.cache.get("exp"))
+
+    def test_incr_decr(self):
+        self.assertEqual(self.cache.incr("counter"), 1)
+        self.assertEqual(self.cache.incr("counter"), 2)
+        self.assertEqual(self.cache.decr("counter"), 1)
+
+    def test_pop(self):
+        self.cache.set("k", "v")
+        self.assertEqual(self.cache.pop("k"), "v")
+        self.assertIsNone(self.cache.get("k"))
+
+    def test_add(self):
+        self.assertTrue(self.cache.add("newkey", "newval"))
+        self.assertFalse(self.cache.add("newkey", "other"))
+        self.assertEqual(self.cache.get("newkey"), "newval")
+
+
+class TestFanoutIndex(unittest.TestCase):
+
+    def setUp(self):
+        self.tmp_dir = TemporaryDirectory(delete=False)
+        from pysciqlop_cache import FanoutIndex
+        self.index = FanoutIndex(self.tmp_dir.name, shard_count=4)
+
+    def tearDown(self):
+        if hasattr(self, 'index'):
+            del self.index
+        shutil.rmtree(self.tmp_dir.name)
+
+    def test_set_get(self):
+        self.index.set("key1", "value1")
+        self.assertEqual(self.index.get("key1"), "value1")
+
+    def test_count(self):
+        self.index.set("k1", "aaa")
+        self.index.set("k2", "bbbbb")
+        self.assertEqual(self.index.count(), 2)
+
+    def test_keys(self):
+        self.index.set("k1", "v1")
+        self.index.set("k2", "v2")
+        self.assertEqual(sorted(self.index.keys()), ["k1", "k2"])
+
+    def test_delete(self):
+        self.index.set("k1", "v1")
+        self.index.delete("k1")
+        self.assertIsNone(self.index.get("k1"))
+
+    def test_clear(self):
+        self.index.set("a", 1)
+        self.index.set("b", 2)
+        self.index.clear()
+        self.assertEqual(len(self.index), 0)
+
+    def test_dict_interface(self):
+        self.index["key"] = "value"
+        self.assertEqual(self.index["key"], "value")
+
+    def test_repr(self):
+        self.assertIn("FanoutIndex(", repr(self.index))
+
+
 if __name__ == "__main__":
     unittest.main()
