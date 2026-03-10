@@ -155,6 +155,19 @@ cache.evict_tag("sensor")                  # remove all sensor data
 ```
 
 
+## Scaling
+
+Latency stays nearly flat from 100 to 1M cache entries (256-byte values):
+
+![Scaling benchmark](benchmark/scaling_chart.png)
+
+Reproduce with:
+
+```bash
+PYTHONPATH=build python benchmark/scaling.py --max-entries 1000000 > results.csv
+python benchmark/plot_scaling.py results.csv -o benchmark/scaling_chart.png
+```
+
 MIT License
 
 ## Contact
