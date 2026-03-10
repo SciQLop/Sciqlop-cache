@@ -115,6 +115,16 @@ foreach test_name:['database', 'basic', 'basic_index', 'intermediate', 'multithr
     test(test_name, exe)
 endforeach
 
+gbench_dep = dependency('benchmark', required: false)
+if gbench_dep.found()
+    bench_perf_exe = executable(
+        'bench-perf', 'tests/bench_perf/main.cpp',
+        include_directories: my_include,
+        dependencies:[sciqlop_cache_dep, sqlite3_dep, gbench_dep],
+        install: false
+    )
+endif
+
 
 if not get_option('disable_python_wrapper')
     foreach test_name:['test_python_interface', 'test_perf_vs_diskcache', 'test_serializers']

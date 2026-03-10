@@ -41,6 +41,9 @@ class _Store : private Policies...
     mutable std::recursive_mutex _mtx;
     bool _in_transaction = false;
 
+    std::atomic<std::size_t> _total_size { 0 };
+    std::atomic<std::size_t> _total_count { 0 };
+
     // --- SQL building helpers (derived from policy fold expressions) ---
 
     static std::string _where_valid()
@@ -83,6 +86,7 @@ class _Store : private Policies...
         std::string("SELECT value, path FROM cache WHERE key = ?") + _where_valid() + ";"
     };
     CompiledStatement GET_PATH_SIMPLE_STMT { "SELECT path FROM cache WHERE key = ?;" };
+    CompiledStatement GET_PATH_SIZE_STMT { "SELECT path, size FROM cache WHERE key = ?;" };
     CompiledStatement REPLACE_VALUE_STMT {
         std::string("REPLACE INTO cache (key, value, size") + _insert_extra_cols()
         + ", path) VALUES (?, ?, ?" + _insert_extra_placeholders() + ", NULL);"
@@ -100,6 +104,8 @@ class _Store : private Policies...
         + ") VALUES (?, ?, ?" + _insert_extra_placeholders() + ");"
     };
     CompiledStatement DELETE_STMT { "DELETE FROM cache WHERE key = ?;" };
+    CompiledStatement SET_META_STMT { "INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?);" };
+    CompiledStatement GET_META_STMT { "SELECT value FROM meta WHERE key = ?;" };
 
     // Incr/decr statements
     CompiledStatement INCR_GET_STMT {
@@ -149,8 +155,10 @@ class _Store : private Policies...
     {
         std::vector<CompiledStatement*> stmts = {
             &COUNT_STMT, &KEYS_STMT, &EXISTS_STMT, &GET_STMT,
-            &GET_PATH_SIMPLE_STMT, &REPLACE_VALUE_STMT, &REPLACE_PATH_STMT,
+            &GET_PATH_SIMPLE_STMT, &GET_PATH_SIZE_STMT,
+            &REPLACE_VALUE_STMT, &REPLACE_PATH_STMT,
             &INSERT_VALUE_STMT, &INSERT_PATH_STMT, &DELETE_STMT,
+            &SET_META_STMT, &GET_META_STMT,
             &INCR_GET_STMT, &INCR_UPDATE_STMT
         };
         if constexpr (has_expiration)
@@ -228,12 +236,21 @@ class _Store : private Policies...
             if (_db.open(this->cache_path / db_fname, init_stmts) && _compile_statements())
             {
                 _migrate_schema();
+                _load_counters();
                 return;
             }
             _db.close();
             std::this_thread::sleep_for(std::chrono::milliseconds(50 * (1 << attempt)));
         }
         throw std::runtime_error("Failed to initialize database schema.");
+    }
+
+    void _load_counters()
+    {
+        if (auto r = _db.exec<std::size_t>("SELECT COALESCE(SUM(size), 0) FROM cache;"))
+            _total_size.store(*r, std::memory_order_relaxed);
+        if (auto r = _db.exec<std::size_t>("SELECT COUNT(*) FROM cache;"))
+            _total_count.store(*r, std::memory_order_relaxed);
     }
 
     void _migrate_schema()
@@ -247,12 +264,18 @@ class _Store : private Policies...
                 "CREATE INDEX IF NOT EXISTS idx_cache_tag ON cache(tag) WHERE tag IS NOT NULL;",
                 nullptr, nullptr, nullptr);
         }
+        // Drop any triggers from previous versions (replaced by in-memory tracking)
+        sqlite3_exec(_db.get(), "DROP TRIGGER IF EXISTS cache_insert_meta;", nullptr, nullptr, nullptr);
+        sqlite3_exec(_db.get(), "DROP TRIGGER IF EXISTS cache_delete_meta;", nullptr, nullptr, nullptr);
+        sqlite3_exec(_db.get(), "DROP TRIGGER IF EXISTS cache_update_size;", nullptr, nullptr, nullptr);
     }
 
     // --- Background checkpoint / eviction ---
 
     void _bg_evict([[maybe_unused]] sqlite3* bg_db)
     {
+        bool modified = false;
+
         if constexpr (has_expiration)
         {
             sqlite3_stmt* stmt = nullptr;
@@ -270,60 +293,75 @@ class _Store : private Policies...
             sqlite3_exec(bg_db,
                 "DELETE FROM cache WHERE expire IS NOT NULL AND expire <= unixepoch('now');",
                 nullptr, nullptr, nullptr);
+            if (sqlite3_changes(bg_db) > 0)
+                modified = true;
             for (auto& f : files)
                 storage->remove(f);
         }
 
         if constexpr (has_eviction)
         {
-            if (max_size == 0)
-                return;
-
-            sqlite3_exec(bg_db,
-                "UPDATE meta SET value = (SELECT COALESCE(SUM(size), 0) FROM cache) WHERE key = 'size';",
-                nullptr, nullptr, nullptr);
-
-            sqlite3_stmt* stmt = nullptr;
-            sqlite3_prepare_v2(bg_db, "SELECT value FROM meta WHERE key = 'size';", -1, &stmt, nullptr);
-            std::size_t current_size = 0;
-            if (stmt && sqlite3_step(stmt) == SQLITE_ROW)
-                current_size = static_cast<std::size_t>(sqlite3_column_int64(stmt, 0));
-            if (stmt) sqlite3_finalize(stmt);
-
-            if (current_size <= max_size)
-                return;
-
-            auto target = max_size * 9 / 10;
-            stmt = nullptr;
-            sqlite3_prepare_v2(bg_db, "SELECT key, path, size FROM cache ORDER BY last_use ASC;",
-                               -1, &stmt, nullptr);
-            struct Entry { std::string key; std::filesystem::path path; };
-            std::vector<Entry> to_evict;
-            while (stmt && current_size > target && sqlite3_step(stmt) == SQLITE_ROW)
+            if (max_size > 0)
             {
-                auto k = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
-                auto p = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
-                auto sz = static_cast<std::size_t>(sqlite3_column_int64(stmt, 2));
-                to_evict.push_back({ k ? k : "", p ? p : "" });
-                current_size -= std::min(current_size, sz);
-            }
-            if (stmt) sqlite3_finalize(stmt);
-
-            stmt = nullptr;
-            sqlite3_prepare_v2(bg_db, "DELETE FROM cache WHERE key = ?;", -1, &stmt, nullptr);
-            for (auto& [key, path] : to_evict)
-            {
-                if (stmt)
+                auto current_size = _total_size.load(std::memory_order_relaxed);
+                if (current_size > max_size)
                 {
-                    sqlite3_bind_text(stmt, 1, key.c_str(), -1, SQLITE_TRANSIENT);
-                    sqlite3_step(stmt);
-                    sqlite3_reset(stmt);
+                    auto target = max_size * 9 / 10;
+                    sqlite3_stmt* stmt = nullptr;
+                    sqlite3_prepare_v2(bg_db, "SELECT key, path, size FROM cache ORDER BY last_use ASC;",
+                                       -1, &stmt, nullptr);
+                    struct Entry { std::string key; std::filesystem::path path; };
+                    std::vector<Entry> to_evict;
+                    while (stmt && current_size > target && sqlite3_step(stmt) == SQLITE_ROW)
+                    {
+                        auto k = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
+                        auto p = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
+                        auto sz = static_cast<std::size_t>(sqlite3_column_int64(stmt, 2));
+                        to_evict.push_back({ k ? k : "", p ? p : "" });
+                        current_size -= std::min(current_size, sz);
+                    }
+                    if (stmt) sqlite3_finalize(stmt);
+
+                    stmt = nullptr;
+                    sqlite3_prepare_v2(bg_db, "DELETE FROM cache WHERE key = ?;", -1, &stmt, nullptr);
+                    for (auto& [key, path] : to_evict)
+                    {
+                        if (stmt)
+                        {
+                            sqlite3_bind_text(stmt, 1, key.c_str(), -1, SQLITE_TRANSIENT);
+                            sqlite3_step(stmt);
+                            sqlite3_reset(stmt);
+                        }
+                        if (!path.empty())
+                            storage->remove(path);
+                    }
+                    if (stmt) sqlite3_finalize(stmt);
+                    if (!to_evict.empty())
+                        modified = true;
                 }
-                if (!path.empty())
-                    storage->remove(path);
             }
-            if (stmt) sqlite3_finalize(stmt);
         }
+
+        if (modified)
+            _resync_counters(bg_db);
+    }
+
+    void _resync_counters(sqlite3* conn)
+    {
+        sqlite3_stmt* stmt = nullptr;
+        sqlite3_prepare_v2(conn,
+            "SELECT COUNT(*), COALESCE(SUM(size), 0) FROM cache;",
+            -1, &stmt, nullptr);
+        if (stmt && sqlite3_step(stmt) == SQLITE_ROW)
+        {
+            _total_count.store(
+                static_cast<std::size_t>(sqlite3_column_int64(stmt, 0)),
+                std::memory_order_relaxed);
+            _total_size.store(
+                static_cast<std::size_t>(sqlite3_column_int64(stmt, 1)),
+                std::memory_order_relaxed);
+        }
+        if (stmt) sqlite3_finalize(stmt);
     }
 
     void _checkpoint_loop()
@@ -474,16 +512,31 @@ private:
         if constexpr (has_expiration)
             abs_exp = _abs_expire(expires_secs);
 
-        if (std::size(value) <= _file_size_threshold)
+        auto new_size = std::size(value);
+
+        // Single query to get old path and size (saves a round-trip vs separate queries)
+        auto old_entry = db->template exec<std::filesystem::path, std::size_t>(
+            GET_PATH_SIZE_STMT, key);
+        std::optional<std::size_t> old_size_opt;
+        std::filesystem::path old_filepath;
+        if (old_entry)
+        {
+            old_filepath = std::get<0>(*old_entry);
+            old_size_opt = std::get<1>(*old_entry);
+        }
+
+        if (new_size <= _file_size_threshold)
         {
             auto binded = REPLACE_VALUE_STMT.bind_all();
-            _bind_core_and_policies(binded.get(), key, value, std::size(value), abs_exp, seq, tag);
+            _bind_core_and_policies(binded.get(), key, value, new_size, abs_exp, seq, tag);
             sqlite3_step(binded.get());
+            _update_counters_after_set(old_size_opt, new_size);
+            if (!old_filepath.empty())
+                storage->remove(old_filepath);
             return true;
         }
 
         auto transaction = db->begin_transaction(true);
-        auto filepath = db->template exec<std::filesystem::path>(GET_PATH_SIMPLE_STMT, key);
         auto new_filepath = storage->store(value);
         if (!new_filepath)
         {
@@ -493,7 +546,7 @@ private:
         {
             auto path_str = new_filepath->string();
             auto binded = REPLACE_PATH_STMT.bind_all();
-            _bind_core_and_policies(binded.get(), key, path_str, std::size(value),
+            _bind_core_and_policies(binded.get(), key, path_str, new_size,
                                     abs_exp, seq, tag);
             sqlite3_step(binded.get());
         }
@@ -503,9 +556,27 @@ private:
             storage->remove(*new_filepath);
             return false;
         }
-        if (filepath && !filepath->empty())
-            storage->remove(*filepath);
+        if (!old_filepath.empty())
+            storage->remove(old_filepath);
+        _update_counters_after_set(old_size_opt, new_size);
         return true;
+    }
+
+    void _update_counters_after_set(const std::optional<std::size_t>& old_size,
+                                     std::size_t new_size)
+    {
+        if (old_size)
+        {
+            // Overwrite: adjust size difference
+            _total_size.fetch_add(new_size, std::memory_order_relaxed);
+            _total_size.fetch_sub(*old_size, std::memory_order_relaxed);
+        }
+        else
+        {
+            // New entry
+            _total_size.fetch_add(new_size, std::memory_order_relaxed);
+            _total_count.fetch_add(1, std::memory_order_relaxed);
+        }
     }
 
     inline bool _add_impl(const std::string& key, const Bytes auto& value,
@@ -521,13 +592,19 @@ private:
         if constexpr (has_expiration)
             abs_exp = _abs_expire(expires_secs);
 
-        if (std::size(value) <= _file_size_threshold)
+        auto new_size = std::size(value);
+
+        if (new_size <= _file_size_threshold)
         {
             auto binded = INSERT_VALUE_STMT.bind_all();
-            _bind_core_and_policies(binded.get(), key, value, std::size(value), abs_exp, seq, tag);
+            _bind_core_and_policies(binded.get(), key, value, new_size, abs_exp, seq, tag);
             sqlite3_step(binded.get());
             if (sqlite3_changes(db->get()) > 0)
+            {
+                _total_size.fetch_add(new_size, std::memory_order_relaxed);
+                _total_count.fetch_add(1, std::memory_order_relaxed);
                 return true;
+            }
             return false;
         }
 
@@ -538,7 +615,7 @@ private:
         {
             auto path_str = file_path->string();
             auto binded = INSERT_PATH_STMT.bind_all();
-            _bind_core_and_policies(binded.get(), key, path_str, std::size(value),
+            _bind_core_and_policies(binded.get(), key, path_str, new_size,
                                     abs_exp, seq, tag);
             sqlite3_step(binded.get());
         }
@@ -547,6 +624,8 @@ private:
             storage->remove(*file_path);
             return false;
         }
+        _total_size.fetch_add(new_size, std::memory_order_relaxed);
+        _total_count.fetch_add(1, std::memory_order_relaxed);
         return true;
     }
 
@@ -625,16 +704,22 @@ public:
 
     [[nodiscard]] inline std::size_t count()
     {
-        if (auto r = db()->template exec<std::size_t>(COUNT_STMT))
-            return *r;
-        return 0;
+        if constexpr (has_expiration)
+        {
+            // Must query DB to exclude expired entries
+            if (auto r = db()->template exec<std::size_t>(COUNT_STMT))
+                return *r;
+            return 0;
+        }
+        else
+        {
+            return _total_count.load(std::memory_order_relaxed);
+        }
     }
 
     [[nodiscard]] inline size_t size()
     {
-        if (auto r = db()->template exec<size_t>("SELECT COALESCE(SUM(size), 0) FROM cache;"))
-            return *r;
-        return 0;
+        return _total_size.load(std::memory_order_relaxed);
     }
 
     [[nodiscard]] inline std::vector<std::string> keys()
@@ -756,13 +841,19 @@ public:
     inline bool del(const std::string& key)
     {
         auto db = this->db();
-        auto filepath = db->template exec<std::filesystem::path>(GET_PATH_SIMPLE_STMT, key);
+        auto old_entry = db->template exec<std::filesystem::path, std::size_t>(
+            GET_PATH_SIZE_STMT, key);
         if (!db->exec(DELETE_STMT, key))
             return false;
         if (sqlite3_changes(db->get()) == 0)
             return false;
-        if (filepath && !filepath->empty())
-            storage->remove(*filepath);
+        if (old_entry)
+        {
+            _total_size.fetch_sub(std::get<1>(*old_entry), std::memory_order_relaxed);
+            _total_count.fetch_sub(1, std::memory_order_relaxed);
+            if (!std::get<0>(*old_entry).empty())
+                storage->remove(std::get<0>(*old_entry));
+        }
         return true;
     }
 
@@ -789,6 +880,10 @@ public:
         requires (has_expiration)
     {
         auto db = this->db();
+        // Get count and size of expired entries before deleting
+        auto expired_stats = db->template exec<std::size_t, std::size_t>(
+            "SELECT COUNT(*), COALESCE(SUM(size), 0) FROM cache "
+            "WHERE expire IS NOT NULL AND expire <= unixepoch('now');");
         {
             auto binded = EXPIRE_STMT.bind_all();
             while (auto r = db->template step<std::filesystem::path>(binded))
@@ -800,6 +895,15 @@ public:
         }
         if (!db->exec(EVICT_EXPIRED_STMT))
             std::cerr << "Error deleting expired items from cache database." << std::endl;
+        else if (expired_stats)
+        {
+            auto [exp_count, exp_size] = *expired_stats;
+            if (exp_count > 0)
+            {
+                _total_count.fetch_sub(exp_count, std::memory_order_relaxed);
+                _total_size.fetch_sub(exp_size, std::memory_order_relaxed);
+            }
+        }
     }
 
     // --- Eviction-specific ---
@@ -834,9 +938,11 @@ public:
             }
         }
 
-        for (auto& [key, path, _] : to_evict)
+        for (auto& [key, path, entry_size] : to_evict)
         {
             db->exec(DELETE_STMT, key);
+            _total_size.fetch_sub(entry_size, std::memory_order_relaxed);
+            _total_count.fetch_sub(1, std::memory_order_relaxed);
             if (!path.empty())
                 storage->remove(path);
         }
@@ -850,6 +956,9 @@ public:
         requires (has_tags)
     {
         auto db = this->db();
+        // Get total size of tagged entries before deletion
+        auto tag_size = db->template exec<std::size_t>(
+            "SELECT COALESCE(SUM(size), 0) FROM cache WHERE tag = ?;", tag);
         std::vector<std::filesystem::path> files;
         {
             auto binded = EVICT_TAG_PATH_STMT.bind_all(tag);
@@ -860,10 +969,16 @@ public:
             }
         }
         db->exec(EVICT_TAG_STMT, tag);
-        auto count = static_cast<std::size_t>(sqlite3_changes(db->get()));
+        auto evicted = static_cast<std::size_t>(sqlite3_changes(db->get()));
+        if (evicted > 0)
+        {
+            if (tag_size)
+                _total_size.fetch_sub(*tag_size, std::memory_order_relaxed);
+            _total_count.fetch_sub(evicted, std::memory_order_relaxed);
+        }
         for (auto& f : files)
             storage->remove(f);
-        return count;
+        return evicted;
     }
 
     // --- incr / decr ---
@@ -904,7 +1019,11 @@ public:
             _bind_core_and_policies(binded.get(), key, data, sizeof(int64_t),
                                     std::optional<double> {}, seq, std::optional<std::string> {});
             sqlite3_step(binded.get());
+            // New entry created
+            _total_size.fetch_add(sizeof(int64_t), std::memory_order_relaxed);
+            _total_count.fetch_add(1, std::memory_order_relaxed);
         }
+        // Size doesn't change on update (always sizeof(int64_t))
 
         transaction.commit();
         return new_value;
@@ -921,6 +1040,8 @@ public:
     {
         auto db = this->db();
         sqlite3_exec(db->get(), "DELETE FROM cache;", nullptr, nullptr, nullptr);
+        _total_size.store(0, std::memory_order_relaxed);
+        _total_count.store(0, std::memory_order_relaxed);
         if (std::filesystem::exists(cache_path) && std::filesystem::is_directory(cache_path))
         {
             for (const auto& entry : std::filesystem::directory_iterator(cache_path))
@@ -936,28 +1057,12 @@ public:
 
     inline void set_meta(const std::string& key, const std::string& value)
     {
-        auto db = this->db();
-        sqlite3_stmt* stmt;
-        sqlite3_prepare_v2(db->get(),
-            "INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?);", -1, &stmt, nullptr);
-        sqlite3_bind_text(stmt, 1, key.c_str(), -1, SQLITE_TRANSIENT);
-        sqlite3_bind_text(stmt, 2, value.c_str(), -1, SQLITE_TRANSIENT);
-        sqlite3_step(stmt);
-        sqlite3_finalize(stmt);
+        db()->exec(SET_META_STMT, key, value);
     }
 
     [[nodiscard]] inline std::optional<std::string> get_meta(const std::string& key)
     {
-        auto db = this->db();
-        sqlite3_stmt* stmt;
-        sqlite3_prepare_v2(db->get(),
-            "SELECT value FROM meta WHERE key = ?;", -1, &stmt, nullptr);
-        sqlite3_bind_text(stmt, 1, key.c_str(), -1, SQLITE_TRANSIENT);
-        std::optional<std::string> result;
-        if (sqlite3_step(stmt) == SQLITE_ROW)
-            result = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
-        sqlite3_finalize(stmt);
-        return result;
+        return db()->template exec<std::string>(GET_META_STMT, key);
     }
 
     inline bool check()

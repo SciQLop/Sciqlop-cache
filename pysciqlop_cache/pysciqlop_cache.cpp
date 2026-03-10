@@ -138,6 +138,7 @@ NB_MODULE(_pysciqlop_cache, m)
         .def("check", &Cache::check)
         .def("set_meta", &Cache::set_meta, nb::arg("key"), nb::arg("value"))
         .def("get_meta", &Cache::get_meta, nb::arg("key"))
+        .def("size", &Cache::size)
         .def("set_max_cache_size", &Cache::set_max_cache_size, nb::arg("value"))
         .def("path", [](Cache& c) { return c.path().string(); })
         .def("stats", [](Cache& c) {
