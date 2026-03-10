@@ -211,3 +211,18 @@ class Cache(_Cache):
 
     def __delitem__(self, key: AnyStr):
         super().delete(key)
+
+    def __contains__(self, key: AnyStr) -> bool:
+        return super().exists(key)
+
+    def __iter__(self):
+        return iter(super().keys())
+
+    def __repr__(self) -> str:
+        return f"Cache({str(super().path())!r}, count={len(self)})"
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
