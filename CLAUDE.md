@@ -13,13 +13,18 @@ Sciqlop-cache is a C++20 caching library with Python bindings. It uses SQLite fo
 meson setup build -Dwith_tests=true
 
 # Build
-ninja -C build
+meson compile -C build
 
 # Run all tests
-ninja test -C build
+meson test -C build
 
-# Run a single test (test names: basic_tests, database_tests, intermediate_tests, multithreads_tests)
-./build/tests/basic/basic_tests
+# Run a single test suite
+meson test -C build sciqlop-cache:basic
+
+# Available test suites: sciqlop-cache:basic, sciqlop-cache:database,
+# sciqlop-cache:intermediate, sciqlop-cache:multithreads,
+# sciqlop-cache:test_python_interface, sciqlop-cache:test_serializers,
+# sciqlop-cache:test_python_multiprocess, sciqlop-cache:test_perf_vs_diskcache
 
 # Build Python wheel
 pip install meson-python numpy && python -m build --wheel
