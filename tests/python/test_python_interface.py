@@ -712,5 +712,56 @@ class TestFanoutIndex(unittest.TestCase):
         self.assertEqual(self.index.get("pre"), "existing")
 
 
+class TestCheckResult(unittest.TestCase):
+
+    def test_check_returns_result_object(self):
+        with TemporaryDirectory() as d:
+            c = Cache(os.path.join(d, "check_test"))
+            c["key"] = b"value"
+            result = c.check()
+            self.assertTrue(result.ok)
+            self.assertEqual(result.orphaned_files, 0)
+            self.assertEqual(result.dangling_rows, 0)
+            self.assertEqual(result.size_mismatches, 0)
+            self.assertTrue(result.counters_consistent)
+            self.assertTrue(result.sqlite_integrity_ok)
+
+    def test_check_fix(self):
+        with TemporaryDirectory() as d:
+            c = Cache(os.path.join(d, "check_fix"))
+            c["key"] = b"value"
+            result = c.check(fix=True)
+            self.assertTrue(result.ok)
+
+    def test_fanout_check_returns_result_object(self):
+        from pysciqlop_cache import FanoutCache
+        with TemporaryDirectory() as d:
+            fc = FanoutCache(os.path.join(d, "fanout_check"), shard_count=4)
+            fc["key1"] = b"value1"
+            fc["key2"] = b"value2"
+            result = fc.check()
+            self.assertTrue(result.ok)
+            self.assertEqual(result.orphaned_files, 0)
+            self.assertEqual(result.dangling_rows, 0)
+
+    def test_fanout_check_fix(self):
+        from pysciqlop_cache import FanoutCache
+        with TemporaryDirectory() as d:
+            fc = FanoutCache(os.path.join(d, "fanout_check_fix"), shard_count=4)
+            fc["key"] = b"data"
+            result = fc.check(fix=True)
+            self.assertTrue(result.ok)
+
+    def test_fanout_index_check_returns_result_object(self):
+        from pysciqlop_cache import FanoutIndex
+        with TemporaryDirectory() as d:
+            fi = FanoutIndex(os.path.join(d, "fanout_idx_check"), shard_count=4)
+            fi["key1"] = b"value1"
+            result = fi.check()
+            self.assertTrue(result.ok)
+            self.assertEqual(result.orphaned_files, 0)
+            self.assertEqual(result.dangling_rows, 0)
+
+
 if __name__ == "__main__":
     unittest.main()
