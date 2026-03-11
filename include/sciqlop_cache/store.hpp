@@ -395,6 +395,7 @@ class _Store : private Policies...
             sqlite3_wal_checkpoint_v2(cp_db, nullptr, SQLITE_CHECKPOINT_PASSIVE, nullptr, nullptr);
             if constexpr (has_expiration || has_eviction)
                 _bg_evict(cp_db);
+            _resync_counters(cp_db);
         }
 
         sqlite3_wal_checkpoint_v2(cp_db, nullptr, SQLITE_CHECKPOINT_PASSIVE, nullptr, nullptr);
