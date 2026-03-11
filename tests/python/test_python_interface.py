@@ -945,5 +945,36 @@ class TestLock(unittest.TestCase):
             self.assertNotIn("fanout_lock", fc)
 
 
+class TestMemoryViewLifetime(unittest.TestCase):
+    """Reproducer: memoryview from a temporary Buffer can dangle after Buffer is GC'd."""
+
+    def setUp(self):
+        self.tmp_dir = TemporaryDirectory(delete=False)
+        from pysciqlop_cache._pysciqlop_cache import Index as _RawIndex
+        self.index = _RawIndex(path=self.tmp_dir.name)
+
+    def tearDown(self):
+        del self.index
+        shutil.rmtree(self.tmp_dir.name)
+
+    def test_memoryview_from_temporary_buffer_dangling(self):
+        """Get a memoryview from a temporary Buffer (no variable holds the Buffer).
+        Then delete the key to evict the mmap cache entry. The memoryview should
+        still be readable if the lifetime is correctly tied."""
+        import gc
+        large_value = b"\xab" * 16_000  # >8KB → stored as file → mmap path
+        self.index.set("k", large_value)
+
+        # Get memoryview from a temporary — Buffer refcount drops immediately
+        mv = self.index.get("k").memoryview()
+
+        # Delete the key — this evicts the mmap cache entry too
+        self.index.delete("k")
+        gc.collect()
+
+        # If lifetime is wrong, this reads from unmapped memory (segfault or garbage)
+        self.assertEqual(bytes(mv), large_value)
+
+
 if __name__ == "__main__":
     unittest.main()

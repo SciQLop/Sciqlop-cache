@@ -90,21 +90,23 @@ NB_MODULE(_pysciqlop_cache, m)
 
     nb::class_<Buffer>(m, "Buffer")
         .def("memoryview",
-             [](Buffer& b) -> nb::object
+             [](nb::handle self) -> nb::object
              {
-                 // Check if the buffer is valid
+                 Buffer& b = nb::cast<Buffer&>(self);
+
                  if (!b) {
                      throw std::runtime_error("Cannot create memory view of invalid buffer");
                  }
 
-                 // Handle the case where data is null but size is zero
                  if (b.data() == nullptr && b.size() == 0) {
                      return nb::steal(PyMemoryView_FromMemory(nullptr, 0, PyBUF_READ));
                  }
 
                  Py_buffer view;
 
-                 if (PyBuffer_FillInfo(&view, NULL, const_cast<char*>(b.data()),
+                 // Pass self.ptr() as exporter so the memoryview holds a reference
+                 // to the Buffer, keeping the underlying mmap alive.
+                 if (PyBuffer_FillInfo(&view, self.ptr(), const_cast<char*>(b.data()),
                                        b.size(), 1, PyBUF_SIMPLE) == -1) {
                      throw std::runtime_error("Failed to create memory view");
                  }
@@ -114,7 +116,7 @@ NB_MODULE(_pysciqlop_cache, m)
                      throw std::runtime_error("Failed to create memory view object");
                  }
 
-                 return nb::borrow(memview);
+                 return nb::steal(memview);
              });
 
 
