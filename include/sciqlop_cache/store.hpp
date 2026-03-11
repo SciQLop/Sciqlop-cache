@@ -1118,9 +1118,46 @@ public:
         return false;
     }
 
-    std::size_t _check_dangling_rows([[maybe_unused]] DbGuard& db, [[maybe_unused]] bool fix)
+    std::size_t _check_dangling_rows(DbGuard& db, bool fix)
     {
-        return 0;
+        std::size_t count = 0;
+
+        struct Dangling { std::string key; std::size_t entry_size; };
+        std::vector<Dangling> to_fix;
+
+        {
+            sqlite3_stmt* stmt = nullptr;
+            sqlite3_prepare_v2(db->get(),
+                "SELECT key, path, size FROM cache WHERE path IS NOT NULL;",
+                -1, &stmt, nullptr);
+            while (sqlite3_step(stmt) == SQLITE_ROW)
+            {
+                auto path = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
+                if (path && !std::filesystem::exists(path))
+                {
+                    ++count;
+                    if (fix)
+                    {
+                        auto key = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
+                        auto sz = static_cast<std::size_t>(sqlite3_column_int64(stmt, 2));
+                        to_fix.push_back({ key, sz });
+                    }
+                }
+            }
+            sqlite3_finalize(stmt);
+        }
+
+        if (fix)
+        {
+            for (auto& [key, sz] : to_fix)
+            {
+                db->exec(DELETE_STMT, key);
+                _total_size.fetch_sub(sz, std::memory_order_relaxed);
+                _total_count.fetch_sub(1, std::memory_order_relaxed);
+            }
+        }
+
+        return count;
     }
 
     std::size_t _check_size_mismatches([[maybe_unused]] DbGuard& db, [[maybe_unused]] bool fix)
