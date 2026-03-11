@@ -5,7 +5,7 @@
 
 # SciQLop Cache
 
-A fast, persistent key-value cache for Python and C++20. Built on SQLite with hybrid blob/file storage, it stays flat from 100 to 1M+ entries while being **2x faster than diskcache on writes**.
+A fast, persistent key-value cache for Python and C++20. Built on SQLite with hybrid blob/file storage, it stays flat from 100 to 1M+ entries while being **2x faster than diskcache on writes** and **up to 6x faster in batched transactions**.
 
 ```python
 pip install sciqlop-cache
@@ -124,22 +124,35 @@ FanoutIndex fi(".fi/", /*shard_count=*/8);
 
 ## Performance
 
-Comparison with diskcache, from 100 to 1M cache entries (256-byte values):
+### Latency scaling (100 to 1M entries, 256-byte values)
 
 ![Scaling benchmark](benchmark/scaling_chart.png)
 
-Latency distribution at each cache size:
-
 ![Latency distribution](benchmark/scaling_violin.png)
 
-Reproduce with:
+### Latency vs value size (64B to 1MB)
+
+![Value size benchmark](benchmark/valuesize_chart.png)
+
+### Batched transactions (per-op cost)
+
+Amortized per-op latency drops significantly with larger batches, especially for small values:
+
+![Batch per-op cost](benchmark/batch_per_op_chart.png)
+
+### Reproduce
 
 ```bash
+# Scaling benchmarks
 PYTHONPATH=build python benchmark/scaling.py --max-entries 1000000 --backend both > results.csv
 python benchmark/plot_scaling.py results.csv -o benchmark/scaling_chart.png
 
 PYTHONPATH=build python benchmark/scaling.py --max-entries 1000000 --raw --backend both > raw.csv
 python benchmark/plot_scaling.py raw.csv --violin -o benchmark/scaling_violin.png
+
+# Value-size and batch benchmarks
+PYTHONPATH=build python benchmark/bench_valuesize.py > benchmark/valuesize_results.csv
+python benchmark/plot_valuesize.py benchmark/valuesize_results.csv -o benchmark
 ```
 
 ## Building from Source

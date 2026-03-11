@@ -1,3 +1,4 @@
+import os
 import shutil
 import timeit
 import unittest
@@ -66,6 +67,88 @@ class TestPerfVsDiskcache(unittest.TestCase):
               f"ratio={sq_time/dc_time:.2f}x")
         self.assertLess(sq_time, dc_time * self.MARGIN,
                         f"get() is {sq_time/dc_time:.1f}x slower than diskcache")
+
+    def test_set_large_value_not_slower_than_diskcache(self):
+        key = self.key
+        large_value = os.urandom(64 * 1024)  # 64KB — well above 8KB file threshold
+
+        sq = self.sq_cache
+        dc = self.dc_cache
+
+        sq_time = bench(lambda: sq.set(key, large_value), number=500, warmup=100)
+        dc_time = bench(lambda: dc.set(key, large_value), number=500, warmup=100)
+
+        print(f"\nset(64KB): sciqlop={sq_time*1e6:.1f}μs  diskcache={dc_time*1e6:.1f}μs  "
+              f"ratio={sq_time/dc_time:.2f}x")
+        self.assertLess(sq_time, dc_time * self.MARGIN,
+                        f"set(64KB) is {sq_time/dc_time:.1f}x slower than diskcache")
+
+    def test_get_large_value_not_slower_than_diskcache(self):
+        key = self.key
+        large_value = os.urandom(64 * 1024)
+
+        sq = self.sq_cache
+        dc = self.dc_cache
+        sq.set(key, large_value)
+        dc.set(key, large_value)
+
+        sq_time = bench(lambda: sq.get(key), number=500, warmup=100)
+        dc_time = bench(lambda: dc.get(key), number=500, warmup=100)
+
+        print(f"\nget(64KB): sciqlop={sq_time*1e6:.1f}μs  diskcache={dc_time*1e6:.1f}μs  "
+              f"ratio={sq_time/dc_time:.2f}x")
+        self.assertLess(sq_time, dc_time * self.MARGIN,
+                        f"get(64KB) is {sq_time/dc_time:.1f}x slower than diskcache")
+
+    def test_batch_set_not_slower_than_diskcache(self):
+        value = self.value
+        n = 100
+
+        sq = self.sq_cache
+        dc = self.dc_cache
+
+        def sq_batch():
+            with sq.transact():
+                for i in range(n):
+                    sq.set(f"batch_{i}", value)
+
+        def dc_batch():
+            with dc.transact():
+                for i in range(n):
+                    dc.set(f"batch_{i}", value)
+
+        sq_time = bench(sq_batch, number=200, warmup=50)
+        dc_time = bench(dc_batch, number=200, warmup=50)
+
+        print(f"\nbatch set(100x200B): sciqlop={sq_time*1e6:.1f}μs  "
+              f"diskcache={dc_time*1e6:.1f}μs  ratio={sq_time/dc_time:.2f}x")
+        self.assertLess(sq_time, dc_time * self.MARGIN,
+                        f"batch set is {sq_time/dc_time:.1f}x slower than diskcache")
+
+    def test_batch_set_large_not_slower_than_diskcache(self):
+        large_value = os.urandom(64 * 1024)
+        n = 20
+
+        sq = self.sq_cache
+        dc = self.dc_cache
+
+        def sq_batch():
+            with sq.transact():
+                for i in range(n):
+                    sq.set(f"batch_lg_{i}", large_value)
+
+        def dc_batch():
+            with dc.transact():
+                for i in range(n):
+                    dc.set(f"batch_lg_{i}", large_value)
+
+        sq_time = bench(sq_batch, number=50, warmup=10)
+        dc_time = bench(dc_batch, number=50, warmup=10)
+
+        print(f"\nbatch set(20x64KB): sciqlop={sq_time*1e6:.1f}μs  "
+              f"diskcache={dc_time*1e6:.1f}μs  ratio={sq_time/dc_time:.2f}x")
+        self.assertLess(sq_time, dc_time * self.MARGIN,
+                        f"batch set(large) is {sq_time/dc_time:.1f}x slower than diskcache")
 
 
 if __name__ == "__main__":
