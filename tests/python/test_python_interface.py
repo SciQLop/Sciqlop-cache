@@ -763,5 +763,69 @@ class TestCheckResult(unittest.TestCase):
             self.assertEqual(result.dangling_rows, 0)
 
 
+class TestLock(unittest.TestCase):
+
+    def setUp(self):
+        self.tmp_dir = TemporaryDirectory(delete=False)
+        self.cache = Cache(self.tmp_dir.name)
+
+    def tearDown(self):
+        if hasattr(self, 'cache'):
+            del self.cache
+        shutil.rmtree(self.tmp_dir.name)
+
+    def test_lock_context_manager(self):
+        with self.cache.lock("mylock"):
+            self.assertIn("mylock", self.cache)
+        self.assertNotIn("mylock", self.cache)
+
+    def test_lock_acquire_release(self):
+        from pysciqlop_cache import Lock
+        lock = Lock(self.cache, "mylock")
+        lock.acquire()
+        self.assertTrue(lock.locked())
+        lock.release()
+        self.assertFalse(lock.locked())
+
+    def test_lock_released_on_exception(self):
+        with self.assertRaises(ValueError):
+            with self.cache.lock("errlock"):
+                raise ValueError("boom")
+        self.assertNotIn("errlock", self.cache)
+
+    def test_lock_with_expire(self):
+        lock = self.cache.lock("explock", expire=1)
+        lock.acquire()
+        self.assertTrue(lock.locked())
+        time.sleep(2)
+        self.assertFalse(lock.locked())
+
+    def test_lock_blocks_second_acquire(self):
+        import threading
+        results = []
+        lock = self.cache.lock("contested")
+        lock.acquire()
+
+        def try_acquire():
+            with self.cache.lock("contested"):
+                results.append("acquired")
+
+        t = threading.Thread(target=try_acquire)
+        t.start()
+        time.sleep(0.05)
+        self.assertEqual(results, [])
+        lock.release()
+        t.join(timeout=5)
+        self.assertEqual(results, ["acquired"])
+
+    def test_fanout_lock(self):
+        from pysciqlop_cache import FanoutCache
+        with TemporaryDirectory() as td:
+            fc = FanoutCache(td, shard_count=4)
+            with fc.lock("fanout_lock"):
+                self.assertIn("fanout_lock", fc)
+            self.assertNotIn("fanout_lock", fc)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1,6 +1,7 @@
 from ._pysciqlop_cache import Cache as _Cache, Index as _Index, FanoutCache as _FanoutCache, FanoutIndex as _FanoutIndex
 import functools
 import hashlib
+import time
 from datetime import timedelta
 from typing import Any, AnyStr, Optional, Union
 
@@ -16,7 +17,47 @@ _META_SERIALIZER = "serializer"
 _META_MAX_SIZE = "max_size"
 _SENTINEL = object()
 
-__all__ = ["Cache", "Index", "FanoutCache", "FanoutIndex", "Serializer", "PickleSerializer", "MsgspecSerializer"]
+__all__ = ["Cache", "Index", "FanoutCache", "FanoutIndex", "Lock", "Serializer", "PickleSerializer", "MsgspecSerializer"]
+
+
+class Lock:
+    """Cross-process lock backed by a cache's atomic add() operation.
+
+    Uses a spin-lock: acquire() loops on cache.add() (which is atomic and
+    fails if the key already exists), sleeping 1ms between attempts.
+    release() deletes the key. Compatible with the context manager protocol.
+    """
+
+    __slots__ = ("_cache", "_key", "_expire", "_tag")
+
+    def __init__(self, cache, key, expire=None, tag=None):
+        self._cache = cache
+        self._key = key
+        self._expire = expire
+        self._tag = tag
+
+    def acquire(self):
+        kwargs = {}
+        if self._expire is not None:
+            kwargs["expire"] = self._expire
+        if self._tag is not None:
+            kwargs["tag"] = self._tag
+        while not self._cache.add(self._key, b"", **kwargs):
+            time.sleep(0.001)
+
+    def release(self):
+        del self._cache[self._key]
+
+    def locked(self) -> bool:
+        return self._key in self._cache
+
+    def __enter__(self):
+        self.acquire()
+        return self
+
+    def __exit__(self, *exc):
+        self.release()
+        return False
 
 
 class _TransactionContext:
@@ -242,6 +283,9 @@ class Cache(_Cache):
     def __repr__(self) -> str:
         return f"Cache({str(super().path())!r}, count={len(self)})"
 
+    def lock(self, key, expire=None, tag=None):
+        return Lock(self, key, expire=expire, tag=tag)
+
     def transact(self):
         return _TransactionContext(self)
 
@@ -411,6 +455,9 @@ class FanoutCache(_FanoutCache):
 
     def __repr__(self) -> str:
         return f"FanoutCache({str(super().path())!r}, shards={self.shard_count()}, count={len(self)})"
+
+    def lock(self, key, expire=None, tag=None):
+        return Lock(self, key, expire=expire, tag=tag)
 
     def transact(self, key: str):
         return _TransactionContext(self, key)
