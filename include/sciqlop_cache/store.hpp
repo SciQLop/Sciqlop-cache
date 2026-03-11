@@ -1060,19 +1060,33 @@ public:
         return db()->template exec<std::string>(GET_META_STMT, key);
     }
 
-    inline bool check()
+    struct CheckResult
+    {
+        bool ok = true;
+        std::size_t orphaned_files = 0;
+        std::size_t dangling_rows = 0;
+        std::size_t size_mismatches = 0;
+        bool counters_consistent = true;
+        bool sqlite_integrity_ok = true;
+    };
+
+    CheckResult check(bool fix = false)
     {
         auto db = this->db();
-        const char* sql = "SELECT COUNT(*) FROM cache;";
-        sqlite3_stmt* stmt;
-        if (sqlite3_prepare_v2(db->get(), sql, -1, &stmt, nullptr) != SQLITE_OK)
-        {
-            std::cerr << "Error preparing statement: " << sqlite3_errmsg(db->get()) << std::endl;
-            return false;
-        }
-        bool valid = (sqlite3_step(stmt) == SQLITE_ROW && sqlite3_column_int(stmt, 0) >= 0);
-        sqlite3_finalize(stmt);
-        return valid;
+        CheckResult result;
+
+        result.sqlite_integrity_ok = _check_sqlite_integrity(db);
+        result.dangling_rows = _check_dangling_rows(db, fix);
+        result.size_mismatches = _check_size_mismatches(db, fix);
+        result.orphaned_files = _check_orphaned_files(db, fix);
+        result.counters_consistent = _check_counters(db, fix);
+
+        result.ok = result.sqlite_integrity_ok
+                 && result.dangling_rows == 0
+                 && result.size_mismatches == 0
+                 && result.orphaned_files == 0
+                 && result.counters_consistent;
+        return result;
     }
 
     // --- Stats (only with WithStats) ---
@@ -1095,5 +1109,32 @@ public:
     {
         WithStats::_hits.store(0, std::memory_order_relaxed);
         WithStats::_misses.store(0, std::memory_order_relaxed);
+    }
+
+    bool _check_sqlite_integrity(DbGuard& db)
+    {
+        if (auto r = db->template exec<std::string>("PRAGMA integrity_check;"))
+            return *r == "ok";
+        return false;
+    }
+
+    std::size_t _check_dangling_rows([[maybe_unused]] DbGuard& db, [[maybe_unused]] bool fix)
+    {
+        return 0;
+    }
+
+    std::size_t _check_size_mismatches([[maybe_unused]] DbGuard& db, [[maybe_unused]] bool fix)
+    {
+        return 0;
+    }
+
+    std::size_t _check_orphaned_files([[maybe_unused]] DbGuard& db, [[maybe_unused]] bool fix)
+    {
+        return 0;
+    }
+
+    bool _check_counters([[maybe_unused]] DbGuard& db, [[maybe_unused]] bool fix)
+    {
+        return true;
     }
 };

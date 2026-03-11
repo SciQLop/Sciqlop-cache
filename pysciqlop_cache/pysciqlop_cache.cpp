@@ -101,6 +101,22 @@ NB_MODULE(_pysciqlop_cache, m)
              });
 
 
+    nb::class_<Cache::CheckResult>(m, "CacheCheckResult")
+        .def_ro("ok", &Cache::CheckResult::ok)
+        .def_ro("orphaned_files", &Cache::CheckResult::orphaned_files)
+        .def_ro("dangling_rows", &Cache::CheckResult::dangling_rows)
+        .def_ro("size_mismatches", &Cache::CheckResult::size_mismatches)
+        .def_ro("counters_consistent", &Cache::CheckResult::counters_consistent)
+        .def_ro("sqlite_integrity_ok", &Cache::CheckResult::sqlite_integrity_ok);
+
+    nb::class_<Index::CheckResult>(m, "IndexCheckResult")
+        .def_ro("ok", &Index::CheckResult::ok)
+        .def_ro("orphaned_files", &Index::CheckResult::orphaned_files)
+        .def_ro("dangling_rows", &Index::CheckResult::dangling_rows)
+        .def_ro("size_mismatches", &Index::CheckResult::size_mismatches)
+        .def_ro("counters_consistent", &Index::CheckResult::counters_consistent)
+        .def_ro("sqlite_integrity_ok", &Index::CheckResult::sqlite_integrity_ok);
+
     nb::class_<Cache::TransactionGuard>(m, "CacheTransactionGuard")
         .def("commit", &Cache::TransactionGuard::commit)
         .def("rollback", &Cache::TransactionGuard::rollback);
@@ -139,7 +155,7 @@ NB_MODULE(_pysciqlop_cache, m)
         .def("decr", &Cache::decr, nb::arg("key"), nb::arg("delta") = 1,
              nb::arg("default_value") = 0)
         .def("clear", &Cache::clear)
-        .def("check", &Cache::check)
+        .def("check", &Cache::check, nb::arg("fix") = false)
         .def("set_meta", &Cache::set_meta, nb::arg("key"), nb::arg("value"))
         .def("get_meta", &Cache::get_meta, nb::arg("key"))
         .def("size", &Cache::size)
@@ -173,7 +189,7 @@ NB_MODULE(_pysciqlop_cache, m)
         .def("decr", &Index::decr, nb::arg("key"), nb::arg("delta") = 1,
              nb::arg("default_value") = 0)
         .def("clear", &Index::clear)
-        .def("check", &Index::check)
+        .def("check", &Index::check, nb::arg("fix") = false)
         .def("size", &Index::size)
         .def("set_meta", &Index::set_meta, nb::arg("key"), nb::arg("value"))
         .def("get_meta", &Index::get_meta, nb::arg("key"))

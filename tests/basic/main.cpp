@@ -126,7 +126,7 @@ SCENARIO("Testing sciqlop_cache basic operations", "[cache]")
                 REQUIRE(cache.close());
                 Cache reopened_cache(db_path.path());
                 REQUIRE(reopened_cache.opened());
-                REQUIRE(reopened_cache.check() == true);
+                REQUIRE(reopened_cache.check().ok);
                 THEN("It should be opened")
                 {
                     REQUIRE(reopened_cache.opened());
@@ -154,7 +154,7 @@ SCENARIO("Testing sciqlop_cache more advanced operations", "[cache]")
     GIVEN("a cache used to store a small (<500 bytes) value")
     {
         Cache cache(db_path.path());
-        REQUIRE(cache.check() == true);
+        REQUIRE(cache.check().ok);
 
         THEN("we test set and get")
         {
@@ -267,7 +267,7 @@ SCENARIO("Testing sciqlop_cache big values operations", "[cache]")
             THEN("the value should be correctly retrieved after reopening the cache")
             {
                 Cache reopened_cache(db_path.path());
-                REQUIRE(reopened_cache.check() == true);
+                REQUIRE(reopened_cache.check().ok);
 
                 auto loaded_value = reopened_cache.get(big_key);
                 REQUIRE(loaded_value.has_value());

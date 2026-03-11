@@ -25,7 +25,7 @@ void read_write_cache(std::filesystem::path db_path, const std::string& key,
     try
     {
         Cache cache(db_path);
-        REQUIRE(cache.check() == true);
+        REQUIRE(cache.check().ok);
 
         for (int i = 0; i < iterations; ++i)
         {
@@ -93,7 +93,7 @@ SCENARIO("Testing time conversions", "[time]")
             THEN("the cache should remain consistent and correct")
             {
                 Cache final_cache(db_path.path(), 1000);
-                REQUIRE(final_cache.check() == true);
+                REQUIRE(final_cache.check().ok);
 
                 for (int i = 0; i < thread_count; ++i)
                 {

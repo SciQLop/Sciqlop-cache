@@ -149,7 +149,7 @@ public:
     bool check()
     {
         bool ok = true;
-        _for_each_shard([&](auto& s) { ok &= s.check(); });
+        _for_each_shard([&](auto& s) { ok &= s.check().ok; });
         return ok;
     }
 

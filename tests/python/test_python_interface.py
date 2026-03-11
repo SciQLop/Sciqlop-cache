@@ -317,7 +317,7 @@ class TestCache(unittest.TestCase):
         self.assertIsNone(self.cache.get("a"))
 
     def test_check(self):
-        self.assertTrue(self.cache.check())
+        self.assertTrue(self.cache.check().ok)
 
     def test_get_default(self):
         self.assertEqual(self.cache.get("missing", "fallback"), "fallback")
