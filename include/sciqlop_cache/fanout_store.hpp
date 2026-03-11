@@ -146,11 +146,25 @@ public:
         _for_each_shard([](auto& s) { s.clear(); });
     }
 
-    bool check()
+    using CheckResult = typename StoreType::CheckResult;
+
+    CheckResult check(bool fix = false)
     {
-        bool ok = true;
-        _for_each_shard([&](auto& s) { ok &= s.check().ok; });
-        return ok;
+        CheckResult combined;
+        _for_each_shard([&](auto& s) {
+            auto r = s.check(fix);
+            combined.orphaned_files += r.orphaned_files;
+            combined.dangling_rows += r.dangling_rows;
+            combined.size_mismatches += r.size_mismatches;
+            if (!r.counters_consistent) combined.counters_consistent = false;
+            if (!r.sqlite_integrity_ok) combined.sqlite_integrity_ok = false;
+        });
+        combined.ok = combined.sqlite_integrity_ok
+                   && combined.dangling_rows == 0
+                   && combined.size_mismatches == 0
+                   && combined.orphaned_files == 0
+                   && combined.counters_consistent;
+        return combined;
     }
 
     [[nodiscard]] std::filesystem::path path() const

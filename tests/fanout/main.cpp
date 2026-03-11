@@ -133,7 +133,7 @@ SCENARIO("FanoutCache aggregated operations", "[fanout][aggregate]")
             }
         }
 
-        THEN("check returns true") { REQUIRE(fc.check()); }
+        THEN("check returns true") { REQUIRE(fc.check().ok); }
     }
 }
 

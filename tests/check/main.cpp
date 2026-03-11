@@ -233,6 +233,31 @@ SCENARIO("check() detects counter drift", "[check]")
     }
 }
 
+SCENARIO("FanoutCache check() aggregates across shards", "[check][fanout]")
+{
+    AutoCleanDirectory dir("check_fanout");
+    FanoutCache cache(dir.path().string(), 4);
+
+    GIVEN("A fanout cache with entries")
+    {
+        std::string val = "data";
+        cache.set("key1", std::span(val.data(), val.size()));
+        cache.set("key2", std::span(val.data(), val.size()));
+
+        WHEN("check() is called on a clean fanout cache")
+        {
+            auto result = cache.check();
+
+            THEN("It reports all-ok")
+            {
+                REQUIRE(result.ok);
+                REQUIRE(result.orphaned_files == 0);
+                REQUIRE(result.dangling_rows == 0);
+            }
+        }
+    }
+}
+
 SCENARIO("check() on a clean cache reports no issues", "[check]")
 {
     AutoCleanDirectory dir("check_clean");
