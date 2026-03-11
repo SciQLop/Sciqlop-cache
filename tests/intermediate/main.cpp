@@ -100,6 +100,57 @@ SCENARIO("Limit testing sciqlop_cache", "[cache]")
     }
 }
 
+SCENARIO("User transaction with large values does not cause nested transaction error", "[transaction]")
+{
+    AutoCleanDirectory db_path { "TxnLargeValueTest01" };
+    Cache cache(db_path.path());
+
+    // Value larger than 8KB threshold to trigger file storage path
+    std::vector<char> large_value(16 * 1024, 'L');
+    std::vector<char> small_value(100, 'S');
+
+    GIVEN("a user transaction")
+    {
+        WHEN("we set a large value inside the transaction")
+        {
+            auto txn = cache.begin_user_transaction();
+            REQUIRE_NOTHROW(cache.set("large_key", large_value));
+            REQUIRE_NOTHROW(cache.set("small_key", small_value));
+            txn.commit();
+
+            THEN("both values are retrievable")
+            {
+                auto large_result = cache.get("large_key");
+                REQUIRE(large_result.has_value());
+                REQUIRE(large_result->size() == large_value.size());
+
+                auto small_result = cache.get("small_key");
+                REQUIRE(small_result.has_value());
+                REQUIRE(small_result->size() == small_value.size());
+            }
+        }
+
+        WHEN("we set multiple large values inside the transaction")
+        {
+            auto txn = cache.begin_user_transaction();
+            for (int i = 0; i < 5; ++i)
+                REQUIRE_NOTHROW(cache.set("batch_" + std::to_string(i), large_value));
+            txn.commit();
+
+            THEN("all values are retrievable and count is correct")
+            {
+                REQUIRE(cache.count() == 5);
+                for (int i = 0; i < 5; ++i)
+                {
+                    auto r = cache.get("batch_" + std::to_string(i));
+                    REQUIRE(r.has_value());
+                    REQUIRE(r->size() == large_value.size());
+                }
+            }
+        }
+    }
+}
+
 SCENARIO("LRU eviction enforces max_size in bytes", "[eviction]")
 {
     AutoCleanDirectory db_path { "EvictionTest01" };

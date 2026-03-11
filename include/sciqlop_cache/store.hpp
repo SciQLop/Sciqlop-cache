@@ -590,11 +590,14 @@ private:
             return true;
         }
 
-        auto transaction = db->begin_transaction(true);
+        std::optional<Transaction> transaction;
+        if (!_in_transaction)
+            transaction.emplace(db->begin_transaction(true));
+
         auto new_filepath = storage->store(value);
         if (!new_filepath)
         {
-            (void)transaction.rollback();
+            if (transaction) (void)transaction->rollback();
             return false;
         }
         {
@@ -604,15 +607,18 @@ private:
                                     abs_exp, seq, tag);
             sqlite3_step(binded.get());
         }
-        try
+        if (transaction)
         {
-            transaction.commit();
-        }
-        catch (const std::runtime_error&)
-        {
-            (void)transaction.rollback();
-            storage->remove(*new_filepath);
-            throw;
+            try
+            {
+                transaction->commit();
+            }
+            catch (const std::runtime_error&)
+            {
+                (void)transaction->rollback();
+                storage->remove(*new_filepath);
+                throw;
+            }
         }
         if (!old_filepath.empty())
             storage->remove(old_filepath);
