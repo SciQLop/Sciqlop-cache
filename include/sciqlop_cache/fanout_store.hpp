@@ -141,6 +141,68 @@ public:
         return all;
     }
 
+    class KeyCursor
+    {
+        std::vector<std::unique_ptr<StoreType>>& _shards;
+        std::size_t _shard_idx = 0;
+        std::optional<typename StoreType::KeyCursor> _cursor;
+
+        void _advance_shard()
+        {
+            _cursor.reset();
+            while (_shard_idx < _shards.size())
+            {
+                _cursor.emplace(_shards[_shard_idx]->iterkeys());
+                auto val = _cursor->next();
+                if (val)
+                {
+                    _pending = std::move(*val);
+                    return;
+                }
+                _cursor.reset();
+                ++_shard_idx;
+            }
+        }
+
+        std::optional<std::string> _pending;
+
+    public:
+        explicit KeyCursor(std::vector<std::unique_ptr<StoreType>>& shards)
+            : _shards(shards)
+        {
+            _advance_shard();
+        }
+
+        KeyCursor(const KeyCursor&) = delete;
+        KeyCursor& operator=(const KeyCursor&) = delete;
+        KeyCursor(KeyCursor&&) = default;
+
+        std::optional<std::string> next()
+        {
+            if (!_pending) return std::nullopt;
+            auto result = std::move(*_pending);
+            _pending.reset();
+            if (_cursor)
+            {
+                auto val = _cursor->next();
+                if (val)
+                    _pending = std::move(*val);
+                else
+                {
+                    _cursor.reset();
+                    ++_shard_idx;
+                    _advance_shard();
+                }
+            }
+            return result;
+        }
+    };
+
+    [[nodiscard]] KeyCursor iterkeys()
+    {
+        return KeyCursor(_shards);
+    }
+
     void clear()
     {
         _for_each_shard([](auto& s) { s.clear(); });

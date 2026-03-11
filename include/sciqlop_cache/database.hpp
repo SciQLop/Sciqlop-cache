@@ -195,9 +195,10 @@ public:
         finalize();
         if (sqlite3_prepare_v2(db, source_sql.c_str(), -1, &stmt, nullptr) != SQLITE_OK)
         {
-            std::cerr << "Error preparing statement: " << sqlite3_errmsg(db) << std::endl;
+            auto msg = std::string("Failed to prepare SQL statement: ")
+                + sqlite3_errmsg(db);
             stmt = nullptr;
-            return false;
+            throw std::runtime_error(msg);
         }
         return true;
     }
@@ -256,14 +257,14 @@ public:
             char* errMsg = nullptr;
             auto begin = exclusive ? _begin_exclusive_sql : _begin_sql;
 
-                if (sqlite3_exec(db,begin, nullptr, nullptr, &errMsg)!= SQLITE_OK)
+                if (sqlite3_exec(db, begin, nullptr, nullptr, &errMsg) != SQLITE_OK)
                 {
-                    std::cerr << "Error beginning exclusive transaction: "
-                              << (errMsg ? errMsg : "unknown error") << std::endl;
+                    auto msg = std::string("Failed to begin transaction: ")
+                        + (errMsg ? errMsg : "unknown error");
                     if (errMsg)
                         sqlite3_free(errMsg);
-                    db = nullptr; // Mark as invalid
-                    return;
+                    db = nullptr;
+                    throw std::runtime_error(msg);
                 }
         }
     }
@@ -279,7 +280,7 @@ public:
 
     Transaction& operator=(Transaction&& other) = delete;
 
-    ~Transaction() { commit(); }
+    ~Transaction() { try_commit(); }
 
     [[nodiscard]] inline bool rollback()
     {
@@ -294,13 +295,13 @@ public:
                     sqlite3_free(errMsg);
                 return false;
             }
-            committed = true; // Mark as completed
+            committed = true;
             return true;
         }
-        return false; // Either already committed or invalid
+        return false;
     }
 
-    inline bool commit()
+    inline bool try_commit() noexcept
     {
         PROFILE_HERE;
         if (db && !committed)
@@ -317,7 +318,27 @@ public:
             committed = true;
             return true;
         }
-        return false; // Either already committed or invalid
+        return false;
+    }
+
+    inline bool commit()
+    {
+        PROFILE_HERE;
+        if (db && !committed)
+        {
+            char* errMsg = nullptr;
+            if (sqlite3_exec(db, "COMMIT;", nullptr, nullptr, &errMsg) != SQLITE_OK)
+            {
+                auto msg = std::string("Failed to commit transaction: ")
+                    + (errMsg ? errMsg : "unknown error");
+                if (errMsg)
+                    sqlite3_free(errMsg);
+                throw std::runtime_error(msg);
+            }
+            committed = true;
+            return true;
+        }
+        return false;
     }
 };
 
@@ -345,20 +366,12 @@ public:
 
     inline bool open(const std::filesystem::path& db_path, const auto init_sql)
     {
-        if (open(db_path))
-        {
-            for (const auto& sql : init_sql)
-            {
-                if (!exec(sql))
-                {
-                    std::cerr << "Failed to execute SQL: " << sql << std::endl;
-                    close();
-                    return false;
-                }
-            }
-            return BEGIN_STMT.compile(db.get()) && COMMIT_STMT.compile(db.get());
-        }
-        return false;
+        open(db_path);
+        for (const auto& sql : init_sql)
+            (void)exec(sql);
+        BEGIN_STMT.compile(db.get());
+        COMMIT_STMT.compile(db.get());
+        return true;
     }
 
     inline bool open(const std::filesystem::path& db_path)
@@ -371,23 +384,24 @@ public:
             db_path_str.c_str(), &tmp_db,
             SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_NOMUTEX, nullptr);
 
-        // set busy timeout to 10 minutes if the handle was allocated
         if (tmp_db && check == SQLITE_OK)
         {
             if (sqlite3_busy_timeout(tmp_db, 600'000) != SQLITE_OK)
             {
-                std::cerr << "Error setting busy timeout: " << sqlite3_errmsg(tmp_db) << std::endl;
+                auto msg = std::string("Failed to set busy timeout: ")
+                    + sqlite3_errmsg(tmp_db);
                 sqlite3_close(tmp_db);
-                return false;
+                throw std::runtime_error(msg);
             }
             db.reset(tmp_db);
         }
         else
         {
-            std::cerr << "Error opening database: " << sqlite3_errmsg(tmp_db) << std::endl;
+            auto msg = std::string("Failed to open database: ")
+                + (tmp_db ? sqlite3_errmsg(tmp_db) : "unknown error");
             if (tmp_db)
                 sqlite3_close(tmp_db);
-            return false;
+            throw std::runtime_error(msg);
         }
         return true;
     }
@@ -420,11 +434,11 @@ public:
         int rc = sqlite3_exec(db.get(), sql.c_str(), nullptr, nullptr, &errMsg);
         if (rc != SQLITE_OK)
         {
-            std::cerr << "SQL error: " << (errMsg ? errMsg : "unknown error") << std::endl;
-            std::cerr << "While executing: " << sql << std::endl;
+            auto msg = std::string("SQL error: ") + (errMsg ? errMsg : "unknown error")
+                + " while executing: " + sql;
             if (errMsg)
                 sqlite3_free(errMsg);
-            return false;
+            throw std::runtime_error(msg);
         }
         return true;
     }
@@ -475,22 +489,15 @@ public:
             else
                 return std::nullopt;
         }
-        if constexpr (sizeof...(rtypes) == 0)
-            ;
-        else
         {
-            // unexpected rc: log sqlite error for debugging
+            std::string msg = "SQLite step unexpected return code " + std::to_string(rc);
             if (stmt.get())
             {
                 auto* dbh = sqlite3_db_handle(stmt.get());
-                std::cerr << "SQLite step unexpected return code " << rc << ": "
-                          << (dbh ? sqlite3_errmsg(dbh) : "(no db handle)") << std::endl;
+                if (dbh) msg += std::string(": ") + sqlite3_errmsg(dbh);
             }
+            throw std::runtime_error(msg);
         }
-        if constexpr (sizeof...(rtypes) == 0)
-            return false;
-        else
-            return std::nullopt;
     }
 
     template <typename... rtypes>

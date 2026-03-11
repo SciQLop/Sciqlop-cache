@@ -233,16 +233,21 @@ class _Store : private Policies...
         auto init_stmts = { std::string(_PRAGMA_SQL), _schema_sql() };
         for (int attempt = 0; attempt < 5; ++attempt)
         {
-            if (_db.open(this->cache_path / db_fname, init_stmts) && _compile_statements())
+            try
             {
+                _db.open(this->cache_path / db_fname, init_stmts);
+                _compile_statements();
                 _migrate_schema();
                 _load_counters();
                 return;
             }
-            _db.close();
-            std::this_thread::sleep_for(std::chrono::milliseconds(50 * (1 << attempt)));
+            catch (const std::runtime_error&)
+            {
+                _db.close();
+                if (attempt == 4) throw;
+                std::this_thread::sleep_for(std::chrono::milliseconds(50 * (1 << attempt)));
+            }
         }
-        throw std::runtime_error("Failed to initialize database schema.");
     }
 
     void _load_counters()
@@ -415,6 +420,54 @@ class _Store : private Policies...
     DbGuard db() const { return { _db, std::unique_lock(_mtx) }; }
 
 public:
+    class KeyCursor
+    {
+        std::unique_lock<std::recursive_mutex> _lock;
+        sqlite3_stmt* _stmt = nullptr;
+        bool _done = false;
+
+    public:
+        KeyCursor(std::recursive_mutex& mtx, sqlite3* db, const std::string& sql)
+            : _lock(mtx)
+        {
+            if (sqlite3_prepare_v2(db, sql.c_str(), -1, &_stmt, nullptr) != SQLITE_OK)
+            {
+                throw std::runtime_error(
+                    std::string("Failed to prepare key iterator: ") + sqlite3_errmsg(db));
+            }
+        }
+
+        KeyCursor(const KeyCursor&) = delete;
+        KeyCursor& operator=(const KeyCursor&) = delete;
+        KeyCursor(KeyCursor&& other) noexcept
+            : _lock(std::move(other._lock))
+            , _stmt(other._stmt)
+            , _done(other._done)
+        {
+            other._stmt = nullptr;
+            other._done = true;
+        }
+
+        ~KeyCursor()
+        {
+            if (_stmt)
+                sqlite3_finalize(_stmt);
+        }
+
+        std::optional<std::string> next()
+        {
+            if (_done) return std::nullopt;
+            int rc = sqlite3_step(_stmt);
+            if (rc == SQLITE_ROW)
+            {
+                auto v = reinterpret_cast<const char*>(sqlite3_column_text(_stmt, 0));
+                return v ? std::string(v) : std::string {};
+            }
+            _done = true;
+            return std::nullopt;
+        }
+    };
+
     class TransactionGuard
     {
         _Store& _store;
@@ -551,11 +604,15 @@ private:
                                     abs_exp, seq, tag);
             sqlite3_step(binded.get());
         }
-        if (!transaction.commit())
+        try
+        {
+            transaction.commit();
+        }
+        catch (const std::runtime_error&)
         {
             (void)transaction.rollback();
             storage->remove(*new_filepath);
-            return false;
+            throw;
         }
         if (!old_filepath.empty())
             storage->remove(old_filepath);
@@ -730,6 +787,12 @@ public:
         return {};
     }
 
+    [[nodiscard]] inline KeyCursor iterkeys()
+    {
+        auto sql = std::string("SELECT key FROM cache WHERE 1=1") + _where_valid() + ";";
+        return KeyCursor(_mtx, _db.get(), sql);
+    }
+
     [[nodiscard]] inline bool exists(const std::string& key)
     {
         if (auto r = db()->template exec<bool>(EXISTS_STMT, key))
@@ -894,9 +957,8 @@ public:
                     std::cerr << "Failed to delete file: " << file_path << std::endl;
             }
         }
-        if (!db->exec(EVICT_EXPIRED_STMT))
-            std::cerr << "Error deleting expired items from cache database." << std::endl;
-        else if (exp_count > 0)
+        db->exec(EVICT_EXPIRED_STMT);
+        if (exp_count > 0)
         {
             _total_count.fetch_sub(exp_count, std::memory_order_relaxed);
             _total_size.fetch_sub(exp_size, std::memory_order_relaxed);

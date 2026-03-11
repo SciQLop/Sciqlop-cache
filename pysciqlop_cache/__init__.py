@@ -278,7 +278,7 @@ class Cache(_Cache):
         return super().exists(key)
 
     def __iter__(self):
-        return iter(super().keys())
+        return super().iterkeys()
 
     def __repr__(self) -> str:
         return f"Cache({str(super().path())!r}, count={len(self)})"
@@ -363,7 +363,7 @@ class Index(_Index):
         return super().exists(key)
 
     def __iter__(self):
-        return iter(super().keys())
+        return super().iterkeys()
 
     def __repr__(self) -> str:
         return f"Index({str(super().path())!r}, count={len(self)})"
@@ -451,7 +451,7 @@ class FanoutCache(_FanoutCache):
         return super().exists(key)
 
     def __iter__(self):
-        return iter(super().keys())
+        return super().iterkeys()
 
     def __repr__(self) -> str:
         return f"FanoutCache({str(super().path())!r}, shards={self.shard_count()}, count={len(self)})"
@@ -525,7 +525,7 @@ class FanoutIndex(_FanoutIndex):
         return super().exists(key)
 
     def __iter__(self):
-        return iter(super().keys())
+        return super().iterkeys()
 
     def __repr__(self) -> str:
         return f"FanoutIndex({str(super().path())!r}, shards={self.shard_count()}, count={len(self)})"

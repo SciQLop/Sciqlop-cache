@@ -63,6 +63,18 @@ inline bool _simple_add_item(T& s, const std::string& key, nb::bytes& buffer)
     return s.add(key, data);
 }
 
+template <typename CursorType>
+void bind_key_cursor(nb::module_& m, const char* name)
+{
+    nb::class_<CursorType>(m, name)
+        .def("__iter__", [](nb::handle self) { return self; })
+        .def("__next__", [](CursorType& c) -> std::string {
+            auto val = c.next();
+            if (!val) throw nb::stop_iteration();
+            return *val;
+        });
+}
+
 NB_MODULE(_pysciqlop_cache, m)
 {
     m.doc() = R"pbdoc(
@@ -70,6 +82,11 @@ NB_MODULE(_pysciqlop_cache, m)
         ----------------
 
     )pbdoc";
+
+    bind_key_cursor<Cache::KeyCursor>(m, "CacheKeyCursor");
+    bind_key_cursor<Index::KeyCursor>(m, "IndexKeyCursor");
+    bind_key_cursor<FanoutCache::KeyCursor>(m, "FanoutCacheKeyCursor");
+    bind_key_cursor<FanoutIndex::KeyCursor>(m, "FanoutIndexKeyCursor");
 
     nb::class_<Buffer>(m, "Buffer")
         .def("memoryview",
@@ -138,6 +155,7 @@ NB_MODULE(_pysciqlop_cache, m)
         .def("get", &Cache::get, nb::arg("key"))
         .def("__getitem__", &Cache::get, nb::arg("key"))
         .def("keys", &Cache::keys)
+        .def("iterkeys", &Cache::iterkeys)
         .def("exists", &Cache::exists, nb::arg("key"))
         .def("add", _add_item_impl<Cache>, nb::arg("key"), nb::arg("value"),
              nb::arg("expire") = nb::none(), nb::arg("tag") = nb::none())
@@ -180,6 +198,7 @@ NB_MODULE(_pysciqlop_cache, m)
         .def("get", &Index::get, nb::arg("key"))
         .def("__getitem__", &Index::get, nb::arg("key"))
         .def("keys", &Index::keys)
+        .def("iterkeys", &Index::iterkeys)
         .def("exists", &Index::exists, nb::arg("key"))
         .def("add", _simple_add_item<Index>, nb::arg("key"), nb::arg("value"))
         .def("delete", &Index::del, nb::arg("key"))
@@ -209,6 +228,7 @@ NB_MODULE(_pysciqlop_cache, m)
         .def("get", &FanoutCache::get, nb::arg("key"))
         .def("__getitem__", &FanoutCache::get, nb::arg("key"))
         .def("keys", &FanoutCache::keys)
+        .def("iterkeys", &FanoutCache::iterkeys)
         .def("exists", &FanoutCache::exists, nb::arg("key"))
         .def("add", _add_item_impl<FanoutCache>, nb::arg("key"), nb::arg("value"),
              nb::arg("expire") = nb::none(), nb::arg("tag") = nb::none())
@@ -253,6 +273,7 @@ NB_MODULE(_pysciqlop_cache, m)
         .def("get", &FanoutIndex::get, nb::arg("key"))
         .def("__getitem__", &FanoutIndex::get, nb::arg("key"))
         .def("keys", &FanoutIndex::keys)
+        .def("iterkeys", &FanoutIndex::iterkeys)
         .def("exists", &FanoutIndex::exists, nb::arg("key"))
         .def("add", _simple_add_item<FanoutIndex>, nb::arg("key"), nb::arg("value"))
         .def("delete", &FanoutIndex::del, nb::arg("key"))

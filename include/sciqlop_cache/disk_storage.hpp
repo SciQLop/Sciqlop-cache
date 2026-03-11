@@ -1,7 +1,6 @@
 #pragma once
 
 #include <cpp_utils/io/memory_mapped_file.hpp>
-#include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -38,8 +37,8 @@ class DiskStorage
         }
         catch (const std::exception& e)
         {
-            std::cerr << "Error storing bytes to file: " << e.what() << std::endl;
-            return false;
+            throw std::runtime_error(
+                std::string("Failed to write file: ") + e.what());
         }
     }
 

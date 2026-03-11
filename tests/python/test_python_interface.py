@@ -763,6 +763,62 @@ class TestCheckResult(unittest.TestCase):
             self.assertEqual(result.dangling_rows, 0)
 
 
+class TestIterkeys(unittest.TestCase):
+
+    def setUp(self):
+        self.tmp_dir = TemporaryDirectory(delete=False)
+        self.cache = Cache(self.tmp_dir.name)
+
+    def tearDown(self):
+        if hasattr(self, 'cache'):
+            del self.cache
+        shutil.rmtree(self.tmp_dir.name)
+
+    def test_iterkeys_empty(self):
+        self.assertEqual(list(self.cache.iterkeys()), [])
+
+    def test_iterkeys_matches_keys(self):
+        for i in range(20):
+            self.cache.set(f"k{i}", f"v{i}")
+        self.assertEqual(sorted(self.cache.iterkeys()), sorted(self.cache.keys()))
+
+    def test_iterkeys_skips_expired(self):
+        self.cache.set("alive", "v")
+        self.cache.set("dead", "v", expire=0)
+        time.sleep(0.1)
+        keys = list(self.cache.iterkeys())
+        self.assertIn("alive", keys)
+        self.assertNotIn("dead", keys)
+
+    def test_iter_uses_iterkeys(self):
+        self.cache.set("a", 1)
+        self.cache.set("b", 2)
+        self.assertEqual(sorted(self.cache), sorted(self.cache.keys()))
+
+    def test_iterkeys_index(self):
+        from pysciqlop_cache import Index
+        with TemporaryDirectory() as td:
+            idx = Index(td)
+            idx.set("x", 1)
+            idx.set("y", 2)
+            self.assertEqual(sorted(idx.iterkeys()), ["x", "y"])
+
+    def test_iterkeys_fanout(self):
+        from pysciqlop_cache import FanoutCache
+        with TemporaryDirectory() as td:
+            fc = FanoutCache(td, shard_count=4)
+            for i in range(10):
+                fc.set(f"k{i}", f"v{i}")
+            self.assertEqual(sorted(fc.iterkeys()), sorted(fc.keys()))
+
+
+class TestErrorHandling(unittest.TestCase):
+
+    def test_bad_path_raises(self):
+        with self.assertRaises(RuntimeError):
+            Cache("/dev/null/impossible/path")
+
+
 class TestLock(unittest.TestCase):
 
     def setUp(self):
