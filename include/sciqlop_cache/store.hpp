@@ -17,6 +17,7 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <unordered_set>
 #include <unistd.h>
 
 template <typename Storage, typename... Policies>
@@ -1165,9 +1166,48 @@ public:
         return 0;
     }
 
-    std::size_t _check_orphaned_files([[maybe_unused]] DbGuard& db, [[maybe_unused]] bool fix)
+    std::size_t _check_orphaned_files(DbGuard& db, bool fix)
     {
-        return 0;
+        // Collect all known file paths from DB
+        std::unordered_set<std::string> known_paths;
+        {
+            sqlite3_stmt* stmt = nullptr;
+            sqlite3_prepare_v2(db->get(),
+                "SELECT path FROM cache WHERE path IS NOT NULL;",
+                -1, &stmt, nullptr);
+            while (sqlite3_step(stmt) == SQLITE_ROW)
+            {
+                if (auto p = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0)))
+                    known_paths.insert(p);
+            }
+            sqlite3_finalize(stmt);
+        }
+
+        std::size_t count = 0;
+
+        if (!std::filesystem::exists(cache_path))
+            return 0;
+
+        for (auto& entry : std::filesystem::recursive_directory_iterator(cache_path))
+        {
+            if (!entry.is_regular_file())
+                continue;
+
+            auto fname = entry.path().filename().string();
+            // Skip database files (db, WAL, SHM, journal)
+            if (fname == db_fname || fname.starts_with(std::string(db_fname)))
+                continue;
+
+            auto path_str = entry.path().string();
+            if (known_paths.find(path_str) == known_paths.end())
+            {
+                ++count;
+                if (fix)
+                    std::filesystem::remove(entry.path());
+            }
+        }
+
+        return count;
     }
 
     bool _check_counters([[maybe_unused]] DbGuard& db, [[maybe_unused]] bool fix)

@@ -74,6 +74,53 @@ SCENARIO("check() detects dangling rows", "[check]")
     }
 }
 
+SCENARIO("check() detects orphaned files", "[check]")
+{
+    AutoCleanDirectory dir("check_orphan");
+    Cache cache(dir.path().string());
+
+    GIVEN("An extra file planted in the storage directory")
+    {
+        // Plant an orphan file in the UUID directory structure
+        auto orphan_dir = dir.path() / "ab" / "cd";
+        std::filesystem::create_directories(orphan_dir);
+        auto orphan_path = orphan_dir / "abcd-fake-uuid-orphan";
+        {
+            std::ofstream ofs(orphan_path, std::ios::binary);
+            ofs << "orphan data";
+        }
+        REQUIRE(std::filesystem::exists(orphan_path));
+
+        WHEN("check() is called without fix")
+        {
+            auto result = cache.check();
+
+            THEN("It detects the orphaned file")
+            {
+                REQUIRE_FALSE(result.ok);
+                REQUIRE(result.orphaned_files == 1);
+            }
+        }
+
+        WHEN("check(fix=true) is called")
+        {
+            auto result = cache.check(true);
+
+            THEN("The orphan is deleted")
+            {
+                REQUIRE(result.orphaned_files == 1);
+                REQUIRE_FALSE(std::filesystem::exists(orphan_path));
+            }
+
+            AND_THEN("A second check is clean")
+            {
+                auto result2 = cache.check();
+                REQUIRE(result2.ok);
+            }
+        }
+    }
+}
+
 SCENARIO("check() on a clean cache reports no issues", "[check]")
 {
     AutoCleanDirectory dir("check_clean");
