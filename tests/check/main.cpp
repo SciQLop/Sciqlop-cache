@@ -121,6 +121,68 @@ SCENARIO("check() detects orphaned files", "[check]")
     }
 }
 
+SCENARIO("check() detects size mismatches", "[check]")
+{
+    AutoCleanDirectory dir("check_size");
+    Cache cache(dir.path().string());
+
+    GIVEN("A large entry whose file is truncated externally")
+    {
+        std::vector<char> large(16 * 1024, 'x');
+        cache.set("truncated", std::span(large.data(), large.size()));
+        auto original_size = cache.size();
+
+        // Query the DB directly to get the file path
+        std::filesystem::path file_path;
+        {
+            sqlite3* raw_db = nullptr;
+            auto db_path = dir.path() / "sciqlop-cache.db";
+            sqlite3_open(db_path.string().c_str(), &raw_db);
+            sqlite3_stmt* stmt = nullptr;
+            sqlite3_prepare_v2(raw_db,
+                "SELECT path FROM cache WHERE key = 'truncated';", -1, &stmt, nullptr);
+            if (sqlite3_step(stmt) == SQLITE_ROW)
+                file_path = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
+            sqlite3_finalize(stmt);
+            sqlite3_close(raw_db);
+        }
+        REQUIRE(!file_path.empty());
+        REQUIRE(std::filesystem::exists(file_path));
+        {
+            std::ofstream ofs(file_path, std::ios::binary | std::ios::trunc);
+            ofs << "short";
+        }
+
+        WHEN("check() is called without fix")
+        {
+            auto result = cache.check();
+
+            THEN("It detects the size mismatch")
+            {
+                REQUIRE_FALSE(result.ok);
+                REQUIRE(result.size_mismatches == 1);
+            }
+        }
+
+        WHEN("check(fix=true) is called")
+        {
+            auto result = cache.check(true);
+
+            THEN("The DB size column is corrected")
+            {
+                REQUIRE(result.size_mismatches == 1);
+                REQUIRE(cache.size() < original_size);
+            }
+
+            AND_THEN("A second check is clean")
+            {
+                auto result2 = cache.check();
+                REQUIRE(result2.ok);
+            }
+        }
+    }
+}
+
 SCENARIO("check() on a clean cache reports no issues", "[check]")
 {
     AutoCleanDirectory dir("check_clean");

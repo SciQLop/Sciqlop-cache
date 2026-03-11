@@ -1161,9 +1161,52 @@ public:
         return count;
     }
 
-    std::size_t _check_size_mismatches([[maybe_unused]] DbGuard& db, [[maybe_unused]] bool fix)
+    std::size_t _check_size_mismatches(DbGuard& db, bool fix)
     {
-        return 0;
+        std::size_t count = 0;
+
+        struct Mismatch { std::string key; std::size_t db_size; std::size_t file_size; };
+        std::vector<Mismatch> to_fix;
+
+        {
+            sqlite3_stmt* stmt = nullptr;
+            sqlite3_prepare_v2(db->get(),
+                "SELECT key, path, size FROM cache WHERE path IS NOT NULL;",
+                -1, &stmt, nullptr);
+            while (sqlite3_step(stmt) == SQLITE_ROW)
+            {
+                auto path = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
+                if (!path || !std::filesystem::exists(path))
+                    continue; // dangling row — handled separately
+
+                auto db_size = static_cast<std::size_t>(sqlite3_column_int64(stmt, 2));
+                auto file_size = std::filesystem::file_size(path);
+                if (db_size != file_size)
+                {
+                    ++count;
+                    if (fix)
+                    {
+                        auto key = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
+                        to_fix.push_back({ key, db_size, file_size });
+                    }
+                }
+            }
+            sqlite3_finalize(stmt);
+        }
+
+        if (fix)
+        {
+            for (auto& [key, db_size, file_size] : to_fix)
+            {
+                db->exec("UPDATE cache SET size = ? WHERE key = ?;", file_size, key);
+                if (file_size > db_size)
+                    _total_size.fetch_add(file_size - db_size, std::memory_order_relaxed);
+                else
+                    _total_size.fetch_sub(db_size - file_size, std::memory_order_relaxed);
+            }
+        }
+
+        return count;
     }
 
     std::size_t _check_orphaned_files(DbGuard& db, bool fix)
