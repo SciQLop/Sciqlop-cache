@@ -1253,8 +1253,30 @@ public:
         return count;
     }
 
-    bool _check_counters([[maybe_unused]] DbGuard& db, [[maybe_unused]] bool fix)
+    // Note: the background eviction thread (_bg_evict) can delete rows and
+    // adjust counters concurrently. During the window between its DELETE and
+    // its fetch_sub, check() may observe a transient inconsistency. This is
+    // harmless — a subsequent check() after the bg thread settles will pass.
+    bool _check_counters(DbGuard& db, bool fix)
     {
-        return true;
+        auto db_size = db->template exec<std::size_t>(
+            "SELECT COALESCE(SUM(size), 0) FROM cache;");
+        auto db_count = db->template exec<std::size_t>(
+            "SELECT COUNT(*) FROM cache;");
+
+        if (!db_size || !db_count)
+            return false;
+
+        bool consistent =
+            _total_size.load(std::memory_order_relaxed) == *db_size
+         && _total_count.load(std::memory_order_relaxed) == *db_count;
+
+        if (!consistent && fix)
+        {
+            _total_size.store(*db_size, std::memory_order_relaxed);
+            _total_count.store(*db_count, std::memory_order_relaxed);
+        }
+
+        return consistent;
     }
 };

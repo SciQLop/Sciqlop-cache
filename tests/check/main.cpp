@@ -183,6 +183,56 @@ SCENARIO("check() detects size mismatches", "[check]")
     }
 }
 
+SCENARIO("check() detects counter drift", "[check]")
+{
+    AutoCleanDirectory dir("check_counters");
+    Index index(dir.path().string());
+
+    GIVEN("An index with entries added via raw SQL (bypassing counters)")
+    {
+        std::string val = "hello";
+        index.set("legit", std::span(val.data(), val.size()));
+
+        // Insert a row directly via SQL, bypassing counter updates
+        sqlite3* raw_db = nullptr;
+        auto db_path = dir.path() / "sciqlop-cache.db";
+        sqlite3_open(db_path.string().c_str(), &raw_db);
+        sqlite3_exec(raw_db,
+            "INSERT INTO cache (key, value, size) VALUES ('sneaky', X'AABB', 2);",
+            nullptr, nullptr, nullptr);
+        sqlite3_close(raw_db);
+
+        WHEN("check() is called without fix")
+        {
+            auto result = index.check();
+
+            THEN("It detects counter inconsistency")
+            {
+                REQUIRE_FALSE(result.ok);
+                REQUIRE_FALSE(result.counters_consistent);
+            }
+        }
+
+        WHEN("check(fix=true) is called")
+        {
+            auto result = index.check(true);
+
+            THEN("Counters are reloaded from DB")
+            {
+                REQUIRE_FALSE(result.counters_consistent);
+                // After fix, count and size should reflect both rows
+                REQUIRE(index.count() == 2);
+            }
+
+            AND_THEN("A second check is clean")
+            {
+                auto result2 = index.check();
+                REQUIRE(result2.ok);
+            }
+        }
+    }
+}
+
 SCENARIO("check() on a clean cache reports no issues", "[check]")
 {
     AutoCleanDirectory dir("check_clean");
