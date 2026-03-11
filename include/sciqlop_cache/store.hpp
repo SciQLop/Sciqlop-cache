@@ -1069,6 +1069,8 @@ public:
         std::size_t size_mismatches = 0;
         bool counters_consistent = true;
         bool sqlite_integrity_ok = true;
+
+        explicit operator bool() const { return ok; }
     };
 
     CheckResult check(bool fix = false)
