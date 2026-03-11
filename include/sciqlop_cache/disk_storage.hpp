@@ -4,10 +4,12 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <list>
 #include <optional>
 #include <random>
 #include <sqlite3.h>
 #include <string>
+#include <unordered_map>
 #include <uuid.h>
 #include "sciqlop_cache/utils/concepts.hpp"
 #include "sciqlop_cache/utils/buffer.hpp"
@@ -18,6 +20,49 @@ class DiskStorage
     std::mt19937 gen;
     uuids::uuid_random_generator uuid_generator;
     std::filesystem::path _path;
+
+    // LRU mmap handle cache: path_string → shared_ptr<MemoryMappedFile>
+    std::size_t _mmap_cache_capacity;
+    std::list<std::string> _lru_order;
+    std::unordered_map<std::string,
+        std::pair<std::shared_ptr<MemoryMappedFile>,
+                  std::list<std::string>::iterator>> _mmap_cache;
+
+    void _evict_lru()
+    {
+        if (_lru_order.empty()) return;
+        _mmap_cache.erase(_lru_order.back());
+        _lru_order.pop_back();
+    }
+
+    void _cache_evict(const std::string& key)
+    {
+        auto it = _mmap_cache.find(key);
+        if (it != _mmap_cache.end())
+        {
+            _lru_order.erase(it->second.second);
+            _mmap_cache.erase(it);
+        }
+    }
+
+    std::shared_ptr<MemoryMappedFile> _cache_get(const std::string& key)
+    {
+        auto it = _mmap_cache.find(key);
+        if (it == _mmap_cache.end()) return nullptr;
+        // Move to front (most recently used)
+        _lru_order.splice(_lru_order.begin(), _lru_order, it->second.second);
+        return it->second.first;
+    }
+
+    void _cache_put(const std::string& key, std::shared_ptr<MemoryMappedFile> mmf)
+    {
+        if (_mmap_cache_capacity == 0) return;
+        _cache_evict(key); // remove old entry if exists
+        while (_mmap_cache.size() >= _mmap_cache_capacity)
+            _evict_lru();
+        _lru_order.push_front(key);
+        _mmap_cache[key] = { std::move(mmf), _lru_order.begin() };
+    }
 
     [[nodiscard]] inline bool _write(const std::filesystem::path& file_path,
                                     const Bytes auto & value)
@@ -43,8 +88,9 @@ class DiskStorage
     }
 
 public:
-    DiskStorage(const std::filesystem::path& path)
+    DiskStorage(const std::filesystem::path& path, std::size_t mmap_cache_capacity = 128)
             : gen(rd()), uuid_generator { gen }, _path(path)
+            , _mmap_cache_capacity(mmap_cache_capacity)
     {
         if (!std::filesystem::exists(path))
         {
@@ -54,6 +100,7 @@ public:
 
     DiskStorage()
             : gen(rd()), uuid_generator { gen }, _path(".")
+            , _mmap_cache_capacity(128)
     {
         if (!std::filesystem::exists(_path))
         {
@@ -70,6 +117,7 @@ public:
 
     inline bool remove(const std::filesystem::path& file_path , bool recursive = false)
     {
+        _cache_evict(file_path.string());
         try
         {
             if (std::filesystem::exists(file_path))
@@ -92,11 +140,18 @@ public:
     {
         try
         {
+            auto key = file_path.string();
+
+            // Check mmap cache first
+            if (auto cached = _cache_get(key))
+                return Buffer(std::static_pointer_cast<IMemoryView>(cached));
+
             if (!std::filesystem::exists(file_path))
-            {
                 return std::nullopt;
-            }
-            return Buffer(file_path);
+
+            auto mmf = std::make_shared<MemoryMappedFile>(key);
+            _cache_put(key, mmf);
+            return Buffer(std::static_pointer_cast<IMemoryView>(mmf));
         }
         catch (const std::exception& e)
         {
@@ -104,6 +159,8 @@ public:
             return std::nullopt;
         }
     }
+
+    void clear_mmap_cache() { _mmap_cache.clear(); _lru_order.clear(); }
 
 
      [[nodiscard]] inline  std::optional<std::filesystem::path> store(const Bytes auto & value)

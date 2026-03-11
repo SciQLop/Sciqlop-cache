@@ -763,6 +763,68 @@ class TestCheckResult(unittest.TestCase):
             self.assertEqual(result.dangling_rows, 0)
 
 
+class TestMmapCache(unittest.TestCase):
+    """Tests for the mmap handle cache in DiskStorage.
+
+    Values >8KB are stored as files and served via mmap. The cache keeps
+    recently-used mmap handles alive to avoid repeated open/mmap/munmap/close.
+    """
+
+    def setUp(self):
+        self.tmp_dir = TemporaryDirectory(delete=False)
+        self.cache = Cache(self.tmp_dir.name)
+        # 16KB values — above the 8KB file threshold
+        self.large_value = b"x" * (16 * 1024)
+
+    def tearDown(self):
+        if hasattr(self, 'cache'):
+            del self.cache
+        shutil.rmtree(self.tmp_dir.name)
+
+    def test_no_key_mixup(self):
+        for i in range(20):
+            self.cache.set(f"key{i}", bytes([i]) * (16 * 1024))
+        for i in range(20):
+            val = self.cache.get(f"key{i}")
+            self.assertEqual(val, bytes([i]) * (16 * 1024))
+
+    def test_repeated_get_same_value(self):
+        self.cache.set("big", self.large_value)
+        for _ in range(100):
+            self.assertEqual(self.cache.get("big"), self.large_value)
+
+    def test_overwrite_invalidates_cache(self):
+        self.cache.set("key", b"A" * (16 * 1024))
+        self.assertEqual(self.cache.get("key"), b"A" * (16 * 1024))
+        self.cache.set("key", b"B" * (16 * 1024))
+        self.assertEqual(self.cache.get("key"), b"B" * (16 * 1024))
+
+    def test_delete_invalidates_cache(self):
+        self.cache.set("key", self.large_value)
+        self.cache.get("key")  # populate mmap cache
+        del self.cache["key"]
+        self.assertIsNone(self.cache.get("key"))
+
+    def test_eviction_beyond_capacity(self):
+        # Default capacity is 128; write 200 large values to force LRU eviction
+        for i in range(200):
+            self.cache.set(f"k{i}", bytes([i % 256]) * (16 * 1024))
+        # All values should still be readable (eviction only drops the mmap
+        # handle, not the file — re-reading just re-opens the file)
+        for i in range(200):
+            val = self.cache.get(f"k{i}")
+            self.assertEqual(val, bytes([i % 256]) * (16 * 1024))
+
+    def test_mixed_small_and_large(self):
+        self.cache.set("small", "hello")
+        self.cache.set("large", self.large_value)
+        self.assertEqual(self.cache.get("small"), "hello")
+        self.assertEqual(self.cache.get("large"), self.large_value)
+        # Repeat to exercise cache hit path
+        self.assertEqual(self.cache.get("large"), self.large_value)
+        self.assertEqual(self.cache.get("small"), "hello")
+
+
 class TestIterkeys(unittest.TestCase):
 
     def setUp(self):

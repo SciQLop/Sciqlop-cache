@@ -73,6 +73,8 @@ public:
 
     Buffer(std::vector<char>&& vec) : _data(std::make_shared<VectorMemoryView>(std::move(vec))) {}
 
+    Buffer(std::shared_ptr<IMemoryView> view) : _data(std::move(view)) {}
+
     Buffer(IMemoryView* view) : _data(view) {}
 
     Buffer(const Buffer& other) : _data(other._data) { }

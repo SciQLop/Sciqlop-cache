@@ -128,4 +128,48 @@ static void BM_IndexSize(benchmark::State& state)
 }
 BENCHMARK(BM_IndexSize)->Arg(100)->Arg(1000)->Arg(5000);
 
+// Large value (file-backed) benchmarks — measures open/mmap/munmap/close overhead
+static void BM_GetLargeValue(benchmark::State& state)
+{
+    auto value_size = state.range(0);
+    AutoCleanDirectory dir { "BenchGetLarge" };
+    Cache cache(dir.path());
+    std::vector<char> value(value_size, 'x');
+    cache.set("bigkey", value);
+
+    int64_t ops = 0;
+    for (auto _ : state)
+    {
+        benchmark::DoNotOptimize(cache.get("bigkey"));
+        ++ops;
+    }
+    state.SetItemsProcessed(ops);
+    state.SetBytesProcessed(ops * value_size);
+}
+// 16KB, 256KB, 1MB, 4MB — all above 8KB threshold, stored as files
+BENCHMARK(BM_GetLargeValue)->Arg(16 * 1024)->Arg(256 * 1024)->Arg(1024 * 1024)->Arg(4 * 1024 * 1024);
+
+// Same key read N times — hot-read pattern (SciQLop plot panning)
+static void BM_GetLargeValueRepeat(benchmark::State& state)
+{
+    auto value_size = state.range(0);
+    AutoCleanDirectory dir { "BenchGetLargeRepeat" };
+    Cache cache(dir.path());
+    std::vector<char> value(value_size, 'x');
+    cache.set("hotkey", value);
+
+    // Pre-warm: read once so page cache is hot, isolating mmap overhead
+    { auto _ = cache.get("hotkey"); }
+
+    int64_t ops = 0;
+    for (auto _ : state)
+    {
+        benchmark::DoNotOptimize(cache.get("hotkey"));
+        ++ops;
+    }
+    state.SetItemsProcessed(ops);
+    state.SetBytesProcessed(ops * value_size);
+}
+BENCHMARK(BM_GetLargeValueRepeat)->Arg(256 * 1024)->Arg(1024 * 1024)->Arg(4 * 1024 * 1024);
+
 BENCHMARK_MAIN();
