@@ -127,6 +127,19 @@ if gbench_dep.found()
 endif
 
 
+if get_option('with_torture_tests')
+    torture_exe = executable(
+        'test-torture', 'tests/torture/main.cpp',
+        include_directories: my_include,
+        dependencies: [catch_dep, sciqlop_cache_dep, sqlite3_dep],
+        install: false
+    )
+    test('torture', torture_exe,
+        is_parallel: false,
+        timeout: 300,
+    )
+endif
+
 if not get_option('disable_python_wrapper')
     foreach test_name:['test_python_interface', 'test_perf_vs_diskcache', 'test_serializers']
         test(test_name, python3,

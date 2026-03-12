@@ -525,7 +525,7 @@ private:
                                  const Bytes auto& col2, std::size_t sz,
                                  [[maybe_unused]] std::optional<double> abs_exp,
                                  [[maybe_unused]] std::size_t seq,
-                                 [[maybe_unused]] std::optional<std::string> tag) const
+                                 [[maybe_unused]] const std::optional<std::string>& tag) const
     {
         int i = 1;
         sql_bind(stmt, i++, col1);
@@ -540,7 +540,7 @@ private:
                                  const std::string& col2, std::size_t sz,
                                  [[maybe_unused]] std::optional<double> abs_exp,
                                  [[maybe_unused]] std::size_t seq,
-                                 [[maybe_unused]] std::optional<std::string> tag) const
+                                 [[maybe_unused]] const std::optional<std::string>& tag) const
     {
         int i = 1;
         sql_bind(stmt, i++, col1);
