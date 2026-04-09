@@ -160,6 +160,11 @@ if not get_option('disable_python_wrapper')
             is_parallel : false,
             timeout : 300,
         )
+        test('test_hypothesis', python3,
+            args:['-m', 'pytest', files('tests/python/test_hypothesis.py'), '-x', '-v'],
+            env : {'PYTHONPATH': meson.current_build_dir()},
+            timeout : 120,
+        )
     endif
 endif
 
