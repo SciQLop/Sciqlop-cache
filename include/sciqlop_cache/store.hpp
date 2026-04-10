@@ -786,6 +786,27 @@ public:
         return _total_size.load(std::memory_order_relaxed);
     }
 
+    [[nodiscard]] inline size_t volume()
+    {
+        auto g = db();
+        std::size_t db_size = 0;
+        if (auto pc = g->template exec<std::size_t>("PRAGMA page_count;"))
+            if (auto ps = g->template exec<std::size_t>("PRAGMA page_size;"))
+                db_size = *pc * *ps;
+        std::size_t file_size = 0;
+        if (std::filesystem::exists(cache_path) && std::filesystem::is_directory(cache_path))
+        {
+            for (const auto& entry : std::filesystem::recursive_directory_iterator(cache_path))
+            {
+                if (entry.is_regular_file() && entry.path().extension() != ".db"
+                    && entry.path().extension() != ".db-wal"
+                    && entry.path().extension() != ".db-shm")
+                    file_size += entry.file_size();
+            }
+        }
+        return db_size + file_size;
+    }
+
     [[nodiscard]] inline std::vector<std::string> keys()
     {
         if (auto r = db()->template exec<std::vector<std::string>>(KEYS_STMT))

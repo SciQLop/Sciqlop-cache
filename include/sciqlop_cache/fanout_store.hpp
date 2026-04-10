@@ -130,6 +130,13 @@ public:
         return total;
     }
 
+    [[nodiscard]] std::size_t volume()
+    {
+        std::size_t total = 0;
+        _for_each_shard([&](auto& s) { total += s.volume(); });
+        return total;
+    }
+
     [[nodiscard]] std::vector<std::string> keys()
     {
         std::vector<std::string> all;
