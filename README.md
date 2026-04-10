@@ -151,18 +151,22 @@ len(cache)                     # count
 ## Migrating from diskcache
 
 ```bash
-# Migrate an existing diskcache to sciqlop-cache
+# Migrate an existing diskcache Cache or FanoutCache
 python -m pysciqlop_cache.migrate /old/diskcache /new/sciqlop-cache
+
+# Migrate a diskcache Index
+python -m pysciqlop_cache.migrate --type index /old/index /new/index
 
 # Migrate and delete entries from source as they are copied
 python -m pysciqlop_cache.migrate --drop /old/diskcache /new/sciqlop-cache
 ```
 
-Auto-detects `Cache` vs `FanoutCache`, preserves expiration TTLs and tags. Also usable as a library:
+Auto-detects `Cache` vs `FanoutCache`, preserves expiration TTLs and tags. Use `--type index` for `Index` sources (creates a lightweight sciqlop-cache `Index`). Also usable as a library:
 
 ```python
 from pysciqlop_cache.migrate import migrate
 result = migrate("/old/cache", "/new/cache", drop=True)
+result = migrate("/old/index", "/new/index", store_type="index")
 print(result)  # {"migrated": 1234, "skipped": 0, "errors": 0, "elapsed_secs": 1.5}
 ```
 
