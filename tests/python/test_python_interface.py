@@ -2,7 +2,7 @@ import os
 import shutil
 import unittest
 from pysciqlop_cache import  Cache
-from  tempfile import TemporaryDirectory
+import tempfile
 import time
 
 class TestCache(unittest.TestCase):
@@ -11,8 +11,8 @@ class TestCache(unittest.TestCase):
         """
         Set up the test environment.
         """
-        self.tmp_dir = TemporaryDirectory(delete=False)
-        self.cache = Cache(self.tmp_dir.name)
+        self.tmp_dir = tempfile.mkdtemp()
+        self.cache = Cache(self.tmp_dir)
 
     def tearDown(self):
         """
@@ -20,7 +20,7 @@ class TestCache(unittest.TestCase):
         """
         if hasattr(self, 'cache'):
             del self.cache
-        shutil.rmtree(self.tmp_dir.name)
+        shutil.rmtree(self.tmp_dir)
 
     def test_simple_set_get(self):
         """
@@ -386,14 +386,14 @@ class TestCache(unittest.TestCase):
 class TestIndex(unittest.TestCase):
 
     def setUp(self):
-        self.tmp_dir = TemporaryDirectory(delete=False)
+        self.tmp_dir = tempfile.mkdtemp()
         from pysciqlop_cache import Index
-        self.index = Index(self.tmp_dir.name)
+        self.index = Index(self.tmp_dir)
 
     def tearDown(self):
         if hasattr(self, 'index'):
             del self.index
-        shutil.rmtree(self.tmp_dir.name)
+        shutil.rmtree(self.tmp_dir)
 
     def test_set_get(self):
         self.index.set("key", "hello")
@@ -463,7 +463,7 @@ class TestIndex(unittest.TestCase):
 
     def test_context_manager(self):
         from pysciqlop_cache import Index
-        with Index(self.tmp_dir.name) as idx:
+        with Index(self.tmp_dir) as idx:
             idx.set("k", "v")
             self.assertEqual(idx.get("k"), "v")
 
@@ -480,13 +480,13 @@ class TestIndex(unittest.TestCase):
 class TestTransact(unittest.TestCase):
 
     def setUp(self):
-        self.tmp_dir = TemporaryDirectory(delete=False)
-        self.cache = Cache(self.tmp_dir.name)
+        self.tmp_dir = tempfile.mkdtemp()
+        self.cache = Cache(self.tmp_dir)
 
     def tearDown(self):
         if hasattr(self, 'cache'):
             del self.cache
-        shutil.rmtree(self.tmp_dir.name)
+        shutil.rmtree(self.tmp_dir)
 
     def test_transact_commits_on_clean_exit(self):
         with self.cache.transact():
@@ -541,14 +541,14 @@ class TestTransact(unittest.TestCase):
 class TestFanoutCache(unittest.TestCase):
 
     def setUp(self):
-        self.tmp_dir = TemporaryDirectory(delete=False)
+        self.tmp_dir = tempfile.mkdtemp()
         from pysciqlop_cache import FanoutCache
-        self.cache = FanoutCache(self.tmp_dir.name, shard_count=4)
+        self.cache = FanoutCache(self.tmp_dir, shard_count=4)
 
     def tearDown(self):
         if hasattr(self, 'cache'):
             del self.cache
-        shutil.rmtree(self.tmp_dir.name)
+        shutil.rmtree(self.tmp_dir)
 
     def test_set_get(self):
         self.cache.set("key1", "value1")
@@ -656,14 +656,14 @@ class TestFanoutCache(unittest.TestCase):
 class TestFanoutIndex(unittest.TestCase):
 
     def setUp(self):
-        self.tmp_dir = TemporaryDirectory(delete=False)
+        self.tmp_dir = tempfile.mkdtemp()
         from pysciqlop_cache import FanoutIndex
-        self.index = FanoutIndex(self.tmp_dir.name, shard_count=4)
+        self.index = FanoutIndex(self.tmp_dir, shard_count=4)
 
     def tearDown(self):
         if hasattr(self, 'index'):
             del self.index
-        shutil.rmtree(self.tmp_dir.name)
+        shutil.rmtree(self.tmp_dir)
 
     def test_set_get(self):
         self.index.set("key1", "value1")
@@ -771,15 +771,15 @@ class TestMmapCache(unittest.TestCase):
     """
 
     def setUp(self):
-        self.tmp_dir = TemporaryDirectory(delete=False)
-        self.cache = Cache(self.tmp_dir.name)
+        self.tmp_dir = tempfile.mkdtemp()
+        self.cache = Cache(self.tmp_dir)
         # 16KB values — above the 8KB file threshold
         self.large_value = b"x" * (16 * 1024)
 
     def tearDown(self):
         if hasattr(self, 'cache'):
             del self.cache
-        shutil.rmtree(self.tmp_dir.name)
+        shutil.rmtree(self.tmp_dir)
 
     def test_no_key_mixup(self):
         for i in range(20):
@@ -828,13 +828,13 @@ class TestMmapCache(unittest.TestCase):
 class TestIterkeys(unittest.TestCase):
 
     def setUp(self):
-        self.tmp_dir = TemporaryDirectory(delete=False)
-        self.cache = Cache(self.tmp_dir.name)
+        self.tmp_dir = tempfile.mkdtemp()
+        self.cache = Cache(self.tmp_dir)
 
     def tearDown(self):
         if hasattr(self, 'cache'):
             del self.cache
-        shutil.rmtree(self.tmp_dir.name)
+        shutil.rmtree(self.tmp_dir)
 
     def test_iterkeys_empty(self):
         self.assertEqual(list(self.cache.iterkeys()), [])
@@ -884,13 +884,13 @@ class TestErrorHandling(unittest.TestCase):
 class TestLock(unittest.TestCase):
 
     def setUp(self):
-        self.tmp_dir = TemporaryDirectory(delete=False)
-        self.cache = Cache(self.tmp_dir.name)
+        self.tmp_dir = tempfile.mkdtemp()
+        self.cache = Cache(self.tmp_dir)
 
     def tearDown(self):
         if hasattr(self, 'cache'):
             del self.cache
-        shutil.rmtree(self.tmp_dir.name)
+        shutil.rmtree(self.tmp_dir)
 
     def test_lock_context_manager(self):
         with self.cache.lock("mylock"):
@@ -949,13 +949,13 @@ class TestMemoryViewLifetime(unittest.TestCase):
     """Reproducer: memoryview from a temporary Buffer can dangle after Buffer is GC'd."""
 
     def setUp(self):
-        self.tmp_dir = TemporaryDirectory(delete=False)
+        self.tmp_dir = tempfile.mkdtemp()
         from pysciqlop_cache._pysciqlop_cache import Index as _RawIndex
-        self.index = _RawIndex(path=self.tmp_dir.name)
+        self.index = _RawIndex(path=self.tmp_dir)
 
     def tearDown(self):
         del self.index
-        shutil.rmtree(self.tmp_dir.name)
+        shutil.rmtree(self.tmp_dir)
 
     def test_memoryview_from_temporary_buffer_dangling(self):
         """Get a memoryview from a temporary Buffer (no variable holds the Buffer).

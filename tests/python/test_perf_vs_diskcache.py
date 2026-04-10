@@ -2,7 +2,7 @@ import os
 import shutil
 import timeit
 import unittest
-from tempfile import TemporaryDirectory
+import tempfile
 
 try:
     import diskcache
@@ -25,18 +25,18 @@ class TestPerfVsDiskcache(unittest.TestCase):
     MARGIN = 2.0  # fail if sciqlop-cache is more than 2x slower
 
     def setUp(self):
-        self.sq_dir = TemporaryDirectory(delete=False)
-        self.dc_dir = TemporaryDirectory(delete=False)
-        self.sq_cache = Cache(self.sq_dir.name)
-        self.dc_cache = diskcache.Cache(self.dc_dir.name)
+        self.sq_dir = tempfile.mkdtemp()
+        self.dc_dir = tempfile.mkdtemp()
+        self.sq_cache = Cache(self.sq_dir)
+        self.dc_cache = diskcache.Cache(self.dc_dir)
         self.key = "bench/key/test"
         self.value = b"x" * 200
 
     def tearDown(self):
         del self.sq_cache
         self.dc_cache.close()
-        shutil.rmtree(self.sq_dir.name, ignore_errors=True)
-        shutil.rmtree(self.dc_dir.name, ignore_errors=True)
+        shutil.rmtree(self.sq_dir, ignore_errors=True)
+        shutil.rmtree(self.dc_dir, ignore_errors=True)
 
     def test_set_not_slower_than_diskcache(self):
         key, value = self.key, self.value

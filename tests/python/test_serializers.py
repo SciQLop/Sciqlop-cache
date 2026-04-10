@@ -1,6 +1,6 @@
 import shutil
 import unittest
-from tempfile import TemporaryDirectory
+import tempfile
 
 import numpy as np
 
@@ -31,14 +31,14 @@ class FakeSpeasyVariable:
 
 class TestPickleSerializer(unittest.TestCase):
     def setUp(self):
-        self.tmp_dir = TemporaryDirectory(delete=False)
+        self.tmp_dir = tempfile.mkdtemp()
         self.cache = Cache(
-            self.tmp_dir.name, serializer=PickleSerializer()
+            self.tmp_dir, serializer=PickleSerializer()
         )
 
     def tearDown(self):
         del self.cache
-        shutil.rmtree(self.tmp_dir.name)
+        shutil.rmtree(self.tmp_dir)
 
     def test_basic_types(self):
         for key, value in [
@@ -84,14 +84,14 @@ class TestPickleSerializer(unittest.TestCase):
 @unittest.skipUnless(_has_msgspec, "msgspec not installed")
 class TestMsgspecSerializer(unittest.TestCase):
     def setUp(self):
-        self.tmp_dir = TemporaryDirectory(delete=False)
+        self.tmp_dir = tempfile.mkdtemp()
         self.cache = Cache(
-            self.tmp_dir.name, serializer=MsgspecSerializer()
+            self.tmp_dir, serializer=MsgspecSerializer()
         )
 
     def tearDown(self):
         del self.cache
-        shutil.rmtree(self.tmp_dir.name)
+        shutil.rmtree(self.tmp_dir)
 
     def test_basic_types(self):
         for key, value in [
@@ -201,41 +201,41 @@ class TestMsgspecSerializer(unittest.TestCase):
 
 class TestSerializerPersistence(unittest.TestCase):
     def setUp(self):
-        self.tmp_dir = TemporaryDirectory(delete=False)
+        self.tmp_dir = tempfile.mkdtemp()
 
     def tearDown(self):
-        shutil.rmtree(self.tmp_dir.name)
+        shutil.rmtree(self.tmp_dir)
 
     @unittest.skipUnless(_has_msgspec, "msgspec not installed")
     def test_reopen_without_serializer_arg(self):
-        cache = Cache(self.tmp_dir.name, serializer=MsgspecSerializer())
+        cache = Cache(self.tmp_dir, serializer=MsgspecSerializer())
         cache.set("key", "value")
         del cache
 
         # Reopen without specifying serializer — should auto-detect
-        cache2 = Cache(self.tmp_dir.name)
+        cache2 = Cache(self.tmp_dir)
         self.assertEqual(cache2.get("key"), "value")
         self.assertEqual(cache2.serializer.name, "msgspec")
 
     def test_reopen_with_matching_serializer(self):
-        cache = Cache(self.tmp_dir.name, serializer=PickleSerializer())
+        cache = Cache(self.tmp_dir, serializer=PickleSerializer())
         cache.set("key", 42)
         del cache
 
-        cache2 = Cache(self.tmp_dir.name, serializer=PickleSerializer())
+        cache2 = Cache(self.tmp_dir, serializer=PickleSerializer())
         self.assertEqual(cache2.get("key"), 42)
 
     @unittest.skipUnless(_has_msgspec, "msgspec not installed")
     def test_reopen_with_wrong_serializer_raises(self):
-        cache = Cache(self.tmp_dir.name, serializer=MsgspecSerializer())
+        cache = Cache(self.tmp_dir, serializer=MsgspecSerializer())
         cache.set("key", "value")
         del cache
 
         with self.assertRaises(ValueError):
-            Cache(self.tmp_dir.name, serializer=PickleSerializer())
+            Cache(self.tmp_dir, serializer=PickleSerializer())
 
     def test_default_is_pickle(self):
-        cache = Cache(self.tmp_dir.name)
+        cache = Cache(self.tmp_dir)
         self.assertEqual(cache.serializer.name, "pickle")
 
 

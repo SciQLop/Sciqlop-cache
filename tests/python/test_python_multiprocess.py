@@ -1,7 +1,7 @@
 import shutil
 import unittest
 from pysciqlop_cache import Cache
-from tempfile import TemporaryDirectory
+import tempfile
 from multiprocessing import Pool
 from functools import partial
 
@@ -27,19 +27,19 @@ def locked_increment(path, n):
 class TestMultiProcessCache(unittest.TestCase):
 
     def setUp(self):
-        self.tmp_dir = TemporaryDirectory(delete=False)
+        self.tmp_dir = tempfile.mkdtemp()
 
     def tearDown(self):
-        shutil.rmtree(self.tmp_dir.name)
+        shutil.rmtree(self.tmp_dir)
 
     def test_multiprocess_cache_get(self):
-        cache = Cache(self.tmp_dir.name)
+        cache = Cache(self.tmp_dir)
         cache.set("shared_key", "shared_value")
         del cache
 
         with Pool(processes=2) as pool:
             results = pool.map(
-                partial(get_cache_value, self.tmp_dir.name),
+                partial(get_cache_value, self.tmp_dir),
                 ["shared_key"] * 4,
             )
 
@@ -50,18 +50,18 @@ class TestMultiProcessCache(unittest.TestCase):
     def test_multiprocess_cache_set(self):
         with Pool(processes=2) as pool:
             pool.map(
-                partial(set_cache_value, self.tmp_dir.name, "shared_key"),
+                partial(set_cache_value, self.tmp_dir, "shared_key"),
                 ["shared_value"] * 4,
             )
 
-        cache = Cache(self.tmp_dir.name)
+        cache = Cache(self.tmp_dir)
         assert (
             cache.get("shared_key") == "shared_value"
         ), "Cache value should be 'shared_value'"
 
 
     def test_multiprocess_lock_prevents_lost_updates(self):
-        cache = Cache(self.tmp_dir.name)
+        cache = Cache(self.tmp_dir)
         cache.set("counter", 0)
         del cache
 
@@ -70,10 +70,10 @@ class TestMultiProcessCache(unittest.TestCase):
         with Pool(processes=n_processes) as pool:
             pool.starmap(
                 locked_increment,
-                [(self.tmp_dir.name, increments_per_process)] * n_processes,
+                [(self.tmp_dir, increments_per_process)] * n_processes,
             )
 
-        cache = Cache(self.tmp_dir.name)
+        cache = Cache(self.tmp_dir)
         self.assertEqual(
             cache.get("counter"),
             n_processes * increments_per_process,
