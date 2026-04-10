@@ -94,8 +94,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: run tests
         run: |
-          pip install pytest ddt requests
-          python -m pytest --tb=short --disable-warnings -v tests --ignore=tests/python/test_hypothesis.py --ignore=tests/python/test_torture.py --ignore=tests/python/test_perf_vs_diskcache.py
+          pip install pytest ddt requests hypothesis diskcache
+          python -m pytest --import-mode=importlib --tb=short --disable-warnings -v tests/python
 
   test_wheels_macos_14:
     needs: [build_wheels]
@@ -126,8 +126,8 @@ jobs:
       - name: run tests
         run: |
           pyenv local ${{ matrix.python-version }}
-          python3 -m pip install --break-system-packages pytest ddt requests
-          python3 -m pytest --tb=short --disable-warnings -v tests --ignore=tests/python/test_hypothesis.py --ignore=tests/python/test_torture.py --ignore=tests/python/test_perf_vs_diskcache.py
+          python3 -m pip install --break-system-packages pytest ddt requests hypothesis diskcache
+          python3 -m pytest --import-mode=importlib --tb=short --disable-warnings -v tests/python
 
 
   upload_pypi:
