@@ -18,7 +18,15 @@
 #include <string>
 #include <thread>
 #include <unordered_set>
+#ifdef _WIN32
+#include <process.h>
+inline int _sq_getpid() { return _getpid(); }
+using _sq_pid_t = int;
+#else
 #include <unistd.h>
+inline pid_t _sq_getpid() { return getpid(); }
+using _sq_pid_t = pid_t;
+#endif
 
 template <typename Storage, typename... Policies>
 class _Store : private Policies...
@@ -37,7 +45,7 @@ class _Store : private Policies...
     std::atomic<bool> _stop_checkpoint { false };
     std::mutex _checkpoint_mutex;
     std::condition_variable _checkpoint_cv;
-    pid_t _owner_pid;
+    _sq_pid_t _owner_pid;
     mutable Database _db;
     mutable std::recursive_mutex _mtx;
     bool _in_transaction = false;
@@ -709,7 +717,7 @@ public:
             : cache_path(cache_path)
             , max_size(max_size)
             , storage(std::make_unique<Storage>(cache_path))
-            , _owner_pid(getpid())
+            , _owner_pid(_sq_getpid())
     {
         _init_db();
         _checkpoint_thread = std::thread(&_Store::_checkpoint_loop, this);
@@ -717,7 +725,7 @@ public:
 
     ~_Store()
     {
-        if (getpid() != _owner_pid)
+        if (_sq_getpid() != _owner_pid)
         {
             if (_checkpoint_thread.joinable())
                 (void)new std::thread(std::move(_checkpoint_thread));
