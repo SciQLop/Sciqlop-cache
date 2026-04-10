@@ -81,6 +81,60 @@ idx = Index("/tmp/my-index")
 idx["dataset/v2"] = metadata
 ```
 
+### Distributed Locking
+
+```python
+# Cross-process lock backed by atomic add()
+with cache.lock("my-resource", expire=30):
+    # exclusive access across processes
+    do_work()
+```
+
+### Memoization
+
+```python
+@cache.memoize(expire=300, tag="compute")
+def expensive(x, y):
+    return heavy_computation(x, y)
+
+expensive(1, 2)  # computed
+expensive(1, 2)  # served from cache
+```
+
+### Atomic Counters
+
+```python
+cache.incr("page_views")             # 1
+cache.incr("page_views", delta=5)    # 6
+cache.decr("page_views")             # 5
+```
+
+### Hit/Miss Statistics
+
+```python
+cache = Cache("/tmp/stats")
+cache.set("k", "v")
+cache.get("k")          # hit
+cache.get("missing")    # miss
+print(cache.stats())    # {"hits": 1, "misses": 1}
+cache.reset_stats()
+```
+
+### Integrity Checking
+
+```python
+result = cache.check()       # verify structural integrity
+result = cache.check(True)   # verify and fix (orphaned files, counter drift)
+print(result.ok, result.orphaned_files, result.dangling_rows)
+```
+
+### Disk Usage
+
+```python
+print(cache.volume())  # total bytes on disk (SQLite DB + file-backed values)
+print(cache.size())    # total bytes of stored values only
+```
+
 ### Dict-like Interface
 
 All store types support the standard Python dict interface:
@@ -92,6 +146,24 @@ del cache["key"]               # delete
 "key" in cache                 # exists
 for key in cache: ...          # iterate keys
 len(cache)                     # count
+```
+
+## Migrating from diskcache
+
+```bash
+# Migrate an existing diskcache to sciqlop-cache
+python -m pysciqlop_cache.migrate /old/diskcache /new/sciqlop-cache
+
+# Migrate and delete entries from source as they are copied
+python -m pysciqlop_cache.migrate --drop /old/diskcache /new/sciqlop-cache
+```
+
+Auto-detects `Cache` vs `FanoutCache`, preserves expiration TTLs and tags. Also usable as a library:
+
+```python
+from pysciqlop_cache.migrate import migrate
+result = migrate("/old/cache", "/new/cache", drop=True)
+print(result)  # {"migrated": 1234, "skipped": 0, "errors": 0, "elapsed_secs": 1.5}
 ```
 
 ## C++ API
@@ -117,10 +189,26 @@ cache.evict_tag("mytag");                      // bulk remove by tag
 // Bare key-value store (no expiration/eviction/tags overhead)
 Index index(".index/");
 
+// Atomic counters
+cache.incr("counter", 1, /*default=*/0);
+cache.decr("counter");
+
+// Integrity and diagnostics
+auto cr = cache.check();         // structural integrity
+auto cr2 = cache.check(true);    // verify and fix
+cache.volume();                  // total disk usage in bytes
+cache.stats();                   // {hits, misses}
+
 // Sharded variants for write concurrency
 FanoutCache fc(".fc/", /*shard_count=*/8, /*max_size=*/0);
 FanoutIndex fi(".fi/", /*shard_count=*/8);
 ```
+
+## Concurrency
+
+- **Thread-safe**: per-instance mutex + per-instance SQLite connection. Multiple threads can share a single `Cache` instance.
+- **Multi-process safe**: SQLite WAL mode with 600s busy timeout. Multiple processes can open the same cache directory.
+- **FanoutCache/FanoutIndex**: shard keys across N independent stores for write concurrency. Each shard has its own database and lock.
 
 ## Performance
 
