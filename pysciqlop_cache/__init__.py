@@ -226,7 +226,7 @@ class Cache(_Cache):
         ).hexdigest()
         return f"{base}:{key_hash}"
 
-    def memoize(self, expire=None, tag=None, typed=False):
+    def memoize(self, expire=None, tag=None, typed=False, version_aware=False):
         """Decorator to memoize function results in cache.
 
         Parameters:
@@ -235,6 +235,9 @@ class Cache(_Cache):
         tag (str): Optional tag for bulk eviction of memoized entries.
         typed (bool): If True, arguments of different types are cached
             separately (e.g. f(1) and f(1.0) get different cache entries).
+        version_aware (bool): If True, the function's bytecode is included
+            in the cache key so that implementation changes automatically
+            invalidate cached results.
 
         Usage:
             cache = Cache()
@@ -246,6 +249,9 @@ class Cache(_Cache):
 
         def decorator(func):
             base = f"{func.__module__}.{func.__qualname__}"
+            if version_aware:
+                code_hash = hashlib.sha256(func.__code__.co_code).hexdigest()[:16]
+                base = f"{base}@{code_hash}"
 
             @functools.wraps(func)
             def wrapper(*args, **kwargs):
@@ -455,6 +461,48 @@ class FanoutCache(_FanoutCache):
 
     def __repr__(self) -> str:
         return f"FanoutCache({str(super().path())!r}, shards={self.shard_count()}, count={len(self)})"
+
+    def _memoize_key(self, base, args, kwargs, typed):
+        key_data = (args, tuple(sorted(kwargs.items())))
+        if typed:
+            key_data += (
+                tuple(type(a) for a in args),
+                tuple(type(v) for v in kwargs.values()),
+            )
+        key_hash = hashlib.sha256(
+            self._serializer.dumps(key_data)
+        ).hexdigest()
+        return f"{base}:{key_hash}"
+
+    def memoize(self, expire=None, tag=None, typed=False, version_aware=False):
+        """Decorator to memoize function results in cache.
+
+        See Cache.memoize for full documentation.
+        """
+
+        def decorator(func):
+            base = f"{func.__module__}.{func.__qualname__}"
+            if version_aware:
+                code_hash = hashlib.sha256(func.__code__.co_code).hexdigest()[:16]
+                base = f"{base}@{code_hash}"
+
+            @functools.wraps(func)
+            def wrapper(*args, **kwargs):
+                key = self._memoize_key(base, args, kwargs, typed)
+                result = self.get(key, _MISSING)
+                if result is not _MISSING:
+                    return result
+                result = func(*args, **kwargs)
+                self.set(key, result, expire=expire, tag=tag)
+                return result
+
+            wrapper.__cache_key__ = lambda *args, **kwargs: self._memoize_key(
+                base, args, kwargs, typed
+            )
+            wrapper.__wrapped__ = func
+            return wrapper
+
+        return decorator
 
     def lock(self, key, expire=None, tag=None):
         return Lock(self, key, expire=expire, tag=tag)
