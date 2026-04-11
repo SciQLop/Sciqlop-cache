@@ -355,7 +355,7 @@ class TestCache(unittest.TestCase):
         self.assertEqual(len(self.cache), 0)
 
     def test_max_size_constructor(self):
-        with TemporaryDirectory() as td:
+        with tempfile.TemporaryDirectory() as td:
             cache = Cache(td, max_size=500)
             data = b"a" * 100
             for i in range(10):
@@ -521,7 +521,7 @@ class TestTransact(unittest.TestCase):
 
     def test_transact_on_index(self):
         from pysciqlop_cache import Index
-        with TemporaryDirectory() as td:
+        with tempfile.TemporaryDirectory() as td:
             idx = Index(td)
             with idx.transact() as txn:
                 txn.set("a", 1)
@@ -529,7 +529,7 @@ class TestTransact(unittest.TestCase):
 
     def test_transact_index_rollback(self):
         from pysciqlop_cache import Index
-        with TemporaryDirectory() as td:
+        with tempfile.TemporaryDirectory() as td:
             idx = Index(td)
             with self.assertRaises(ValueError):
                 with idx.transact():
@@ -715,7 +715,7 @@ class TestFanoutIndex(unittest.TestCase):
 class TestCheckResult(unittest.TestCase):
 
     def test_check_returns_result_object(self):
-        with TemporaryDirectory() as d:
+        with tempfile.TemporaryDirectory() as d:
             c = Cache(os.path.join(d, "check_test"))
             c["key"] = b"value"
             result = c.check()
@@ -727,7 +727,7 @@ class TestCheckResult(unittest.TestCase):
             self.assertTrue(result.sqlite_integrity_ok)
 
     def test_check_fix(self):
-        with TemporaryDirectory() as d:
+        with tempfile.TemporaryDirectory() as d:
             c = Cache(os.path.join(d, "check_fix"))
             c["key"] = b"value"
             result = c.check(fix=True)
@@ -735,7 +735,7 @@ class TestCheckResult(unittest.TestCase):
 
     def test_fanout_check_returns_result_object(self):
         from pysciqlop_cache import FanoutCache
-        with TemporaryDirectory() as d:
+        with tempfile.TemporaryDirectory() as d:
             fc = FanoutCache(os.path.join(d, "fanout_check"), shard_count=4)
             fc["key1"] = b"value1"
             fc["key2"] = b"value2"
@@ -746,7 +746,7 @@ class TestCheckResult(unittest.TestCase):
 
     def test_fanout_check_fix(self):
         from pysciqlop_cache import FanoutCache
-        with TemporaryDirectory() as d:
+        with tempfile.TemporaryDirectory() as d:
             fc = FanoutCache(os.path.join(d, "fanout_check_fix"), shard_count=4)
             fc["key"] = b"data"
             result = fc.check(fix=True)
@@ -754,7 +754,7 @@ class TestCheckResult(unittest.TestCase):
 
     def test_fanout_index_check_returns_result_object(self):
         from pysciqlop_cache import FanoutIndex
-        with TemporaryDirectory() as d:
+        with tempfile.TemporaryDirectory() as d:
             fi = FanoutIndex(os.path.join(d, "fanout_idx_check"), shard_count=4)
             fi["key1"] = b"value1"
             result = fi.check()
@@ -859,7 +859,7 @@ class TestIterkeys(unittest.TestCase):
 
     def test_iterkeys_index(self):
         from pysciqlop_cache import Index
-        with TemporaryDirectory() as td:
+        with tempfile.TemporaryDirectory() as td:
             idx = Index(td)
             idx.set("x", 1)
             idx.set("y", 2)
@@ -867,7 +867,7 @@ class TestIterkeys(unittest.TestCase):
 
     def test_iterkeys_fanout(self):
         from pysciqlop_cache import FanoutCache
-        with TemporaryDirectory() as td:
+        with tempfile.TemporaryDirectory() as td:
             fc = FanoutCache(td, shard_count=4)
             for i in range(10):
                 fc.set(f"k{i}", f"v{i}")
@@ -938,7 +938,7 @@ class TestLock(unittest.TestCase):
 
     def test_fanout_lock(self):
         from pysciqlop_cache import FanoutCache
-        with TemporaryDirectory() as td:
+        with tempfile.TemporaryDirectory() as td:
             fc = FanoutCache(td, shard_count=4)
             with fc.lock("fanout_lock"):
                 self.assertIn("fanout_lock", fc)
