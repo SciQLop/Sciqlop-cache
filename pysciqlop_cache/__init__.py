@@ -202,9 +202,10 @@ class Cache(_Cache):
 
         If the key does not exist, sets it to default + delta.
         """
-        value = self.get(key, default)
-        new_value = value + delta
-        self.set(key, new_value)
+        with self.transact():
+            value = self.get(key, default)
+            new_value = value + delta
+            self.set(key, new_value)
         return new_value
 
     def decr(self, key: AnyStr, delta: int = 1, default: int = 0) -> int:
@@ -348,9 +349,10 @@ class Index(_Index):
         return super().add(key, self._serializer.dumps(value))
 
     def incr(self, key: AnyStr, delta: int = 1, default: int = 0) -> int:
-        value = self.get(key, default)
-        new_value = value + delta
-        self.set(key, new_value)
+        with self.transact():
+            value = self.get(key, default)
+            new_value = value + delta
+            self.set(key, new_value)
         return new_value
 
     def decr(self, key: AnyStr, delta: int = 1, default: int = 0) -> int:

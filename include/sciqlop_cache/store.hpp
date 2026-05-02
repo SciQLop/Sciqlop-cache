@@ -428,51 +428,43 @@ class _Store : private Policies...
     DbGuard db() const { return { _db, std::unique_lock(_mtx) }; }
 
 public:
+    // Snapshot iterator: pulls all keys into memory under the store mutex at
+    // construction, then iterates lock-free. Trade-off: O(N) memory at start,
+    // but no lock contention for other threads while the user iterates.
+    // Snapshot semantics: keys added after iter starts are not seen — same as
+    // calling keys() then iterating the returned vector.
     class KeyCursor
     {
-        std::unique_lock<std::recursive_mutex> _lock;
-        sqlite3_stmt* _stmt = nullptr;
-        bool _done = false;
+        std::vector<std::string> _keys;
+        std::size_t _pos = 0;
 
     public:
         KeyCursor(std::recursive_mutex& mtx, sqlite3* db, const std::string& sql)
-            : _lock(mtx)
         {
-            if (sqlite3_prepare_v2(db, sql.c_str(), -1, &_stmt, nullptr) != SQLITE_OK)
+            std::lock_guard lk { mtx };
+            sqlite3_stmt* stmt = nullptr;
+            if (sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, nullptr) != SQLITE_OK)
             {
-                throw std::runtime_error(
-                    std::string("Failed to prepare key iterator: ") + sqlite3_errmsg(db));
+                std::string err = sqlite3_errmsg(db);
+                if (stmt) sqlite3_finalize(stmt);
+                throw std::runtime_error("Failed to prepare key iterator: " + err);
             }
+            while (sqlite3_step(stmt) == SQLITE_ROW)
+            {
+                auto v = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
+                _keys.emplace_back(v ? v : "");
+            }
+            sqlite3_finalize(stmt);
         }
 
         KeyCursor(const KeyCursor&) = delete;
         KeyCursor& operator=(const KeyCursor&) = delete;
-        KeyCursor(KeyCursor&& other) noexcept
-            : _lock(std::move(other._lock))
-            , _stmt(other._stmt)
-            , _done(other._done)
-        {
-            other._stmt = nullptr;
-            other._done = true;
-        }
-
-        ~KeyCursor()
-        {
-            if (_stmt)
-                sqlite3_finalize(_stmt);
-        }
+        KeyCursor(KeyCursor&&) noexcept = default;
 
         std::optional<std::string> next()
         {
-            if (_done) return std::nullopt;
-            int rc = sqlite3_step(_stmt);
-            if (rc == SQLITE_ROW)
-            {
-                auto v = reinterpret_cast<const char*>(sqlite3_column_text(_stmt, 0));
-                return v ? std::string(v) : std::string {};
-            }
-            _done = true;
-            return std::nullopt;
+            if (_pos >= _keys.size()) return std::nullopt;
+            return std::move(_keys[_pos++]);
         }
     };
 
@@ -742,15 +734,17 @@ public:
 
     TransactionGuard begin_user_transaction()
     {
+        // Hold _mtx through TransactionGuard construction so concurrent callers
+        // serialize on the mutex instead of seeing _in_transaction=true and
+        // throwing. recursive_mutex allows the constructor's own _lock(_mtx) to
+        // re-enter on the same thread.
         std::unique_lock lock(_mtx);
         if (_in_transaction)
             throw std::runtime_error("Nested transactions are not supported");
         _in_transaction = true;
-        lock.unlock();
         try {
             return TransactionGuard(*this);
         } catch (...) {
-            std::lock_guard g(_mtx);
             _in_transaction = false;
             throw;
         }
@@ -958,9 +952,18 @@ public:
 
     inline std::optional<Buffer> pop(const std::string& key)
     {
+        // Hold _mtx for the whole op so concurrent threads can't slip a set()
+        // between get and del. Wrap in BEGIN EXCLUSIVE so concurrent processes
+        // can't either (multi-process safety via SQLite reserved locks).
+        auto db = this->db();
+        std::optional<Transaction> transaction;
+        if (!_in_transaction)
+            transaction.emplace(db->begin_transaction(true));
         auto result = get(key);
         if (result)
             del(key);
+        if (transaction)
+            transaction->commit();
         return result;
     }
 

@@ -280,9 +280,15 @@ public:
 
     Transaction& operator=(Transaction&& other) = delete;
 
-    ~Transaction() { try_commit(); }
+    // Roll back on destruction unless commit() was explicitly called. Auto-
+    // commit on scope exit is dangerous: an exception mid-transaction would
+    // commit a partial state. RAII transactions follow the rollback-by-default
+    // convention.
+    ~Transaction() { try_rollback(); }
 
-    [[nodiscard]] inline bool rollback()
+    [[nodiscard]] inline bool rollback() noexcept { return try_rollback(); }
+
+    inline bool try_rollback() noexcept
     {
         if (db && !committed)
         {

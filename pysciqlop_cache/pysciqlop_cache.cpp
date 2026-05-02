@@ -17,12 +17,18 @@ using namespace nb::literals;
 using OptDuration = std::optional<std::chrono::system_clock::duration>;
 using OptString = std::optional<std::string>;
 
+// Extract the byte span from nb::bytes (must run with GIL held: PyBytes API),
+// then release the GIL during the C++ store call so concurrent Python threads
+// can run. Without this, set/add hold the GIL while blocking on _mtx, which
+// deadlocks any other thread trying to call into the cache.
+
 template <typename T>
 inline void _set_item_impl(T& c, const std::string& key, nb::bytes& buffer,
                             OptDuration expire = std::nullopt,
                             OptString tag = std::nullopt)
 {
     auto data = std::span<const char>(static_cast<const char*>(buffer.data()), buffer.size());
+    nb::gil_scoped_release release;
     if (expire && tag)
         c.set(key, data, *expire, *tag);
     else if (expire)
@@ -39,6 +45,7 @@ inline bool _add_item_impl(T& c, const std::string& key, nb::bytes& buffer,
                             OptString tag = std::nullopt)
 {
     auto data = std::span<const char>(static_cast<const char*>(buffer.data()), buffer.size());
+    nb::gil_scoped_release release;
     if (expire && tag)
         return c.add(key, data, *expire, *tag);
     else if (expire)
@@ -53,6 +60,7 @@ template <typename T>
 inline void _simple_set_item(T& s, const std::string& key, nb::bytes& buffer)
 {
     auto data = std::span<const char>(static_cast<const char*>(buffer.data()), buffer.size());
+    nb::gil_scoped_release release;
     s.set(key, data);
 }
 
@@ -60,6 +68,7 @@ template <typename T>
 inline bool _simple_add_item(T& s, const std::string& key, nb::bytes& buffer)
 {
     auto data = std::span<const char>(static_cast<const char*>(buffer.data()), buffer.size());
+    nb::gil_scoped_release release;
     return s.add(key, data);
 }
 
@@ -68,8 +77,15 @@ void bind_key_cursor(nb::module_& m, const char* name)
 {
     nb::class_<CursorType>(m, name)
         .def("__iter__", [](nb::handle self) { return self; })
+        // Release GIL so other threads can run between cursor steps. Without
+        // this, an iter loop monopolizes the GIL while holding the store mutex
+        // → any other thread calling into C++ deadlocks.
         .def("__next__", [](CursorType& c) -> std::string {
-            auto val = c.next();
+            std::optional<std::string> val;
+            {
+                nb::gil_scoped_release release;
+                val = c.next();
+            }
             if (!val) throw nb::stop_iteration();
             return *val;
         });
@@ -137,32 +153,41 @@ NB_MODULE(_pysciqlop_cache, m)
         .def_ro("sqlite_integrity_ok", &Index::CheckResult::sqlite_integrity_ok);
 
     nb::class_<Cache::TransactionGuard>(m, "CacheTransactionGuard")
-        .def("commit", &Cache::TransactionGuard::commit)
-        .def("rollback", &Cache::TransactionGuard::rollback);
+        .def("commit", &Cache::TransactionGuard::commit,
+             nb::call_guard<nb::gil_scoped_release>())
+        .def("rollback", &Cache::TransactionGuard::rollback,
+             nb::call_guard<nb::gil_scoped_release>());
 
     nb::class_<Index::TransactionGuard>(m, "IndexTransactionGuard")
-        .def("commit", &Index::TransactionGuard::commit)
-        .def("rollback", &Index::TransactionGuard::rollback);
+        .def("commit", &Index::TransactionGuard::commit,
+             nb::call_guard<nb::gil_scoped_release>())
+        .def("rollback", &Index::TransactionGuard::rollback,
+             nb::call_guard<nb::gil_scoped_release>());
 
     nb::class_<Cache>(m, "Cache")
         .def(nb::init<const std::string&, size_t>(), "cache_path"_a = ".cache/",
              "max_size"_a = 0)
-        .def("count", &Cache::count)
-        .def("__len__", &Cache::count)
+        .def("count", &Cache::count, nb::call_guard<nb::gil_scoped_release>())
+        .def("__len__", &Cache::count, nb::call_guard<nb::gil_scoped_release>())
         .def("set", _set_item_impl<Cache>, nb::arg("key"), nb::arg("value"),
              nb::arg("expire") = nb::none(), nb::arg("tag") = nb::none())
         .def(
             "__setitem__", [](Cache& c, const std::string& key, nb::bytes& buffer)
             { _set_item_impl(c, key, buffer); }, nb::arg("key"), nb::arg("value"))
-        .def("get", &Cache::get, nb::arg("key"))
-        .def("__getitem__", &Cache::get, nb::arg("key"))
-        .def("keys", &Cache::keys)
+        .def("get", &Cache::get, nb::arg("key"),
+             nb::call_guard<nb::gil_scoped_release>())
+        .def("__getitem__", &Cache::get, nb::arg("key"),
+             nb::call_guard<nb::gil_scoped_release>())
+        .def("keys", &Cache::keys, nb::call_guard<nb::gil_scoped_release>())
         .def("iterkeys", &Cache::iterkeys)
-        .def("exists", &Cache::exists, nb::arg("key"))
+        .def("exists", &Cache::exists, nb::arg("key"),
+             nb::call_guard<nb::gil_scoped_release>())
         .def("add", _add_item_impl<Cache>, nb::arg("key"), nb::arg("value"),
              nb::arg("expire") = nb::none(), nb::arg("tag") = nb::none())
-        .def("delete", &Cache::del, nb::arg("key"))
-        .def("pop", &Cache::pop, nb::arg("key"))
+        .def("delete", &Cache::del, nb::arg("key"),
+             nb::call_guard<nb::gil_scoped_release>())
+        .def("pop", &Cache::pop, nb::arg("key"),
+             nb::call_guard<nb::gil_scoped_release>())
         .def(
             "touch",
             [](Cache& c, const std::string& key, std::chrono::system_clock::duration expire)
@@ -190,22 +215,28 @@ NB_MODULE(_pysciqlop_cache, m)
             return d;
         })
         .def("reset_stats", &Cache::reset_stats)
-        .def("begin_user_transaction", &Cache::begin_user_transaction);
+        .def("begin_user_transaction", &Cache::begin_user_transaction,
+             nb::call_guard<nb::gil_scoped_release>());
 
     nb::class_<Index>(m, "Index")
         .def(nb::init<const std::string&>(), "path"_a = ".index/")
-        .def("count", &Index::count)
-        .def("__len__", &Index::count)
+        .def("count", &Index::count, nb::call_guard<nb::gil_scoped_release>())
+        .def("__len__", &Index::count, nb::call_guard<nb::gil_scoped_release>())
         .def("set", _simple_set_item<Index>, nb::arg("key"), nb::arg("value"))
         .def("__setitem__", _simple_set_item<Index>, nb::arg("key"), nb::arg("value"))
-        .def("get", &Index::get, nb::arg("key"))
-        .def("__getitem__", &Index::get, nb::arg("key"))
-        .def("keys", &Index::keys)
+        .def("get", &Index::get, nb::arg("key"),
+             nb::call_guard<nb::gil_scoped_release>())
+        .def("__getitem__", &Index::get, nb::arg("key"),
+             nb::call_guard<nb::gil_scoped_release>())
+        .def("keys", &Index::keys, nb::call_guard<nb::gil_scoped_release>())
         .def("iterkeys", &Index::iterkeys)
-        .def("exists", &Index::exists, nb::arg("key"))
+        .def("exists", &Index::exists, nb::arg("key"),
+             nb::call_guard<nb::gil_scoped_release>())
         .def("add", _simple_add_item<Index>, nb::arg("key"), nb::arg("value"))
-        .def("delete", &Index::del, nb::arg("key"))
-        .def("pop", &Index::pop, nb::arg("key"))
+        .def("delete", &Index::del, nb::arg("key"),
+             nb::call_guard<nb::gil_scoped_release>())
+        .def("pop", &Index::pop, nb::arg("key"),
+             nb::call_guard<nb::gil_scoped_release>())
         .def("incr", &Index::incr, nb::arg("key"), nb::arg("delta") = 1,
              nb::arg("default_value") = 0)
         .def("decr", &Index::decr, nb::arg("key"), nb::arg("delta") = 1,
@@ -217,27 +248,33 @@ NB_MODULE(_pysciqlop_cache, m)
         .def("set_meta", &Index::set_meta, nb::arg("key"), nb::arg("value"))
         .def("get_meta", &Index::get_meta, nb::arg("key"))
         .def("path", [](Index& idx) { return idx.path().string(); })
-        .def("begin_user_transaction", &Index::begin_user_transaction);
+        .def("begin_user_transaction", &Index::begin_user_transaction,
+             nb::call_guard<nb::gil_scoped_release>());
 
     nb::class_<FanoutCache>(m, "FanoutCache")
         .def(nb::init<const std::string&, std::size_t, std::size_t>(),
              "cache_path"_a = ".cache/", "shard_count"_a = 8, "max_size"_a = 0)
-        .def("count", &FanoutCache::count)
-        .def("__len__", &FanoutCache::count)
+        .def("count", &FanoutCache::count, nb::call_guard<nb::gil_scoped_release>())
+        .def("__len__", &FanoutCache::count, nb::call_guard<nb::gil_scoped_release>())
         .def("set", _set_item_impl<FanoutCache>, nb::arg("key"), nb::arg("value"),
              nb::arg("expire") = nb::none(), nb::arg("tag") = nb::none())
         .def(
             "__setitem__", [](FanoutCache& c, const std::string& key, nb::bytes& buffer)
             { _set_item_impl(c, key, buffer); }, nb::arg("key"), nb::arg("value"))
-        .def("get", &FanoutCache::get, nb::arg("key"))
-        .def("__getitem__", &FanoutCache::get, nb::arg("key"))
-        .def("keys", &FanoutCache::keys)
+        .def("get", &FanoutCache::get, nb::arg("key"),
+             nb::call_guard<nb::gil_scoped_release>())
+        .def("__getitem__", &FanoutCache::get, nb::arg("key"),
+             nb::call_guard<nb::gil_scoped_release>())
+        .def("keys", &FanoutCache::keys, nb::call_guard<nb::gil_scoped_release>())
         .def("iterkeys", &FanoutCache::iterkeys)
-        .def("exists", &FanoutCache::exists, nb::arg("key"))
+        .def("exists", &FanoutCache::exists, nb::arg("key"),
+             nb::call_guard<nb::gil_scoped_release>())
         .def("add", _add_item_impl<FanoutCache>, nb::arg("key"), nb::arg("value"),
              nb::arg("expire") = nb::none(), nb::arg("tag") = nb::none())
-        .def("delete", &FanoutCache::del, nb::arg("key"))
-        .def("pop", &FanoutCache::pop, nb::arg("key"))
+        .def("delete", &FanoutCache::del, nb::arg("key"),
+             nb::call_guard<nb::gil_scoped_release>())
+        .def("pop", &FanoutCache::pop, nb::arg("key"),
+             nb::call_guard<nb::gil_scoped_release>())
         .def(
             "touch",
             [](FanoutCache& c, const std::string& key, std::chrono::system_clock::duration expire)
@@ -266,23 +303,29 @@ NB_MODULE(_pysciqlop_cache, m)
             return d;
         })
         .def("reset_stats", &FanoutCache::reset_stats)
-        .def("begin_user_transaction", &FanoutCache::begin_user_transaction, nb::arg("key"));
+        .def("begin_user_transaction", &FanoutCache::begin_user_transaction, nb::arg("key"),
+             nb::call_guard<nb::gil_scoped_release>());
 
     nb::class_<FanoutIndex>(m, "FanoutIndex")
         .def(nb::init<const std::string&, std::size_t>(),
              "path"_a = ".index/", "shard_count"_a = 8)
-        .def("count", &FanoutIndex::count)
-        .def("__len__", &FanoutIndex::count)
+        .def("count", &FanoutIndex::count, nb::call_guard<nb::gil_scoped_release>())
+        .def("__len__", &FanoutIndex::count, nb::call_guard<nb::gil_scoped_release>())
         .def("set", _simple_set_item<FanoutIndex>, nb::arg("key"), nb::arg("value"))
         .def("__setitem__", _simple_set_item<FanoutIndex>, nb::arg("key"), nb::arg("value"))
-        .def("get", &FanoutIndex::get, nb::arg("key"))
-        .def("__getitem__", &FanoutIndex::get, nb::arg("key"))
-        .def("keys", &FanoutIndex::keys)
+        .def("get", &FanoutIndex::get, nb::arg("key"),
+             nb::call_guard<nb::gil_scoped_release>())
+        .def("__getitem__", &FanoutIndex::get, nb::arg("key"),
+             nb::call_guard<nb::gil_scoped_release>())
+        .def("keys", &FanoutIndex::keys, nb::call_guard<nb::gil_scoped_release>())
         .def("iterkeys", &FanoutIndex::iterkeys)
-        .def("exists", &FanoutIndex::exists, nb::arg("key"))
+        .def("exists", &FanoutIndex::exists, nb::arg("key"),
+             nb::call_guard<nb::gil_scoped_release>())
         .def("add", _simple_add_item<FanoutIndex>, nb::arg("key"), nb::arg("value"))
-        .def("delete", &FanoutIndex::del, nb::arg("key"))
-        .def("pop", &FanoutIndex::pop, nb::arg("key"))
+        .def("delete", &FanoutIndex::del, nb::arg("key"),
+             nb::call_guard<nb::gil_scoped_release>())
+        .def("pop", &FanoutIndex::pop, nb::arg("key"),
+             nb::call_guard<nb::gil_scoped_release>())
         .def("incr", &FanoutIndex::incr, nb::arg("key"), nb::arg("delta") = 1,
              nb::arg("default_value") = 0)
         .def("decr", &FanoutIndex::decr, nb::arg("key"), nb::arg("delta") = 1,
@@ -295,5 +338,6 @@ NB_MODULE(_pysciqlop_cache, m)
         .def("set_meta", &FanoutIndex::set_meta, nb::arg("key"), nb::arg("value"))
         .def("get_meta", &FanoutIndex::get_meta, nb::arg("key"))
         .def("path", [](FanoutIndex& idx) { return idx.path().string(); })
-        .def("begin_user_transaction", &FanoutIndex::begin_user_transaction, nb::arg("key"));
+        .def("begin_user_transaction", &FanoutIndex::begin_user_transaction, nb::arg("key"),
+             nb::call_guard<nb::gil_scoped_release>());
 }

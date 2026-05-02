@@ -138,6 +138,20 @@ if get_option('with_torture_tests')
         is_parallel: false,
         timeout: 300,
     )
+
+    # Reproducers for known concurrency bugs (audit 2026-05-02). Expected to
+    # fail on TSan until the corresponding fixes land. Kept under torture flag
+    # so they don't break the default build.
+    concurrency_bugs_exe = executable(
+        'test-concurrency_bugs', 'tests/concurrency_bugs/main.cpp',
+        include_directories: my_include,
+        dependencies: [catch_dep, sciqlop_cache_dep, sqlite3_dep],
+        install: false
+    )
+    test('concurrency_bugs', concurrency_bugs_exe,
+        is_parallel: false,
+        timeout: 60,
+    )
 endif
 
 if not get_option('disable_python_wrapper')

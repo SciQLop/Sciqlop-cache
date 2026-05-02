@@ -5,6 +5,7 @@
 #include <fstream>
 #include <iostream>
 #include <list>
+#include <mutex>
 #include <optional>
 #include <random>
 #include <sqlite3.h>
@@ -21,21 +22,26 @@ class DiskStorage
     uuids::uuid_random_generator uuid_generator;
     std::filesystem::path _path;
 
-    // LRU mmap handle cache: path_string → shared_ptr<MemoryMappedFile>
+    // LRU mmap handle cache: path_string → shared_ptr<MemoryMappedFile>.
+    // The user-facing path (set/get/del) calls into DiskStorage under the
+    // store's _mtx, but the background checkpoint thread also calls
+    // remove() lock-free during eviction (see _Store::_bg_evict). So this
+    // cache needs its own mutex.
+    mutable std::mutex _cache_mutex;
     std::size_t _mmap_cache_capacity;
     std::list<std::string> _lru_order;
     std::unordered_map<std::string,
         std::pair<std::shared_ptr<MemoryMappedFile>,
                   std::list<std::string>::iterator>> _mmap_cache;
 
-    void _evict_lru()
+    void _evict_lru_locked()
     {
         if (_lru_order.empty()) return;
         _mmap_cache.erase(_lru_order.back());
         _lru_order.pop_back();
     }
 
-    void _cache_evict(const std::string& key)
+    void _cache_evict_locked(const std::string& key)
     {
         auto it = _mmap_cache.find(key);
         if (it != _mmap_cache.end())
@@ -45,7 +51,7 @@ class DiskStorage
         }
     }
 
-    std::shared_ptr<MemoryMappedFile> _cache_get(const std::string& key)
+    std::shared_ptr<MemoryMappedFile> _cache_get_locked(const std::string& key)
     {
         auto it = _mmap_cache.find(key);
         if (it == _mmap_cache.end()) return nullptr;
@@ -54,12 +60,12 @@ class DiskStorage
         return it->second.first;
     }
 
-    void _cache_put(const std::string& key, std::shared_ptr<MemoryMappedFile> mmf)
+    void _cache_put_locked(const std::string& key, std::shared_ptr<MemoryMappedFile> mmf)
     {
         if (_mmap_cache_capacity == 0) return;
-        _cache_evict(key); // remove old entry if exists
+        _cache_evict_locked(key); // remove old entry if exists
         while (_mmap_cache.size() >= _mmap_cache_capacity)
-            _evict_lru();
+            _evict_lru_locked();
         _lru_order.push_front(key);
         _mmap_cache[key] = { std::move(mmf), _lru_order.begin() };
     }
@@ -117,7 +123,10 @@ public:
 
     inline bool remove(const std::filesystem::path& file_path , bool recursive = false)
     {
-        _cache_evict(file_path.string());
+        {
+            std::lock_guard lk { _cache_mutex };
+            _cache_evict_locked(file_path.string());
+        }
         try
         {
             if (std::filesystem::exists(file_path))
@@ -142,15 +151,20 @@ public:
         {
             auto key = file_path.string();
 
-            // Check mmap cache first
-            if (auto cached = _cache_get(key))
-                return Buffer(std::static_pointer_cast<IMemoryView>(cached));
+            {
+                std::lock_guard lk { _cache_mutex };
+                if (auto cached = _cache_get_locked(key))
+                    return Buffer(std::static_pointer_cast<IMemoryView>(cached));
+            }
 
             if (!std::filesystem::exists(file_path))
                 return std::nullopt;
 
             auto mmf = std::make_shared<MemoryMappedFile>(key);
-            _cache_put(key, mmf);
+            {
+                std::lock_guard lk { _cache_mutex };
+                _cache_put_locked(key, mmf);
+            }
             return Buffer(std::static_pointer_cast<IMemoryView>(mmf));
         }
         catch (const std::exception& e)
@@ -160,7 +174,12 @@ public:
         }
     }
 
-    void clear_mmap_cache() { _mmap_cache.clear(); _lru_order.clear(); }
+    void clear_mmap_cache()
+    {
+        std::lock_guard lk { _cache_mutex };
+        _mmap_cache.clear();
+        _lru_order.clear();
+    }
 
 
      [[nodiscard]] inline  std::optional<std::filesystem::path> store(const Bytes auto & value)
