@@ -55,8 +55,43 @@ jobs:
         setup-args="-Dcpp_link_args=['ucrt.lib','vcruntime.lib','/nodefaultlib:libucrt.lib','/nodefaultlib:libvcruntime.lib']"
     steps:
       - uses: actions/checkout@v4
+
+      # ccache for Linux wheels: cibuildwheel runs the build inside the
+      # manylinux/musllinux container, so we mount a host-side ccache dir
+      # into it (CIBW_CONTAINER_ENGINE), install ccache inside the
+      # container (CIBW_BEFORE_ALL_LINUX), and point CC/CXX at it. The
+      # cache mostly hits on stable subprojects (sqlite3.c is the big
+      # one — ~60s per build) across the 6 Python builds for one platform
+      # and across runs that don't bump subproject versions.
+      - name: Restore ccache (Linux)
+        if: runner.os == 'Linux'
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/.ccache
+          key: ccache-${{ matrix.os }}-${{ matrix.CIBW_ARCHS }}-${{ hashFiles('subprojects/*.wrap', 'meson.build') }}
+          restore-keys: |
+            ccache-${{ matrix.os }}-${{ matrix.CIBW_ARCHS }}-
+
+      - name: Configure ccache for cibuildwheel (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          mkdir -p ${{ github.workspace }}/.ccache
+          chmod -R 777 ${{ github.workspace }}/.ccache
+          # Try every package manager / repo combo we might land in:
+          #   musllinux (Alpine: apk), manylinux_2_28 (AlmaLinux 8: PowerTools),
+          #   manylinux_2_34 (AlmaLinux 9: CRB), manylinux2014 (CentOS 7: EPEL).
+          INSTALL_CCACHE='( command -v apk && apk add --no-cache ccache ) || ( dnf install -y --enablerepo=powertools ccache 2>/dev/null ) || ( dnf install -y --enablerepo=crb ccache 2>/dev/null ) || ( yum install -y epel-release && yum install -y ccache )'
+          echo "CIBW_BEFORE_ALL_LINUX=$INSTALL_CCACHE" >> $GITHUB_ENV
+          echo 'CIBW_ENVIRONMENT_LINUX=CCACHE_DIR=/host_ccache CCACHE_MAXSIZE=500M CC="ccache gcc" CXX="ccache g++"' >> $GITHUB_ENV
+          echo 'CIBW_CONTAINER_ENGINE=docker; create_args: --volume=${{ github.workspace }}/.ccache:/host_ccache' >> $GITHUB_ENV
+
       - name: Build wheels
         uses: pypa/cibuildwheel@v3.1.4
+
+      - name: Show ccache size (Linux)
+        if: runner.os == 'Linux' && always()
+        run: du -sh ${{ github.workspace }}/.ccache 2>/dev/null || true
+
       - uses: actions/upload-artifact@v4
         with:
           name: cibw-wheels-${{ matrix.os }}-${{ strategy.job-index }}
