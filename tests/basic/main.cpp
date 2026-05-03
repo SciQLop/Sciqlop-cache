@@ -846,3 +846,75 @@ SCENARIO("expire() correctly updates size and count counters", "[cache][expire]"
         }
     }
 }
+
+SCENARIO("clear() removes file-backed values cleanly even after they were mmap'd",
+         "[clear][buffer]")
+{
+    GIVEN("a Cache with file-backed values that have been read (and so mmap'd)")
+    {
+        AutoCleanDirectory db_path { "ClearMmap" };
+        Cache cache(db_path.path());
+        std::vector<char> big(16000, 'x');
+        cache.set("a", big);
+        cache.set("b", big);
+        // Reading loads the mmap into the storage's _mmap_cache.
+        REQUIRE(cache.get("a"));
+        REQUIRE(cache.get("b"));
+
+        WHEN("clear() is called")
+        {
+            cache.clear();
+
+            THEN("no per-key files remain in the cache directory")
+            {
+                std::size_t leftover = 0;
+                for (auto& entry :
+                     std::filesystem::recursive_directory_iterator(db_path.path()))
+                {
+                    if (!entry.is_regular_file()) continue;
+                    auto fname = entry.path().filename().string();
+                    if (fname == Cache::db_fname
+                        || fname.starts_with(std::string(Cache::db_fname)))
+                        continue;
+                    ++leftover;
+                }
+                REQUIRE(leftover == 0);
+            }
+            THEN("subsequent set() of the same keys works")
+            {
+                std::vector<char> updated(16000, 'y');
+                REQUIRE(cache.set("a", updated));
+                auto reread = cache.get("a");
+                REQUIRE(reread);
+                REQUIRE(reread->size() == updated.size());
+            }
+        }
+    }
+}
+
+SCENARIO("Buffer is safe to inspect after being moved from", "[buffer]")
+{
+    GIVEN("a Buffer wrapping a vector")
+    {
+        Buffer buf(std::vector<char>(100, 'x'));
+        REQUIRE(static_cast<bool>(buf));
+        REQUIRE(buf.size() == 100);
+        REQUIRE(buf.data() != nullptr);
+
+        WHEN("moved from")
+        {
+            Buffer dst(std::move(buf));
+            THEN("the destination owns the data")
+            {
+                REQUIRE(static_cast<bool>(dst));
+                REQUIRE(dst.size() == 100);
+            }
+            THEN("the moved-from buffer is empty and its accessors are safe")
+            {
+                REQUIRE_FALSE(static_cast<bool>(buf));
+                REQUIRE(buf.size() == 0);
+                REQUIRE(buf.data() == nullptr);
+            }
+        }
+    }
+}

@@ -45,8 +45,16 @@ class Lock:
         while not self._cache.add(self._key, b"", **kwargs):
             time.sleep(0.001)
 
-    def release(self):
-        del self._cache[self._key]
+    def release(self) -> bool:
+        """Release the lock.
+
+        Returns True if this call actually removed the lock row, False if
+        the row was already gone (e.g. the lock expired or was cleared by
+        another process — a "lost lock" the caller may want to flag).
+        """
+        # Bypass __delitem__ (which discards the bool from the C++ binding)
+        # so callers can detect a lost lock.
+        return self._cache.delete(self._key)
 
     def locked(self) -> bool:
         return self._key in self._cache

@@ -1240,6 +1240,12 @@ public:
         sqlite3_exec(db->get(), "DELETE FROM cache;", nullptr, nullptr, nullptr);
         _total_size.store(0, std::memory_order_relaxed);
         _total_count.store(0, std::memory_order_relaxed);
+        // Drop every mmap handle BEFORE removing files. On Linux removing an
+        // mmap'd file succeeds (the inode lingers), but on Windows the file
+        // can't be removed while a mapping exists — clear() would silently
+        // leave files behind. Linux-side this is also a small leak: stale
+        // shared_ptr<MemoryMappedFile> entries pointing at deleted inodes.
+        storage->clear_mmap_cache();
         if (std::filesystem::exists(cache_path) && std::filesystem::is_directory(cache_path))
         {
             for (const auto& entry : std::filesystem::directory_iterator(cache_path))

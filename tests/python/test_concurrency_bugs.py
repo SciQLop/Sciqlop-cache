@@ -357,6 +357,38 @@ class GetFallbackPathAware(unittest.TestCase):
         self.assertFalse(cache.__contains__("K"))
 
 
+class LockReleaseDetectsLost(unittest.TestCase):
+    """T2-E: Lock.release() used to silently succeed when the key it was
+    "holding" had already vanished (e.g. expired or evicted from another
+    process). After the fix it returns True only if the key was actually
+    deleted by this call — callers can detect a lost lock without changing
+    the no-args usage pattern.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_release_returns_false_if_key_already_gone(self):
+        from pysciqlop_cache import Cache, Lock
+        cache = Cache(self.tmp)
+        lock = Lock(cache, "L")
+        lock.acquire()
+        # Simulate the lock evaporating (other process expire/clear).
+        del cache["L"]
+        # release() must report it didn't actually own the row anymore.
+        self.assertFalse(lock.release())
+
+    def test_release_returns_true_on_normal_path(self):
+        from pysciqlop_cache import Cache, Lock
+        cache = Cache(self.tmp)
+        lock = Lock(cache, "L")
+        lock.acquire()
+        self.assertTrue(lock.release())
+
+
 class CounterBgResyncRace(unittest.TestCase):
     """T1-B: the background checkpoint thread runs _resync_counters every ~1s
     while the main thread does set/del operations. Sequence:

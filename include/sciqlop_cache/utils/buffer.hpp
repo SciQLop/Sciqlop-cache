@@ -108,12 +108,14 @@ public:
 
     [[nodiscard]] inline operator bool() const noexcept { return _data && bool(*_data); }
 
-    [[nodiscard]] inline const char* data() const noexcept { return _data->data(); }
+    // Null guard so a moved-from Buffer is still safe to inspect — accessors
+    // return zero/empty rather than dereferencing a null _data pointer.
+    [[nodiscard]] inline const char* data() const noexcept { return _data ? _data->data() : nullptr; }
 
-    [[nodiscard]] inline size_t size() const noexcept { return _data->size(); }
+    [[nodiscard]] inline size_t size() const noexcept { return _data ? _data->size() : 0; }
 
     [[nodiscard]] inline std::vector<char> to_vector() const
     {
-        return _data->to_vector();
+        return _data ? _data->to_vector() : std::vector<char>{};
     }
 };
