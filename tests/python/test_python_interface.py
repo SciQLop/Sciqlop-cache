@@ -513,11 +513,27 @@ class TestTransact(unittest.TestCase):
         with self.cache.transact() as txn:
             self.assertIs(txn, self.cache)
 
-    def test_nested_transact_raises(self):
+    def test_nested_transact_is_supported(self):
+        # Nested transact() on the same thread is reentrant: only the
+        # outermost level issues a real BEGIN/COMMIT (depth-counted), inner
+        # levels are no-ops. Matches diskcache semantics. An outer rollback
+        # discards inner work (no real savepoints).
         with self.cache.transact():
-            with self.assertRaises(RuntimeError):
+            with self.cache.transact():
+                self.cache.set("nested_k", "v")
+        self.assertEqual(self.cache.get("nested_k"), "v")
+
+    def test_nested_transact_outer_rollback_discards_inner(self):
+        self.cache.set("rb_k", "outer")
+        try:
+            with self.cache.transact():
+                self.cache.set("rb_k", "outer-modified")
                 with self.cache.transact():
-                    pass
+                    self.cache.set("rb_k", "inner")
+                raise RuntimeError("abort outer")
+        except RuntimeError:
+            pass
+        self.assertEqual(self.cache.get("rb_k"), "outer")
 
     def test_transact_on_index(self):
         from pysciqlop_cache import Index

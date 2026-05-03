@@ -167,6 +167,12 @@ if not get_option('disable_python_wrapper')
         is_parallel : false,
         timeout : 60,
     )
+    test('test_concurrency_bugs', python3,
+        args:files('tests/python/test_concurrency_bugs.py'),
+        env : {'PYTHONPATH': meson.current_build_dir()},
+        is_parallel : false,
+        timeout : 120,
+    )
     if get_option('with_torture_tests')
         test('test_torture', python3,
             args:files('tests/python/test_torture.py'),

@@ -48,7 +48,10 @@ class _Store : private Policies...
     _sq_pid_t _owner_pid;
     mutable Database _db;
     mutable std::recursive_mutex _mtx;
-    bool _in_transaction = false;
+    // Depth counter for nested transactions. Only the outermost level
+    // (depth 0→1) issues an actual SQLite BEGIN/COMMIT; nested levels are
+    // logical no-ops. Always read/written under _mtx.
+    std::size_t _txn_depth = 0;
 
     std::atomic<std::size_t> _total_size { 0 };
     std::atomic<std::size_t> _total_count { 0 };
@@ -406,6 +409,14 @@ class _Store : private Policies...
             if (_stop_checkpoint.load(std::memory_order_relaxed))
                 break;
             sqlite3_wal_checkpoint_v2(cp_db, nullptr, SQLITE_CHECKPOINT_PASSIVE, nullptr, nullptr);
+            // Hold _mtx across _bg_evict + _resync_counters so we don't clobber
+            // user-thread atomic counters mid-update. Without this, sequence:
+            //   user: SQL commit (DB has +1 row, atomic still old)
+            //   bg:   _resync reads DB → stores atomic to DB-truth
+            //   user: fetch_add(1) → atomic now over-counts by 1
+            // is observable. _mtx is recursive_mutex so it's safe to take
+            // here even though main-thread paths also hold it via DbGuard.
+            std::lock_guard mtx_guard(_mtx);
             if constexpr (has_expiration || has_eviction)
                 _bg_evict(cp_db);
             _resync_counters(cp_db);
@@ -426,6 +437,51 @@ class _Store : private Policies...
     };
 
     DbGuard db() const { return { _db, std::unique_lock(_mtx) }; }
+
+    // RAII helper for internal C++ paths that need an EXCLUSIVE transaction.
+    // At depth 0 it issues a real BEGIN EXCLUSIVE; at depth>0 it's a logical
+    // no-op (the surrounding outermost txn is the boundary). commit() and
+    // rollback() only hit SQLite at the outermost level. Always constructed
+    // under _mtx (callers hold the DbGuard).
+    struct _NestedTxn
+    {
+        _Store& store;
+        std::optional<Transaction> txn;
+        bool finished = false;
+        bool outermost;
+
+        explicit _NestedTxn(_Store& s)
+            : store(s), outermost(s._txn_depth == 0)
+        {
+            if (outermost)
+                txn.emplace(s._db.get(), true);
+            ++store._txn_depth;
+        }
+        _NestedTxn(const _NestedTxn&) = delete;
+        _NestedTxn& operator=(const _NestedTxn&) = delete;
+        ~_NestedTxn()
+        {
+            if (!finished)
+            {
+                if (store._txn_depth > 0) --store._txn_depth;
+                // ~Transaction will rollback if not committed.
+            }
+        }
+        void commit()
+        {
+            if (finished) return;
+            finished = true;
+            if (store._txn_depth > 0) --store._txn_depth;
+            if (outermost && txn) txn->commit();
+        }
+        void rollback() noexcept
+        {
+            if (finished) return;
+            finished = true;
+            if (store._txn_depth > 0) --store._txn_depth;
+            if (outermost && txn) (void)txn->rollback();
+        }
+    };
 
 public:
     // Snapshot iterator: pulls all keys into memory under the store mutex at
@@ -468,19 +524,29 @@ public:
         }
     };
 
+    // User-facing transaction guard. Reentrant: nested same-thread
+    // begin_user_transaction() is allowed (depth-counted); only the
+    // outermost level issues a real SQLite BEGIN/COMMIT. Inner commit()
+    // appears to succeed but is logically owned by the outer scope (an
+    // outer rollback discards inner work — same semantics as diskcache,
+    // which uses an RLock + depth, not real savepoints).
     class TransactionGuard
     {
         _Store& _store;
         std::unique_lock<std::recursive_mutex> _lock;
-        Transaction _txn;
+        std::optional<Transaction> _txn;
         bool _finished = false;
+        bool _outermost;
 
     public:
         TransactionGuard(_Store& store)
             : _store(store)
             , _lock(store._mtx)
-            , _txn(store._db.get(), true)
+            , _outermost(store._txn_depth == 0)
         {
+            if (_outermost)
+                _txn.emplace(store._db.get(), true);
+            ++store._txn_depth;
         }
 
         TransactionGuard(const TransactionGuard&) = delete;
@@ -490,6 +556,7 @@ public:
             , _lock(std::move(other._lock))
             , _txn(std::move(other._txn))
             , _finished(other._finished)
+            , _outermost(other._outermost)
         {
             other._finished = true;
         }
@@ -504,16 +571,20 @@ public:
         {
             if (_finished) return false;
             _finished = true;
-            _store._in_transaction = false;
-            return _txn.commit();
+            if (_store._txn_depth > 0) --_store._txn_depth;
+            if (_outermost && _txn)
+                return _txn->commit();
+            return true;
         }
 
         bool rollback()
         {
             if (_finished) return false;
             _finished = true;
-            _store._in_transaction = false;
-            return _txn.rollback();
+            if (_store._txn_depth > 0) --_store._txn_depth;
+            if (_outermost && _txn)
+                return _txn->rollback();
+            return true;
         }
     };
 
@@ -568,6 +639,14 @@ private:
 
         auto new_size = std::size(value);
 
+        // BEGIN EXCLUSIVE here covers BOTH branches: the SELECT of the old
+        // entry and the REPLACE must see the same DB state. Without it a
+        // concurrent process can swap the entry between our SELECT and our
+        // REPLACE — we'd then `storage->remove(old_filepath_we_read)` while
+        // the file actually attached to the row now is the *other* process's
+        // path, which we leak. (See test_no_orphans_after_concurrent_mixed_size_set.)
+        _NestedTxn txn(*this);
+
         // Single query to get old path and size (saves a round-trip vs separate queries)
         auto old_entry = db->template exec<std::filesystem::path, std::size_t>(
             GET_PATH_SIZE_STMT, key);
@@ -584,20 +663,17 @@ private:
             auto binded = REPLACE_VALUE_STMT.bind_all();
             _bind_core_and_policies(binded.get(), key, value, new_size, abs_exp, seq, tag);
             sqlite3_step(binded.get());
+            txn.commit();
             _update_counters_after_set(old_size_opt, new_size);
             if (!old_filepath.empty())
                 storage->remove(old_filepath);
             return true;
         }
 
-        std::optional<Transaction> transaction;
-        if (!_in_transaction)
-            transaction.emplace(db->begin_transaction(true));
-
         auto new_filepath = storage->store(value);
         if (!new_filepath)
         {
-            if (transaction) (void)transaction->rollback();
+            txn.rollback();
             return false;
         }
         {
@@ -607,18 +683,15 @@ private:
                                     abs_exp, seq, tag);
             sqlite3_step(binded.get());
         }
-        if (transaction)
+        try
         {
-            try
-            {
-                transaction->commit();
-            }
-            catch (const std::runtime_error&)
-            {
-                (void)transaction->rollback();
-                storage->remove(*new_filepath);
-                throw;
-            }
+            txn.commit();
+        }
+        catch (const std::runtime_error&)
+        {
+            txn.rollback();
+            storage->remove(*new_filepath);
+            throw;
         }
         if (!old_filepath.empty())
             storage->remove(old_filepath);
@@ -732,22 +805,12 @@ public:
 
     [[nodiscard]] inline bool opened() const { return db()->opened(); }
 
+    // Reentrant on the same thread: the TransactionGuard constructor takes
+    // _mtx (recursive_mutex re-entry on same thread). Cross-thread callers
+    // serialize on _mtx and become outermost in turn.
     TransactionGuard begin_user_transaction()
     {
-        // Hold _mtx through TransactionGuard construction so concurrent callers
-        // serialize on the mutex instead of seeing _in_transaction=true and
-        // throwing. recursive_mutex allows the constructor's own _lock(_mtx) to
-        // re-enter on the same thread.
-        std::unique_lock lock(_mtx);
-        if (_in_transaction)
-            throw std::runtime_error("Nested transactions are not supported");
-        _in_transaction = true;
-        try {
-            return TransactionGuard(*this);
-        } catch (...) {
-            _in_transaction = false;
-            throw;
-        }
+        return TransactionGuard(*this);
     }
 
     inline bool close()
@@ -884,7 +947,24 @@ public:
                     return result;
                 else
                 {
-                    del(key);
+                    // Path-aware cleanup. Without this, a concurrent process
+                    // that swapped the entry between our SELECT and this
+                    // fallback would have its file removed by the bare del()
+                    // (del re-reads the row, finds the new path, removes the
+                    // wrong file). DELETE WHERE key=? AND path=? only fires
+                    // if the row still references the path we just failed to
+                    // load.
+                    auto path_str = path.string();
+                    auto size_opt = db->template exec<std::size_t>(
+                        "SELECT size FROM cache WHERE key = ? AND path = ?;",
+                        key, path_str);
+                    db->exec("DELETE FROM cache WHERE key = ? AND path = ?;",
+                             key, path_str);
+                    if (sqlite3_changes(db->get()) > 0 && size_opt)
+                    {
+                        _total_size.fetch_sub(*size_opt, std::memory_order_relaxed);
+                        _total_count.fetch_sub(1, std::memory_order_relaxed);
+                    }
                     std::cerr << "Error loading file for key: " << key << ", deleting entry."
                               << std::endl;
                     return std::nullopt;
@@ -933,13 +1013,25 @@ public:
 
     inline bool del(const std::string& key)
     {
+        // BEGIN EXCLUSIVE so the SELECT-of-old-entry and the DELETE see the
+        // same row. Without it, a concurrent set() between our SELECT and our
+        // DELETE leaves us removing the wrong file (the freshly-written one
+        // instead of the one we actually displaced).
         auto db = this->db();
+        _NestedTxn txn(*this);
         auto old_entry = db->template exec<std::filesystem::path, std::size_t>(
             GET_PATH_SIZE_STMT, key);
         if (!db->exec(DELETE_STMT, key))
+        {
+            txn.rollback();
             return false;
+        }
         if (sqlite3_changes(db->get()) == 0)
+        {
+            txn.rollback();
             return false;
+        }
+        txn.commit();
         if (old_entry)
         {
             _total_size.fetch_sub(std::get<1>(*old_entry), std::memory_order_relaxed);
@@ -954,16 +1046,15 @@ public:
     {
         // Hold _mtx for the whole op so concurrent threads can't slip a set()
         // between get and del. Wrap in BEGIN EXCLUSIVE so concurrent processes
-        // can't either (multi-process safety via SQLite reserved locks).
+        // can't either (multi-process safety via SQLite reserved locks). The
+        // _NestedTxn handles depth so a containing user transaction folds
+        // this in transparently.
         auto db = this->db();
-        std::optional<Transaction> transaction;
-        if (!_in_transaction)
-            transaction.emplace(db->begin_transaction(true));
+        _NestedTxn txn(*this);
         auto result = get(key);
         if (result)
             del(key);
-        if (transaction)
-            transaction->commit();
+        txn.commit();
         return result;
     }
 
@@ -1052,10 +1143,16 @@ public:
     inline std::size_t evict_tag(const std::string& tag)
         requires (has_tags)
     {
+        // Wrap the whole op in BEGIN EXCLUSIVE so SELECT-paths, DELETE, and
+        // counter resync all see the same DB snapshot.
+        // Recompute total counters from the DB inside the txn instead of
+        // subtracting per-process deltas: evict_tag can wipe rows written
+        // by *other* processes, which our local atomic counters never saw.
+        // Subtracting their sizes from a counter that doesn't include them
+        // underflows the atomic (observed: size() = 0xFFFF...).
         auto db = this->db();
-        // Get total size of tagged entries before deletion
-        auto tag_size = db->template exec<std::size_t>(
-            "SELECT COALESCE(SUM(size), 0) FROM cache WHERE tag = ?;", tag);
+        _NestedTxn txn(*this);
+
         std::vector<std::filesystem::path> files;
         {
             auto binded = EVICT_TAG_PATH_STMT.bind_all(tag);
@@ -1067,12 +1164,16 @@ public:
         }
         db->exec(EVICT_TAG_STMT, tag);
         auto evicted = static_cast<std::size_t>(sqlite3_changes(db->get()));
-        if (evicted > 0)
-        {
-            if (tag_size)
-                _total_size.fetch_sub(*tag_size, std::memory_order_relaxed);
-            _total_count.fetch_sub(evicted, std::memory_order_relaxed);
-        }
+        // Authoritative recomputation while we still hold the EXCLUSIVE lock.
+        auto new_size = db->template exec<std::size_t>(
+            "SELECT COALESCE(SUM(size), 0) FROM cache;").value_or(0);
+        auto new_count = db->template exec<std::size_t>(
+            "SELECT COUNT(*) FROM cache;").value_or(0);
+        txn.commit();
+
+        _total_size.store(new_size, std::memory_order_relaxed);
+        _total_count.store(new_count, std::memory_order_relaxed);
+
         for (auto& f : files)
             storage->remove(f);
         return evicted;
@@ -1083,7 +1184,7 @@ public:
     inline int64_t incr(const std::string& key, int64_t delta = 1, int64_t default_value = 0)
     {
         auto db = this->db();
-        auto transaction = db->begin_transaction(true);
+        _NestedTxn txn(*this);
 
         int64_t current = default_value;
         if (auto blob = db->template exec<std::vector<char>>(INCR_GET_STMT, key))
@@ -1122,7 +1223,7 @@ public:
         }
         // Size doesn't change on update (always sizeof(int64_t))
 
-        transaction.commit();
+        txn.commit();
         return new_value;
     }
 
@@ -1356,10 +1457,9 @@ public:
         return count;
     }
 
-    // Note: the background eviction thread (_bg_evict) can delete rows and
-    // adjust counters concurrently. During the window between its DELETE and
-    // its fetch_sub, check() may observe a transient inconsistency. This is
-    // harmless — a subsequent check() after the bg thread settles will pass.
+    // The background checkpoint thread now takes _mtx around _bg_evict and
+    // _resync_counters, so check() and the BG thread no longer race on the
+    // atomic counters.
     bool _check_counters(DbGuard& db, bool fix)
     {
         auto db_size = db->template exec<std::size_t>(
