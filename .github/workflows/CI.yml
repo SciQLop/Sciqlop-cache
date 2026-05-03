@@ -135,6 +135,14 @@ jobs:
           pip install --no-index --find-links $env:GITHUB_WORKSPACE\dist pysciqlop-cache
       - uses: actions/checkout@v4
       - name: run tests
+        # PYTHONPATH must include the repo root so multiprocessing.Pool
+        # workers (spawn on macOS/Windows always, forkserver on Linux 3.14+)
+        # can re-import the test module — pickle records the function's
+        # __module__ as 'tests.python.test_concurrency_bugs' and the worker
+        # needs to be able to `import tests`. Inherited by spawned workers
+        # via env, where sys.path mods made by pytest are not.
+        env:
+          PYTHONPATH: ${{ github.workspace }}
         run: |
           pip install pytest pytest-timeout ddt requests hypothesis diskcache
           # --timeout=300 (5 min) so a hang fails fast with a stack trace
