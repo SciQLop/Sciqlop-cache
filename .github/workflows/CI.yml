@@ -136,8 +136,16 @@ jobs:
       - uses: actions/checkout@v4
       - name: run tests
         run: |
-          pip install pytest ddt requests hypothesis diskcache
-          cd tests && python -m pytest --import-mode=importlib --tb=short --disable-warnings -v python --ignore=python/test_torture.py --ignore=python/test_hypothesis.py
+          pip install pytest pytest-timeout ddt requests hypothesis diskcache
+          # --timeout=300 (5 min) so a hang fails fast with a stack trace
+          # instead of running until the GitHub job timeout. Real tests on
+          # Windows can be slow (cross-process SQLite + fcntl emulation) but
+          # 5 min is a generous ceiling — if anything exceeds it, that's a
+          # bug to investigate, not a number to bump.
+          # --timeout-method=thread so threaded/multiproc tests can be killed
+          # cleanly on Windows (the default 'signal' method needs SIGALRM
+          # which Windows doesn't have).
+          cd tests && python -m pytest --import-mode=importlib --tb=short --disable-warnings -v --timeout=300 --timeout-method=thread python --ignore=python/test_torture.py --ignore=python/test_hypothesis.py
 
   upload_pypi:
     needs: [build_sdist, build_wheels, test_wheels]
