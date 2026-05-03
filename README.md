@@ -56,6 +56,19 @@ with cache.transact():
 # Automatically commits on success, rolls back on exception
 ```
 
+`transact()` is reentrant on the same thread, so transactional helpers compose cleanly:
+
+```python
+def withdraw(amount):
+    with cache.transact():
+        cache["balance"] = cache.get("balance", 0) - amount
+
+with cache.transact():        # outer
+    withdraw(50)               # nested transact is fine
+    withdraw(20)
+# Outer commits; if it raises, both withdraws roll back together.
+```
+
 ### Sharded Concurrency with FanoutCache
 
 For write-heavy concurrent workloads, `FanoutCache` shards keys across N independent stores:
