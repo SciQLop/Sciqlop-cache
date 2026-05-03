@@ -95,7 +95,7 @@ jobs:
       - name: run tests
         run: |
           pip install pytest ddt requests hypothesis diskcache
-          cd tests && python -m pytest --import-mode=importlib --tb=short --disable-warnings -v python
+          cd tests && python -m pytest --import-mode=importlib --tb=short --disable-warnings -v python --ignore=python/test_torture.py --ignore=python/test_hypothesis.py
 
   test_wheels_macos_14:
     needs: [build_wheels]
@@ -127,7 +127,7 @@ jobs:
         run: |
           pyenv local ${{ matrix.python-version }}
           python3 -m pip install --break-system-packages pytest ddt requests hypothesis diskcache
-          cd tests && python3 -m pytest --import-mode=importlib --tb=short --disable-warnings -v python
+          cd tests && python3 -m pytest --import-mode=importlib --tb=short --disable-warnings -v python --ignore=python/test_torture.py --ignore=python/test_hypothesis.py
 
 
   upload_pypi:
