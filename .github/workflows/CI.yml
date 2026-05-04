@@ -169,6 +169,15 @@ jobs:
     runs-on: ubuntu-latest
     # upload to PyPI only on github releases
     if: github.event_name == 'release' && github.event.action == 'published' && github.repository_owner == 'SciQLop'
+    # PyPI Trusted Publisher (OIDC). The `pypi` environment matches the
+    # publisher config registered on https://pypi.org/manage/project/PySciQLop_cache/
+    # — no API token needed; the action exchanges the OIDC ID token from
+    # GitHub for a short-lived PyPI upload token.
+    environment:
+      name: pypi
+      url: https://pypi.org/p/PySciQLop_cache
+    permissions:
+      id-token: write
     steps:
       - uses: actions/download-artifact@v4
         with:
@@ -177,8 +186,6 @@ jobs:
           merge-multiple: true
       - uses: pypa/gh-action-pypi-publish@release/v1
         with:
-          user: __token__
-          password: ${{ secrets.PYPI_PASSWORD }}
           skip-existing: true
 
   upload_test_pypi:
@@ -186,6 +193,14 @@ jobs:
     runs-on: ubuntu-latest
     # upload to test PyPI on github pushes
     if: github.event_name == 'push' && github.repository_owner == 'SciQLop'
+    # TestPyPI Trusted Publisher (OIDC). Matches the publisher config on
+    # https://test.pypi.org/manage/project/PySciQLop_cache/ via the
+    # `testpypi` environment.
+    environment:
+      name: testpypi
+      url: https://test.pypi.org/p/PySciQLop_cache
+    permissions:
+      id-token: write
     steps:
       - uses: actions/download-artifact@v4
         with:
@@ -194,7 +209,5 @@ jobs:
           merge-multiple: true
       - uses: pypa/gh-action-pypi-publish@release/v1
         with:
-          user: __token__
-          password: ${{ secrets.PYPI_TEST_PASSWORD }}
           repository-url: https://test.pypi.org/legacy/
           skip-existing: true
