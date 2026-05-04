@@ -135,16 +135,25 @@ jobs:
           pip install --no-index --find-links $env:GITHUB_WORKSPACE\dist pysciqlop-cache
       - uses: actions/checkout@v4
       - name: run tests
-        # PYTHONPATH must include the repo root so multiprocessing.Pool
-        # workers (spawn on macOS/Windows always, forkserver on Linux 3.14+)
-        # can re-import the test module — pickle records the function's
-        # __module__ as 'tests.python.test_concurrency_bugs' and the worker
-        # needs to be able to `import tests`. Inherited by spawned workers
-        # via env, where sys.path mods made by pytest are not.
+        # Two interacting issues, fixed together:
+        #
+        # 1. multiprocessing.Pool workers under spawn (macOS/Windows always)
+        #    or forkserver (Linux Python 3.14+ default) re-import the
+        #    function's module by name. pytest assigns name
+        #    'tests.python.test_concurrency_bugs', so workers need to be able
+        #    to `import tests`. Add repo root to PYTHONPATH for that.
+        #
+        # 2. But the source `pysciqlop_cache/` directory is at the repo root
+        #    and shadows the installed wheel: its __init__.py does
+        #    `from ._pysciqlop_cache import …` and the compiled .so only
+        #    exists in site-packages. Remove the source dir from the
+        #    workspace before running tests so the installed wheel wins.
+        #    (Cross-platform via Python's shutil.)
         env:
           PYTHONPATH: ${{ github.workspace }}
         run: |
           pip install pytest pytest-timeout ddt requests hypothesis diskcache
+          python -c "import shutil; shutil.rmtree('pysciqlop_cache', ignore_errors=True)"
           # --timeout=300 (5 min) so a hang fails fast with a stack trace
           # instead of running until the GitHub job timeout. Real tests on
           # Windows can be slow (cross-process SQLite + fcntl emulation) but
@@ -153,7 +162,7 @@ jobs:
           # --timeout-method=thread so threaded/multiproc tests can be killed
           # cleanly on Windows (the default 'signal' method needs SIGALRM
           # which Windows doesn't have).
-          cd tests && python -m pytest --import-mode=importlib --tb=short --disable-warnings -v --timeout=300 --timeout-method=thread python --ignore=python/test_torture.py --ignore=python/test_hypothesis.py
+          python -m pytest --import-mode=importlib --tb=short --disable-warnings -v --timeout=300 --timeout-method=thread tests/python --ignore=tests/python/test_torture.py --ignore=tests/python/test_hypothesis.py
 
   upload_pypi:
     needs: [build_sdist, build_wheels, test_wheels]
