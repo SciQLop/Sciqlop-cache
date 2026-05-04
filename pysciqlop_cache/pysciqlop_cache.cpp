@@ -118,11 +118,21 @@ NB_MODULE(_pysciqlop_cache, m)
                      return nb::steal(PyMemoryView_FromMemory(nullptr, 0, PyBUF_READ));
                  }
 
-                 Py_buffer view;
+                 // Lifetime anchor: heap-allocate a Buffer copy (just bumps the
+                 // shared_ptr<IMemoryView> refcount) and wrap it in a PyCapsule.
+                 // We pass the capsule — not the Python Buffer wrapper — as the
+                 // exporter so the memoryview keeps the underlying mmap alive
+                 // without pinning the Python Buffer past interpreter shutdown.
+                 // Why: PyBuffer_FillInfo(view, exporter, ...) INCREFs exporter
+                 // and stores it in view->obj; using self.ptr() makes any surviving
+                 // memoryview keep its Buffer alive, which nanobind reports as a
+                 // leak at module teardown even though it's a one-way reference.
+                 auto* keep_alive = new Buffer(b);
+                 nb::capsule cap(keep_alive,
+                                 [](void* p) noexcept { delete static_cast<Buffer*>(p); });
 
-                 // Pass self.ptr() as exporter so the memoryview holds a reference
-                 // to the Buffer, keeping the underlying mmap alive.
-                 if (PyBuffer_FillInfo(&view, self.ptr(), const_cast<char*>(b.data()),
+                 Py_buffer view;
+                 if (PyBuffer_FillInfo(&view, cap.ptr(), const_cast<char*>(b.data()),
                                        b.size(), 1, PyBUF_SIMPLE) == -1) {
                      throw std::runtime_error("Failed to create memory view");
                  }
