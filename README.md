@@ -1,6 +1,6 @@
 [![GitHub License](https://img.shields.io/github/license/SciQLop/Sciqlop-cache)](https://mit-license.org/)
 [![CPP20](https://img.shields.io/badge/Language-C++20-blue.svg)]()
-[![PyPi](https://img.shields.io/pypi/v/Sciqlop-cache.svg)](https://pypi.python.org/pypi/Sciqlop-cache)
+[![PyPi](https://img.shields.io/pypi/v/pysciqlop-cache.svg)](https://pypi.org/project/pysciqlop-cache/)
 [![Coverage](https://codecov.io/gh/SciQLop/Sciqlop-cache/coverage.svg?branch=main)](https://codecov.io/gh/SciQLop/Sciqlop-cache/branch/main)
 
 # SciQLop Cache
@@ -8,7 +8,7 @@
 A fast, persistent key-value cache for Python and C++20. Built on SQLite with hybrid blob/file storage, it stays flat from 100 to 1M+ entries while being **2x faster than diskcache on writes** and **up to 6x faster in batched transactions**.
 
 ```python
-pip install sciqlop-cache
+pip install pysciqlop-cache
 ```
 
 ## Quick Start (Python)
