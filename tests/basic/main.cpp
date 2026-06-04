@@ -52,7 +52,14 @@ SCENARIO("Testing file I/O with Bytes concept", "[bytes][fileio]")
         WHEN("We store the bytes to a file")
         {
             auto write_success = disk_storage.store(test_data);
-            test_file = *write_success;
+            // store() returns a path relative to the storage root so the
+            // cache directory stays relocatable; resolve it for filesystem ops.
+            test_file = disk_storage.abs_path(*write_success);
+
+            THEN("The stored path is relative to the storage root")
+            {
+                REQUIRE(write_success->is_relative());
+            }
 
             THEN("The file should exist")
             {
@@ -297,6 +304,99 @@ SCENARIO("Testing sciqlop_cache big values operations", "[cache]")
                 auto loaded_value = Buffer(filePath);
                 REQUIRE(loaded_value.size() == big_value.size());
                 REQUIRE(std::memcmp(loaded_value.data(), big_value.data(), big_value.size()) == 0);
+            }
+        }
+    }
+}
+
+SCENARIO("A cache directory can be moved and still resolve file-backed values", "[cache][relocate]")
+{
+    namespace fs = std::filesystem;
+    AutoCleanDirectory src { "RelocateSrc" };
+    AutoCleanDirectory dst_parent { "RelocateDst" };
+    const auto dst = dst_parent.path() / "moved";
+
+    GIVEN("a cache with a file-backed value written at the source location")
+    {
+        std::vector<char> big_value(64 * 1024);
+        std::random_device rd;
+        std::mt19937 gen(rd());
+        std::uniform_int_distribution<int> dist(0, 255);
+        for (auto& b : big_value)
+            b = static_cast<char>(dist(gen));
+        const std::string key = "file/backed/key";
+
+        {
+            Cache cache(src.path());
+            REQUIRE(cache.set(key, big_value));
+        }
+
+        WHEN("the whole cache directory is moved to a new location")
+        {
+            fs::rename(src.path(), dst);
+
+            THEN("a cache opened at the new location still returns the value")
+            {
+                Cache moved(dst);
+                auto loaded = moved.get(key);
+                REQUIRE(loaded.has_value());
+                REQUIRE(loaded->size() == big_value.size());
+                REQUIRE(std::memcmp(loaded->data(), big_value.data(), big_value.size()) == 0);
+            }
+
+            THEN("check() reports the moved cache as consistent")
+            {
+                Cache moved(dst);
+                REQUIRE(moved.check().ok);
+            }
+        }
+    }
+}
+
+SCENARIO("LRU access counter resumes above the persisted maximum after reopen",
+         "[cache][eviction][reopen]")
+{
+    AutoCleanDirectory db_path { "SeqResumeTest" };
+    std::vector<char> v(64, 'z');
+
+    GIVEN("two entries written in a first session")
+    {
+        {
+            Cache cache(db_path.path());
+            cache.set("A", v);
+            cache.set("B", v); // B is the most-recently-used so far
+        }
+
+        WHEN("the cache is reopened and a new entry is written")
+        {
+            {
+                Cache reopened(db_path.path());
+                reopened.set("C", v); // C is now the most-recently-used overall
+            }
+
+            THEN("the new entry has a strictly higher last_use than the older ones")
+            {
+                // Read last_use directly once the cache is closed (avoids the
+                // vendored-WAL vs fresh-connection visibility caveat).
+                sqlite3* raw = nullptr;
+                sqlite3_open((db_path.path() / "sciqlop-cache.db").string().c_str(), &raw);
+                auto last_use = [&](const char* key) -> double
+                {
+                    sqlite3_stmt* stmt = nullptr;
+                    sqlite3_prepare_v2(raw, "SELECT last_use FROM cache WHERE key = ?;",
+                                       -1, &stmt, nullptr);
+                    sqlite3_bind_text(stmt, 1, key, -1, SQLITE_STATIC);
+                    double val = -1;
+                    if (sqlite3_step(stmt) == SQLITE_ROW)
+                        val = sqlite3_column_double(stmt, 0);
+                    sqlite3_finalize(stmt);
+                    return val;
+                };
+                auto a = last_use("A"), b = last_use("B"), c = last_use("C");
+                sqlite3_close(raw);
+
+                REQUIRE(c > b);
+                REQUIRE(c > a);
             }
         }
     }

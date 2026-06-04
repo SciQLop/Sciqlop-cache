@@ -267,6 +267,16 @@ class _Store : private Policies...
             _total_size.store(*r, std::memory_order_relaxed);
         if (auto r = _db.exec<std::size_t>("SELECT COUNT(*) FROM cache;"))
             _total_count.store(*r, std::memory_order_relaxed);
+        // last_use is the monotonic access counter. Resume it above the
+        // persisted maximum so entries written after a reopen are ranked
+        // more-recently-used than older ones (otherwise the counter restarts
+        // at 0 and LRU eviction order is inverted across restarts).
+        if constexpr (has_eviction)
+        {
+            if (auto r = _db.exec<std::size_t>(
+                    "SELECT COALESCE(MAX(last_use), -1) + 1 FROM cache;"))
+                WithEviction::_access_seq.store(*r, std::memory_order_relaxed);
+        }
     }
 
     void _migrate_schema()
@@ -1344,7 +1354,7 @@ public:
             while (sqlite3_step(stmt) == SQLITE_ROW)
             {
                 auto path = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
-                if (path && !std::filesystem::exists(path))
+                if (path && !std::filesystem::exists(storage->abs_path(path)))
                 {
                     ++count;
                     if (fix)
@@ -1386,11 +1396,12 @@ public:
             while (sqlite3_step(stmt) == SQLITE_ROW)
             {
                 auto path = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
-                if (!path || !std::filesystem::exists(path))
+                auto abs = path ? storage->abs_path(path) : std::filesystem::path {};
+                if (!path || !std::filesystem::exists(abs))
                     continue; // dangling row — handled separately
 
                 auto db_size = static_cast<std::size_t>(sqlite3_column_int64(stmt, 2));
-                auto file_size = std::filesystem::file_size(path);
+                auto file_size = std::filesystem::file_size(abs);
                 if (db_size != file_size)
                 {
                     ++count;
@@ -1431,7 +1442,7 @@ public:
             while (sqlite3_step(stmt) == SQLITE_ROW)
             {
                 if (auto p = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0)))
-                    known_paths.insert(p);
+                    known_paths.insert(storage->abs_path(p).lexically_normal().string());
             }
             sqlite3_finalize(stmt);
         }
@@ -1451,7 +1462,7 @@ public:
             if (fname == db_fname || fname.starts_with(std::string(db_fname)))
                 continue;
 
-            auto path_str = entry.path().string();
+            auto path_str = entry.path().lexically_normal().string();
             if (known_paths.find(path_str) == known_paths.end())
             {
                 ++count;

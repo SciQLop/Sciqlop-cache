@@ -39,6 +39,9 @@ SCENARIO("check() detects dangling rows", "[check]")
             sqlite3_close(raw_db);
         }
         REQUIRE(!file_path.empty());
+        // path is stored relative to the cache root; resolve for direct fs access
+        if (file_path.is_relative())
+            file_path = dir.path() / file_path;
         REQUIRE(std::filesystem::exists(file_path));
         std::filesystem::remove(file_path);
 
@@ -147,6 +150,9 @@ SCENARIO("check() detects size mismatches", "[check]")
             sqlite3_close(raw_db);
         }
         REQUIRE(!file_path.empty());
+        // path is stored relative to the cache root; resolve for direct fs access
+        if (file_path.is_relative())
+            file_path = dir.path() / file_path;
         REQUIRE(std::filesystem::exists(file_path));
         {
             std::ofstream ofs(file_path, std::ios::binary | std::ios::trunc);

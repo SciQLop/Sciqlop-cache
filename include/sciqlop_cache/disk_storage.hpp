@@ -116,13 +116,24 @@ public:
 
     [[nodiscard]] inline std::filesystem::path path() const { return _path; }
 
+    // Paths are stored in the DB relative to the cache root so the whole
+    // cache directory can be moved/copied and still resolve. Resolve a stored
+    // path back to an absolute one against the current root. Absolute inputs
+    // (legacy DBs written before this change, or the root itself) pass through
+    // unchanged.
+    [[nodiscard]] inline std::filesystem::path abs_path(const std::filesystem::path& stored) const
+    {
+        return stored.is_absolute() ? stored : _path / stored;
+    }
+
     [[nodiscard]] inline std::string generate_random_filename()
     {
         return uuids::to_string(uuid_generator());
     }
 
-    inline bool remove(const std::filesystem::path& file_path , bool recursive = false)
+    inline bool remove(const std::filesystem::path& stored , bool recursive = false)
     {
+        auto file_path = abs_path(stored);
         {
             std::lock_guard lk { _cache_mutex };
             _cache_evict_locked(file_path.string());
@@ -145,10 +156,11 @@ public:
         }
     }
 
-    [[nodiscard]] inline std::optional<Buffer> load(const std::filesystem::path& file_path)
+    [[nodiscard]] inline std::optional<Buffer> load(const std::filesystem::path& stored)
     {
         try
         {
+            auto file_path = abs_path(stored);
             auto key = file_path.string();
 
             {
@@ -185,9 +197,10 @@ public:
      [[nodiscard]] inline  std::optional<std::filesystem::path> store(const Bytes auto & value)
     {
         auto filename = generate_random_filename();
-        auto file_path = _path / filename.substr(0, 2) / filename.substr(2, 2) / filename;
-        if (_write(file_path, value))
-            return file_path;
+        auto rel_path = std::filesystem::path(filename.substr(0, 2))
+            / filename.substr(2, 2) / filename;
+        if (_write(_path / rel_path, value))
+            return rel_path;
         return {};
     }
 };

@@ -309,7 +309,9 @@ class GetFallbackPathAware(unittest.TestCase):
                 "SELECT path FROM cache WHERE key = ?", ("K",)
             ).fetchone()
             self.assertIsNotNone(row)
-            original_path = row[0]
+            # path is stored relative to the cache root (so the cache stays
+            # relocatable); resolve it for direct filesystem access.
+            original_path = os.path.join(self.tmp, row[0])
             self.assertTrue(os.path.exists(original_path))
 
             os.remove(original_path)
