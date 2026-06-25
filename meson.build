@@ -116,6 +116,16 @@ foreach test_name:['database', 'basic', 'basic_index', 'intermediate', 'multithr
     test(test_name, exe)
 endforeach
 
+# Forks worker processes; run serially with a timeout so a fork-deadlock
+# regression fails fast instead of hanging the suite.
+fork_safety_exe = executable(
+    'test-fork_safety', 'tests/fork_safety/main.cpp',
+    include_directories: my_include,
+    dependencies:[catch_dep, sciqlop_cache_dep, sqlite3_dep],
+    install: false
+)
+test('fork_safety', fork_safety_exe, is_parallel: false, timeout: 120)
+
 gbench_dep = dependency('benchmark', required: false)
 if gbench_dep.found()
     bench_perf_exe = executable(
