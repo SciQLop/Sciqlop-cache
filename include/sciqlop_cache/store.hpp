@@ -18,18 +18,89 @@
 #include <string>
 #include <thread>
 #include <unordered_set>
+#include <cstdint>
+#include <new>
 #ifdef _WIN32
 #include <process.h>
 inline int _sq_getpid() { return _getpid(); }
 using _sq_pid_t = int;
 #else
+#include <pthread.h>
 #include <unistd.h>
 inline pid_t _sq_getpid() { return getpid(); }
 using _sq_pid_t = pid_t;
 #endif
 
+// --- Fork safety -----------------------------------------------------------
+// A live Store owns a background checkpoint thread that periodically holds the
+// store's mutex AND allocates / runs SQLite. POSIX fork() clones only the
+// calling thread, so a child forked while that thread is active inherits not
+// just the store mutex but libc-level locks (malloc, the WAL shared-memory
+// connection) in a locked state with no thread to release them — touching the
+// inherited store would then deadlock. A child cannot reset libc's locks, so
+// recovery-after-the-fact is impossible; instead we quiesce the store *before*
+// every fork via pthread_atfork handlers and rebuild it afterwards.
+//
+// All live stores register in a process-global set. The handlers run for every
+// fork in the process (the cost is paid only at fork time):
+//   prepare (parent, pre-fork): stop+join each checkpoint thread (closing its
+//       connection) and take each store mutex, so the forking thread is the
+//       only one running and no background lock is held.
+//   parent  (post-fork): release each mutex and restart each checkpoint thread.
+//   child   (post-fork): reset each mutex, reopen each SQLite connection and
+//       restart each checkpoint thread on a clean slate.
+class _ForkAware
+{
+public:
+    virtual ~_ForkAware() = default;
+    virtual void _fork_prepare() = 0;
+    virtual void _fork_parent() = 0;
+    virtual void _fork_child() = 0;
+};
+
+inline std::mutex& _fork_registry_mutex()
+{
+    static std::mutex m;
+    return m;
+}
+
+inline std::unordered_set<_ForkAware*>& _fork_registry()
+{
+    static std::unordered_set<_ForkAware*> set;
+    return set;
+}
+
+inline void _ensure_atfork_registered()
+{
+#ifndef _WIN32
+    static std::once_flag once;
+    std::call_once(once, [] {
+        pthread_atfork(
+            [] { _fork_registry_mutex().lock();
+                 for (auto* s : _fork_registry()) s->_fork_prepare(); },
+            [] { for (auto* s : _fork_registry()) s->_fork_parent();
+                 _fork_registry_mutex().unlock(); },
+            [] { for (auto* s : _fork_registry()) s->_fork_child();
+                 _fork_registry_mutex().unlock(); });
+    });
+#endif
+}
+
+inline void _register_fork_aware(_ForkAware* s)
+{
+    _ensure_atfork_registered();
+    std::lock_guard<std::mutex> g(_fork_registry_mutex());
+    _fork_registry().insert(s);
+}
+
+inline void _unregister_fork_aware(_ForkAware* s)
+{
+    std::lock_guard<std::mutex> g(_fork_registry_mutex());
+    _fork_registry().erase(s);
+}
+
 template <typename Storage, typename... Policies>
-class _Store : private Policies...
+class _Store : private Policies..., private _ForkAware
 {
     static constexpr bool has_expiration = has_policy_v<WithExpiration, Policies...>;
     static constexpr bool has_eviction = has_policy_v<WithEviction, Policies...>;
@@ -294,6 +365,55 @@ class _Store : private Policies...
         sqlite3_exec(_db.get(), "DROP TRIGGER IF EXISTS cache_insert_meta;", nullptr, nullptr, nullptr);
         sqlite3_exec(_db.get(), "DROP TRIGGER IF EXISTS cache_delete_meta;", nullptr, nullptr, nullptr);
         sqlite3_exec(_db.get(), "DROP TRIGGER IF EXISTS cache_update_size;", nullptr, nullptr, nullptr);
+    }
+
+    // --- Fork safety (pthread_atfork hooks; see _ForkAware above) ---
+
+    void _stop_checkpoint_thread()
+    {
+        _stop_checkpoint.store(true, std::memory_order_relaxed);
+        _checkpoint_cv.notify_one();
+        if (_checkpoint_thread.joinable())
+            _checkpoint_thread.join();
+    }
+
+    void _start_checkpoint_thread()
+    {
+        _stop_checkpoint.store(false, std::memory_order_relaxed);
+        _checkpoint_thread = std::thread(&_Store::_checkpoint_loop, this);
+    }
+
+    // prepare: stop the checkpoint thread (it closes its own connection) and
+    // take _mtx, so at fork the forking thread is the only one running and no
+    // background lock — store, libc malloc, or WAL — is held by a vanished
+    // thread.
+    void _fork_prepare() override
+    {
+        _stop_checkpoint_thread();
+        _mtx.lock();
+    }
+
+    // parent: undo prepare — release _mtx and resume checkpointing.
+    void _fork_parent() override
+    {
+        _mtx.unlock();
+        _start_checkpoint_thread();
+    }
+
+    // child: the forking thread holds _mtx, but a recursive_mutex records the
+    // owning thread id, which differs in the child — it cannot be unlocked, so
+    // reinitialise it in place (no destructor: that is undefined while locked).
+    // The inherited SQLite connection is reopened on a clean slate; prepare
+    // already closed the checkpoint connection, so nothing else is open here.
+    void _fork_child() override
+    {
+        new (&_mtx) std::recursive_mutex();
+        _txn_depth = 0;
+        _owner_pid = _sq_getpid();
+        _finalize_statements();
+        _db.close();
+        _init_db();
+        _start_checkpoint_thread();
     }
 
     // --- Background checkpoint / eviction ---
@@ -796,10 +916,16 @@ public:
     {
         _init_db();
         _checkpoint_thread = std::thread(&_Store::_checkpoint_loop, this);
+        // Register last, once fully built, so a concurrent fork's handlers only
+        // ever see a complete store.
+        _register_fork_aware(this);
     }
 
     ~_Store()
     {
+        // Deregister first so fork handlers cannot touch a store mid-teardown;
+        // this also serialises against an in-progress fork via the registry lock.
+        _unregister_fork_aware(this);
         if (_sq_getpid() != _owner_pid)
         {
             if (_checkpoint_thread.joinable())
