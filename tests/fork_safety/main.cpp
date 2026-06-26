@@ -1,3 +1,18 @@
+#include <catch2/catch_all.hpp>
+#include <catch2/catch_test_macros.hpp>
+
+#ifdef _WIN32
+
+// Windows has no fork(); multiprocessing uses spawn, so the inherited-mutex
+// hazard this test guards against cannot occur. Keep a placeholder so the
+// suite is uniform across platforms.
+TEST_CASE("fork safety (POSIX only)")
+{
+    SKIP("fork() is unavailable on Windows; multiprocessing uses spawn");
+}
+
+#else
+
 #include <atomic>
 #include <cstdlib>
 #include <string>
@@ -6,9 +21,6 @@
 
 #include <sys/wait.h>
 #include <unistd.h>
-
-#include <catch2/catch_all.hpp>
-#include <catch2/catch_test_macros.hpp>
 
 #include "../common.hpp"
 #include "sciqlop_cache/sciqlop_cache.hpp"
@@ -65,3 +77,5 @@ TEST_CASE("forked child can use the inherited cache without deadlocking")
     for (auto& t : hammer)
         t.join();
 }
+
+#endif // _WIN32
