@@ -1081,30 +1081,49 @@ public:
             {
                 if (auto result = storage->load(path))
                     return result;
-                else
+
+                // A concurrent REPLACE on this key can remove `path` right
+                // after we read it: _set_impl commits the row pointing at
+                // its new file *before* removing the old one, so re-reading
+                // the row after a failed load either shows the same
+                // (genuinely gone) path or a newer one whose file is
+                // guaranteed complete. A few bounded retries close the
+                // window against back-to-back REPLACEs instead of surfacing
+                // a spurious miss for a key that was never actually
+                // deleted; the loop stops as soon as the path stops moving.
+                auto last_path = path;
+                for (int attempt = 0; attempt < 4; ++attempt)
                 {
-                    // Path-aware cleanup. Without this, a concurrent process
-                    // that swapped the entry between our SELECT and this
-                    // fallback would have its file removed by the bare del()
-                    // (del re-reads the row, finds the new path, removes the
-                    // wrong file). DELETE WHERE key=? AND path=? only fires
-                    // if the row still references the path we just failed to
-                    // load.
-                    auto path_str = path.string();
-                    auto size_opt = db->template exec<std::size_t>(
-                        "SELECT size FROM cache WHERE key = ? AND path = ?;",
-                        key, path_str);
-                    db->exec("DELETE FROM cache WHERE key = ? AND path = ?;",
-                             key, path_str);
-                    if (sqlite3_changes(db->get()) > 0 && size_opt)
-                    {
-                        _total_size.fetch_sub(*size_opt, std::memory_order_relaxed);
-                        _total_count.fetch_sub(1, std::memory_order_relaxed);
-                    }
-                    std::cerr << "Error loading file for key: " << key << ", deleting entry."
-                              << std::endl;
-                    return std::nullopt;
+                    auto retry_path = db->template exec<std::filesystem::path>(
+                        "SELECT path FROM cache WHERE key = ?;", key);
+                    if (!retry_path || retry_path->empty() || *retry_path == last_path)
+                        break;
+                    if (auto result = storage->load(*retry_path))
+                        return result;
+                    last_path = *retry_path;
                 }
+
+                // Path-aware cleanup. Without this, a concurrent process
+                // that swapped the entry between our SELECT and this
+                // fallback would have its file removed by the bare del()
+                // (del re-reads the row, finds the new path, removes the
+                // wrong file). DELETE WHERE key=? AND path=? only fires
+                // if the row still references the path we just failed to
+                // load.
+                auto path_str = path.string();
+                auto size_opt = db->template exec<std::size_t>(
+                    "SELECT size FROM cache WHERE key = ? AND path = ?;",
+                    key, path_str);
+                db->exec("DELETE FROM cache WHERE key = ? AND path = ?;",
+                         key, path_str);
+                if (sqlite3_changes(db->get()) > 0 && size_opt)
+                {
+                    _total_size.fetch_sub(*size_opt, std::memory_order_relaxed);
+                    _total_count.fetch_sub(1, std::memory_order_relaxed);
+                }
+                std::cerr << "Error loading file for key: " << key << ", deleting entry."
+                          << std::endl;
+                return std::nullopt;
             }
             return Buffer(std::move(std::get<0>(*values)));
         }

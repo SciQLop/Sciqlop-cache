@@ -225,7 +225,7 @@ FanoutIndex fi(".fi/", /*shard_count=*/8);
 
 - **Thread-safe**: per-instance mutex + per-instance SQLite connection. Multiple threads can share a single `Cache` instance.
 - **Multi-process safe**: SQLite WAL mode with 600s busy timeout. Multiple processes can open the same cache directory.
-- **Fork-safe for short-lived children**: `pthread_atfork` quiescing makes a one-shot `fork → touch the cache → exit` pattern safe. Reusing a worker pool whose processes keep touching the same cache over a long lifetime is **not yet validated** — see [`docs/known-issues/pool-reuse-fork-safety-gap.md`](docs/known-issues/pool-reuse-fork-safety-gap.md).
+- **Fork-safe**: `pthread_atfork` quiescing makes both a one-shot `fork → touch the cache → exit` pattern and a reused worker pool (processes forked once, then touching the cache repeatedly over a long lifetime) safe — see [`docs/known-issues/pool-reuse-fork-safety-gap.md`](docs/known-issues/pool-reuse-fork-safety-gap.md) for the investigation.
 - **FanoutCache/FanoutIndex**: shard keys across N independent stores for write concurrency. Each shard has its own database and lock.
 
 ## Performance
