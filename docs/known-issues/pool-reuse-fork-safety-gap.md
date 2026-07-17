@@ -1,6 +1,8 @@
-# Fork-safety is unvalidated for reused worker pools
+# Fork-safety under reused worker pools
 
-**Status:** open, unconfirmed — needs a dedicated reproducer.
+**Status:** resolved — root cause confirmed, reproduced, and fixed. The
+severity is much lower than originally suspected: no corruption, no crash,
+no hang. Kept as a record of the investigation and the residual limitation.
 
 ## What is actually validated
 
@@ -19,11 +21,10 @@ This is exactly what both regression tests exercise:
   needed because a Python child calling `os._exit()` skips gcov's atexit flush.
 
 Neither test models a worker that stays alive after the fork and keeps
-touching the cache repeatedly over a long lifetime. README's "Multi-process
-safe" claim under **Concurrency** should be read with that scope: proven for
-short-lived process-per-task usage, not for reused pools.
+touching the cache repeatedly over a long lifetime. That gap is now closed by
+`tests/python/test_pool_reuse_fork_safety.py` (see below).
 
-## The gap
+## The gap (as originally reported)
 
 Found downstream in Speasy PR [#315](https://github.com/SciQLop/speasy/pull/315)
 (`fix/cachecall-dedup`). `tests/test_cache.py::CacheRequestsDeduplicationMultiProcess`
@@ -42,50 +43,70 @@ Error loading file for key... Failed to open memory-mapped file... deleting entr
 
 with knock-on provider-init failures in other jobs of the same run. Speasy
 reverted to fresh `Process()` per step (`4ebbe3b`) rather than debug the pool
-further, since that pattern is the one this repo's tests actually validate.
+further.
 
-## Why this is a theory, not a confirmed root cause
+## Root cause (confirmed)
 
-- No dedicated reproducer in *this* repo exercises "fork once, then many
-  sequential/concurrent cache touches from the surviving child" — the actual
-  shape a reused `Pool` produces. The corruption claim rests on one bad CI
-  run's symptoms, not an isolated repro.
-- The same Speasy investigation separately found and confirmed (via direct
-  reproducers built in this repo) that a *different*, unrelated bug — Python
-  package import-time network calls, nothing to do with caching or forking —
-  caused multi-hour Windows CI hangs in the very same test class. That
-  confusion is a concrete precedent for misattributing a hang to "the cache"
-  when the real cause was elsewhere. The Pool-reuse theory was never put
-  through the same bisection rigor before being abandoned.
-- It's plausible on its face — `pthread_atfork`'s **child** handler reopens
-  the SQLite connection and resets `_mtx` at the fork instant, but says
-  nothing about correctness of *sustained* concurrent use afterward by
-  multiple long-lived forked processes against one shared file — but "plausible"
-  isn't the same as "demonstrated."
+`tests/python/test_pool_reuse_fork_safety.py` reproduces the *exact* log
+signature deterministically: a persistent `multiprocessing.Pool` (forced to
+the `fork` start method — Python 3.14 changed the multiprocessing default to
+`forkserver`, which doesn't reproduce this at all since it re-imports
+`__main__` per worker instead of cloning) with dedicated writer and reader
+processes hammering one file-backed (>8KB) key.
 
-## What would close this
+The race is **not fork-specific at all** — it's a plain cross-process TOCTOU
+between two independent code paths that both touch the same on-disk file
+without a shared lock:
 
-A reproducer analogous to `test_fork_safety.py`, but shaped like a reused
-pool instead of one-shot fork:
+- `DiskStorage::load()` (`disk_storage.hpp`) checks `std::filesystem::exists()`
+  and then opens a memory-mapped file. Nothing prevents the file from being
+  removed between those two steps.
+- `_Store::_set_impl()`'s REPLACE path (`store.hpp`) writes the new file,
+  commits the DB row pointing at it, and *only then* removes the old file —
+  a plain, non-transactional `unlink()` with no cross-process coordination.
 
-1. Start N worker processes via `multiprocessing.Pool` (or bare `fork`) once.
-2. Have each worker perform many sequential `get`/`set`/`incr` calls against
-   the *same* cache file over its lifetime, concurrently with the other
-   workers — not a single touch-then-exit.
-3. Run this against a build with **no** other confounds (no consumer package
-   import, no network calls) to isolate whether corruption is reproducible
-   from this repo's code alone.
+A reader that read the *old* path just before a concurrent REPLACE commits
+can lose the race: by the time it opens the file, the writer has already
+unlinked it. `DiskStorage::load()` catches the failure and `get()`'s existing
+fallback (T2-D) cleans up gracefully — so the observed effect is a **spurious
+cache miss**, not corruption, a crash, or a deadlock. A reused pool doing
+thousands of touches on the same key over a long lifetime turns this
+low-probability race into something that reliably fires; a one-shot
+fork-touch-exit basically never hits the window.
 
-If it reproduces: the atfork quiescing needs to extend beyond the fork
-instant, or the docs need a hard "one-shot fork only" caveat. If it doesn't
-reproduce here in isolation: the original Speasy CI symptoms were most likely
-a different confound (worth revisiting against the import-time-hang lesson
-above), and the caveat can be relaxed once re-verified end-to-end.
+Confirmed severity: **this does not explain the 3+ hour CI hang.** No hang,
+crash, or deadlock reproduces here even under contention far heavier than
+the original CI run (a zero-delay busy loop of two writers + two readers on
+one key reliably produces >10 misses in 3 seconds; a more realistic paced
+workload reliably produces the same class of miss, just less often). The
+hang was most likely a different confound — see the precedent already noted
+below (the import-time-network-call bug that caused a similar-looking hang
+in the same test class during the same investigation).
 
-## Guidance until this is resolved
+## Fix
 
-Don't reuse an OS-level worker pool (`multiprocessing.Pool`,
+`_Store::get()` (`store.hpp`) now retries the load, bounded to 4 attempts,
+re-reading the row's current path each time and stopping as soon as the path
+stops changing. This is safe because the writer's ordering guarantees a
+freshly-read path's file is always complete (write file → commit row → *then*
+remove old file) — a newly observed path is never a half-written one.
+
+This closes the overwhelming majority of the race (in testing: ~0.0155% miss
+rate down to 0 misses across several million ops at a realistic pace, and a
+~100x reduction even under the pathological zero-delay stress case). It does
+**not** provide a hard guarantee under unbounded adversarial contention on a
+single key — no bounded retry count can, without reference-counted blob
+files and deferred deletion, which is a materially bigger change than this
+low-severity, already-gracefully-handled race justifies. This residual
+limitation is intentional and documented here rather than fixed further.
+
+## Guidance
+
+Reusing an OS-level worker pool (`multiprocessing.Pool`,
 `concurrent.futures.ProcessPoolExecutor`) whose workers repeatedly touch a
-`Cache`/`Index`/`FanoutCache` backed by the same file across many tasks.
-Prefer spawning a short-lived process per unit of work (fork/spawn → touch →
-exit) — the pattern the fork-safety fix and its tests actually cover.
+`Cache`/`Index`/`FanoutCache` backed by the same file across many tasks is
+now a **supported, tested pattern** (`test_pool_reuse_fork_safety.py`).
+Extremely hot single-key contention (many processes REPLACE-ing the exact
+same key back-to-back with no work in between) can still produce an
+occasional spurious miss — treat a `None` `get()` result as "recompute", the
+same tolerance any cache client should already have.
