@@ -11,6 +11,13 @@ import time
 import sys
 from pathlib import Path
 
+# Sentinel yielded by _iter_diskcache_entries for a key whose value could not be
+# deserialized (e.g. pickled by an incompatible library version -- a different numpy
+# major version is the most common real-world case). Least-astonishment principle:
+# one unreadable legacy entry should not abort migration of every other entry, it
+# should be warned about and skipped.
+_UNREADABLE = object()
+
 
 def _remaining_ttl(expire_time):
     """Convert diskcache absolute expire_time to remaining seconds, or None."""
@@ -21,14 +28,23 @@ def _remaining_ttl(expire_time):
 
 
 def _iter_diskcache_entries(dc):
-    """Yield (key_str, value_bytes, ttl_secs_or_none, tag_or_none) from a diskcache."""
+    """Yield (key_str, value_bytes, ttl_secs_or_none, tag_or_none) from a diskcache.
+
+    A key whose value fails to deserialize yields ``_UNREADABLE`` as its value
+    instead of raising, so one bad entry doesn't abort every entry after it.
+    """
     # diskcache.Index wraps a ._cache; use it for _sql access
     sql_source = dc._cache if hasattr(dc, '_cache') else dc
     for key in list(dc):
-        value = dc.get(key) if hasattr(dc, 'get') else dc[key]
+        key_str = str(key) if not isinstance(key, str) else key
+        try:
+            value = dc.get(key) if hasattr(dc, 'get') else dc[key]
+        except Exception as e:
+            print(f"  warning: could not read entry {key_str!r}, skipping ({e})", file=sys.stderr)
+            yield key_str, _UNREADABLE, None, None
+            continue
         if value is None:
             continue
-        key_str = str(key) if not isinstance(key, str) else key
         row = sql_source._sql(
             "SELECT expire_time, tag FROM Cache WHERE key=?", (key,)
         ).fetchone()
@@ -109,6 +125,9 @@ def migrate(src_path, dst_path, *, drop=False, shard_count=None, store_type="cac
     t0 = time.monotonic()
 
     for key_str, value, ttl, tag in entries:
+        if value is _UNREADABLE:
+            skipped += 1
+            continue
         try:
             if is_index:
                 dst.set(key_str, value)
