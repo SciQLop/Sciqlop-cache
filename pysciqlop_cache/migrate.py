@@ -33,6 +33,16 @@ def _dir_size(path):
     return sum(f.stat().st_size for f in path.rglob('*') if f.is_file())
 
 
+def _largest_file_size(path):
+    """Size in bytes of the single largest file under path (recursively). 0 if
+    path doesn't exist or has no files."""
+    path = Path(path)
+    if not path.exists():
+        return 0
+    sizes = [f.stat().st_size for f in path.rglob('*') if f.is_file()]
+    return max(sizes) if sizes else 0
+
+
 def _existing_ancestor(path):
     """The nearest existing ancestor of path (path itself if it already exists) --
     shutil.disk_usage needs a path that actually exists."""
@@ -45,13 +55,21 @@ def _existing_ancestor(path):
     return path
 
 
-def _ensure_enough_disk_space(src_path, dst_path, margin=1.2):
+def _ensure_enough_disk_space(src_path, dst_path, move=False, margin=1.2):
     """Raise InsufficientDiskSpaceError if the destination's filesystem doesn't have
-    enough free space for a full copy of src_path's data (plus a safety margin for
+    enough free space to safely attempt the migration (plus a safety margin for
     format overhead). Checked upfront, before anything is written, so a migration
     that can't possibly fit doesn't get abandoned half-written instead -- predictable
-    failure beats a disk filling up mid-migration."""
-    needed = _dir_size(src_path) * margin
+    failure beats a disk filling up mid-migration.
+
+    In copy mode (move=False), the whole source is preserved untouched throughout
+    migration, so a full second copy of its data must fit alongside it. In move
+    mode (move=True, i.e. called with drop=True), each source entry is deleted as
+    soon as it's written to the destination, so at most one entry's worth of
+    duplication ever exists at a time -- the estimate is based on the single
+    largest entry instead of the whole source.
+    """
+    needed = (_largest_file_size(src_path) if move else _dir_size(src_path)) * margin
     free = shutil.disk_usage(_existing_ancestor(dst_path)).free
     if free < needed:
         raise InsufficientDiskSpaceError(
@@ -114,7 +132,13 @@ def migrate(src_path, dst_path, *, drop=False, shard_count=None, store_type="cac
     dst_path : str or Path
         Path to the destination sciqlop-cache directory.
     drop : bool
-        If True, delete each entry from the source after successful migration.
+        Move instead of copy: if True, delete each entry from the source
+        immediately after it's successfully written to the destination, rather
+        than preserving the whole source untouched. Uses much less peak disk
+        space (at most one entry's worth of duplication at a time, instead of a
+        full second copy of everything) at the cost of not being able to fall
+        back to an intact source if something turns out wrong with the
+        destination afterwards.
     shard_count : int or None
         If set, create a FanoutCache/FanoutIndex with this many shards.
         Auto-detected from source if source is a FanoutCache.
@@ -139,7 +163,7 @@ def migrate(src_path, dst_path, *, drop=False, shard_count=None, store_type="cac
     dst_path = Path(dst_path)
     is_index = store_type == "index"
 
-    _ensure_enough_disk_space(src_path, dst_path)
+    _ensure_enough_disk_space(src_path, dst_path, move=drop)
 
     # Detect source type
     shard_dbs = list(src_path.glob("*/cache.db"))
@@ -221,7 +245,9 @@ def main():
     parser.add_argument("dst", help="Destination sciqlop-cache directory")
     parser.add_argument(
         "--drop", action="store_true",
-        help="Delete entries from source after migration",
+        help="Move instead of copy: delete each entry from source as soon as it's "
+             "migrated, using much less peak disk space at the cost of the source "
+             "no longer being an intact fallback afterwards",
     )
     parser.add_argument(
         "--shards", type=int, default=None,

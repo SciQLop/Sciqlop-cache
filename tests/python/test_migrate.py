@@ -131,5 +131,51 @@ class MigratePreflightDiskSpaceCheck(unittest.TestCase):
         self.assertEqual(result["migrated"], 1)
 
 
+class MigrateMoveMode(unittest.TestCase):
+    """drop=True (move instead of copy) deletes each source entry as soon as it's
+    migrated, so the preflight estimate should scale with the largest single entry
+    rather than the whole source, and the source should end up emptied out."""
+
+    def setUp(self):
+        self.src_root = tempfile.mkdtemp(prefix="migrate_src_")
+        self.dst_root = tempfile.mkdtemp(prefix="migrate_dst_")
+        self.addCleanup(shutil.rmtree, self.src_root, ignore_errors=True)
+        self.addCleanup(shutil.rmtree, self.dst_root, ignore_errors=True)
+
+    def test_preflight_estimate_is_smaller_in_move_mode(self):
+        from pysciqlop_cache.migrate import _ensure_enough_disk_space
+
+        # Two ~200KB values each get externalized by diskcache into their own file,
+        # so the whole source is ~400KB+ while the largest single entry is ~200KB --
+        # a large enough gap to tell the two estimates apart.
+        cache = diskcache.Cache(self.src_root)
+        cache["big1"] = "x" * 200_000
+        cache["big2"] = "y" * 200_000
+        cache.close()
+
+        with mock.patch("pysciqlop_cache.migrate.shutil.disk_usage",
+                        return_value=mock.Mock(free=300_000)):
+            with self.assertRaises(InsufficientDiskSpaceError):
+                _ensure_enough_disk_space(self.src_root, self.dst_root, move=False)
+            _ensure_enough_disk_space(self.src_root, self.dst_root, move=True)  # must not raise
+
+    def test_drop_true_empties_the_source_as_entries_migrate(self):
+        cache = diskcache.Cache(self.src_root)
+        cache["a"] = 1
+        cache["b"] = 2
+        cache.close()
+
+        result = migrate(self.src_root, self.dst_root, drop=True)
+
+        self.assertEqual(result["migrated"], 2)
+        self.assertEqual(list(diskcache.Cache(self.src_root)), [],
+                         "source entries must be deleted once successfully migrated")
+
+        from pysciqlop_cache import Cache
+        dst = Cache(str(self.dst_root))
+        self.assertEqual(dst.get("a"), 1)
+        self.assertEqual(dst.get("b"), 2)
+
+
 if __name__ == "__main__":
     unittest.main()
