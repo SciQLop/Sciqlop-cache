@@ -7,6 +7,7 @@ Usage:
 """
 
 import argparse
+import shutil
 import time
 import sys
 from pathlib import Path
@@ -17,6 +18,47 @@ from pathlib import Path
 # one unreadable legacy entry should not abort migration of every other entry, it
 # should be warned about and skipped.
 _UNREADABLE = object()
+
+
+class InsufficientDiskSpaceError(OSError):
+    """Not enough free disk space to safely attempt a migration."""
+
+
+def _dir_size(path):
+    """Total size in bytes of every file under path (recursively). 0 if path
+    doesn't exist."""
+    path = Path(path)
+    if not path.exists():
+        return 0
+    return sum(f.stat().st_size for f in path.rglob('*') if f.is_file())
+
+
+def _existing_ancestor(path):
+    """The nearest existing ancestor of path (path itself if it already exists) --
+    shutil.disk_usage needs a path that actually exists."""
+    path = Path(path)
+    while not path.exists():
+        parent = path.parent
+        if parent == path:  # reached the filesystem root without finding one
+            break
+        path = parent
+    return path
+
+
+def _ensure_enough_disk_space(src_path, dst_path, margin=1.2):
+    """Raise InsufficientDiskSpaceError if the destination's filesystem doesn't have
+    enough free space for a full copy of src_path's data (plus a safety margin for
+    format overhead). Checked upfront, before anything is written, so a migration
+    that can't possibly fit doesn't get abandoned half-written instead -- predictable
+    failure beats a disk filling up mid-migration."""
+    needed = _dir_size(src_path) * margin
+    free = shutil.disk_usage(_existing_ancestor(dst_path)).free
+    if free < needed:
+        raise InsufficientDiskSpaceError(
+            f"Not enough free disk space to migrate {src_path} to {dst_path}: "
+            f"need ~{needed / 1e6:.1f} MB (with a {margin}x safety margin), only "
+            f"{free / 1e6:.1f} MB free."
+        )
 
 
 def _remaining_ttl(expire_time):
@@ -83,6 +125,12 @@ def migrate(src_path, dst_path, *, drop=False, shard_count=None, store_type="cac
     Returns
     -------
     dict with keys: migrated, skipped, errors, elapsed_secs
+
+    Raises
+    ------
+    InsufficientDiskSpaceError
+        If the destination's filesystem doesn't have enough free space for a full
+        copy of src_path's data. Raised before anything is written to dst_path.
     """
     import diskcache as dc
     from pysciqlop_cache import Cache, FanoutCache, Index, FanoutIndex
@@ -90,6 +138,8 @@ def migrate(src_path, dst_path, *, drop=False, shard_count=None, store_type="cac
     src_path = Path(src_path)
     dst_path = Path(dst_path)
     is_index = store_type == "index"
+
+    _ensure_enough_disk_space(src_path, dst_path)
 
     # Detect source type
     shard_dbs = list(src_path.glob("*/cache.db"))
