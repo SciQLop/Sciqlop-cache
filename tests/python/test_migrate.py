@@ -6,10 +6,16 @@ import shutil
 import sqlite3
 import tempfile
 import unittest
+from unittest import mock
 
 import diskcache
 
-from pysciqlop_cache.migrate import _iter_diskcache_entries, _UNREADABLE, migrate
+from pysciqlop_cache.migrate import (
+    InsufficientDiskSpaceError,
+    _iter_diskcache_entries,
+    _UNREADABLE,
+    migrate,
+)
 
 
 class IterDiskcacheEntries(unittest.TestCase):
@@ -90,6 +96,39 @@ class MigrateSkipsUnreadableEntries(unittest.TestCase):
         self.assertEqual(dst.get("good_before"), 1)
         self.assertEqual(dst.get("good_after"), 2)
         self.assertIsNone(dst.get("poisoned"))
+
+
+class MigratePreflightDiskSpaceCheck(unittest.TestCase):
+    """migrate() must predict whether it can fit before writing anything, rather than
+    getting abandoned half-written partway through when the disk fills up mid-copy."""
+
+    def setUp(self):
+        self.src_root = tempfile.mkdtemp(prefix="migrate_src_")
+        self.dst_root = tempfile.mkdtemp(prefix="migrate_dst_")
+        self.addCleanup(shutil.rmtree, self.src_root, ignore_errors=True)
+        self.addCleanup(shutil.rmtree, self.dst_root, ignore_errors=True)
+
+    def test_raises_before_writing_anything_when_disk_space_is_insufficient(self):
+        cache = diskcache.Cache(self.src_root)
+        cache["a"] = "x" * 10_000
+        cache.close()
+
+        with mock.patch("pysciqlop_cache.migrate.shutil.disk_usage",
+                        return_value=mock.Mock(free=1)):
+            with self.assertRaises(InsufficientDiskSpaceError):
+                migrate(self.src_root, self.dst_root)
+
+        self.assertEqual(os.listdir(self.dst_root), [],
+                         "nothing should be written to the destination when the "
+                         "preflight check fails")
+
+    def test_proceeds_normally_when_disk_space_is_sufficient(self):
+        cache = diskcache.Cache(self.src_root)
+        cache["a"] = 1
+        cache.close()
+
+        result = migrate(self.src_root, self.dst_root)  # real disk_usage: plenty of room
+        self.assertEqual(result["migrated"], 1)
 
 
 if __name__ == "__main__":
