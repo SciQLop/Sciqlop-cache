@@ -1585,8 +1585,8 @@ public:
     // the triggers (e.g. manual DB surgery).
     bool _check_counters(DbGuard& db, bool fix)
     {
-        // The two ground-truth queries, the two meta reads, and (when
-        // fixing) the two meta writes must all see one consistent snapshot
+        // The three ground-truth queries, the three meta reads, and (when
+        // fixing) the three meta writes must all see one consistent snapshot
         // — otherwise a concurrent writer between them can make fix=true
         // overwrite meta with an already-stale value.
         _NestedTxn txn(*this);
@@ -1595,8 +1595,10 @@ public:
             "SELECT COALESCE(SUM(size), 0) FROM cache;");
         auto db_count = db->template exec<std::size_t>(
             "SELECT COUNT(*) FROM cache;");
+        auto db_file_size = db->template exec<std::size_t>(
+            "SELECT COALESCE(SUM(size), 0) FROM cache WHERE path IS NOT NULL;");
 
-        if (!db_size || !db_count)
+        if (!db_size || !db_count || !db_file_size)
         {
             txn.rollback();
             return false;
@@ -1604,14 +1606,17 @@ public:
 
         auto meta_size = db->template exec<std::size_t>(META_SIZE_STMT);
         auto meta_count = db->template exec<std::size_t>(META_COUNT_STMT);
+        auto meta_file_size = db->template exec<std::size_t>(META_FILE_SIZE_STMT);
 
-        bool consistent = meta_size && meta_count
-                        && *meta_size == *db_size && *meta_count == *db_count;
+        bool consistent = meta_size && meta_count && meta_file_size
+                        && *meta_size == *db_size && *meta_count == *db_count
+                        && *meta_file_size == *db_file_size;
 
         if (!consistent && fix)
         {
             db->exec(SET_META_STMT, std::string("size"), *db_size);
             db->exec(SET_META_STMT, std::string("count"), *db_count);
+            db->exec(SET_META_STMT, std::string("file_size"), *db_file_size);
         }
 
         txn.commit();

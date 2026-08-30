@@ -242,6 +242,59 @@ SCENARIO("check() detects counter drift", "[check]")
     }
 }
 
+SCENARIO("check() detects file_size counter drift", "[check]")
+{
+    AutoCleanDirectory dir("check_fsize_counter");
+    Cache cache(dir.path().string());
+
+    GIVEN("a cache with a file-backed value whose meta.file_size was corrupted directly")
+    {
+        const std::string file_value(12 * 1024, 'x'); // above the 8 KB threshold
+        cache.set("f1", file_value);
+        auto before = cache.volume();
+
+        // Same raw-connection pattern as the count/size drift scenario above
+        // — no live second-library issue since this test links the same
+        // vendored SQLite as the store itself.
+        sqlite3* raw_db = nullptr;
+        auto db_path = dir.path() / "sciqlop-cache.db";
+        sqlite3_open(db_path.string().c_str(), &raw_db);
+        sqlite3_exec(raw_db,
+            "UPDATE meta SET value = value + 1000 WHERE key = 'file_size';",
+            nullptr, nullptr, nullptr);
+        sqlite3_close(raw_db);
+
+        WHEN("check() is called without fix")
+        {
+            auto result = cache.check();
+
+            THEN("it detects the inconsistency and volume() is still wrong")
+            {
+                REQUIRE_FALSE(result.ok);
+                REQUIRE_FALSE(result.counters_consistent);
+                REQUIRE(cache.volume() == before + 1000);
+            }
+        }
+
+        WHEN("check(fix=true) is called")
+        {
+            auto result = cache.check(true);
+
+            THEN("file_size is repaired and volume() is correct again")
+            {
+                REQUIRE_FALSE(result.counters_consistent);
+                REQUIRE(cache.volume() == before);
+            }
+
+            AND_THEN("a second check is clean")
+            {
+                auto result2 = cache.check();
+                REQUIRE(result2.ok);
+            }
+        }
+    }
+}
+
 SCENARIO("FanoutCache check() aggregates across shards", "[check][fanout]")
 {
     AutoCleanDirectory dir("check_fanout");
