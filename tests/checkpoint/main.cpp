@@ -2,9 +2,10 @@
 #include <sciqlop_cache.hpp>
 #include "../common.hpp"
 #include <string>
-#include <thread>
 #include <chrono>
 #include <filesystem>
+#include <set>
+#include <sqlite3.h>
 
 SCENARIO("size() and count() are consistent across instances on the same directory without waiting", "[counters]")
 {
@@ -67,6 +68,39 @@ SCENARIO("size() and count() are consistent across instances on the same directo
             {
                 REQUIRE(b.count() == 1);
                 REQUIRE(b.size() == 50);
+            }
+        }
+    }
+}
+
+SCENARIO("Cache schema creates indexes on expire and last_use", "[schema][index]")
+{
+    GIVEN("a Cache opened on a fresh directory")
+    {
+        AutoCleanDirectory dir("checkpoint_indexes");
+        Cache cache { dir.path() };
+        WHEN("the underlying database is inspected directly")
+        {
+            sqlite3* db = nullptr;
+            REQUIRE(sqlite3_open_v2((dir.path() / "sciqlop-cache.db").string().c_str(), &db,
+                        SQLITE_OPEN_READONLY, nullptr)
+                == SQLITE_OK);
+
+            std::set<std::string> index_names;
+            sqlite3_stmt* stmt = nullptr;
+            REQUIRE(sqlite3_prepare_v2(db, "SELECT name FROM sqlite_master WHERE type='index';",
+                        -1, &stmt, nullptr)
+                == SQLITE_OK);
+            while (sqlite3_step(stmt) == SQLITE_ROW)
+                index_names.insert(
+                    reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0)));
+            sqlite3_finalize(stmt);
+            sqlite3_close(db);
+
+            THEN("both the expire and last_use indexes are present")
+            {
+                REQUIRE(index_names.count("idx_cache_expire") == 1);
+                REQUIRE(index_names.count("idx_cache_last_use") == 1);
             }
         }
     }

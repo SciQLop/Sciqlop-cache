@@ -292,7 +292,7 @@ class _Store : private Policies..., private _ForkAware
             + ") WITHOUT ROWID;"
             + " CREATE TABLE IF NOT EXISTS meta ("
               "key TEXT PRIMARY KEY, value);"
-              " INSERT OR IGNORE INTO meta (key, value) VALUES ('size', '0');"
+              " INSERT OR IGNORE INTO meta (key, value) VALUES ('size', 0);"
               " INSERT OR IGNORE INTO meta (key, value) VALUES ('count', 0);"
               " CREATE TRIGGER IF NOT EXISTS cache_count_insert AFTER INSERT ON cache BEGIN"
               "   UPDATE meta SET value = value + 1 WHERE key = 'count'; END;"
@@ -358,6 +358,13 @@ class _Store : private Policies..., private _ForkAware
 
     void _migrate_schema()
     {
+        // These are trigger names from a pre-0.1 schema that recomputed
+        // SUM(size) per write; if they survived on a DB opened with an old
+        // binary they would double-count alongside the new incremental
+        // triggers above, so drop them unconditionally on every open.
+        sqlite3_exec(_db.get(), "DROP TRIGGER IF EXISTS cache_insert_meta;", nullptr, nullptr, nullptr);
+        sqlite3_exec(_db.get(), "DROP TRIGGER IF EXISTS cache_delete_meta;", nullptr, nullptr, nullptr);
+        sqlite3_exec(_db.get(), "DROP TRIGGER IF EXISTS cache_update_size;", nullptr, nullptr, nullptr);
         if constexpr (has_tags)
         {
             sqlite3_exec(_db.get(),

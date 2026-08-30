@@ -17,7 +17,10 @@ struct WithExpiration
 {
     static std::string where_valid() { return " AND (expire IS NULL OR expire > unixepoch('now'))"; }
     static std::string extra_columns() { return ", expire REAL DEFAULT NULL"; }
-    static std::string extra_indexes() { return ""; }
+    static std::string extra_indexes()
+    {
+        return "CREATE INDEX IF NOT EXISTS idx_cache_expire ON cache(expire) WHERE expire IS NOT NULL;";
+    }
     static std::string insert_columns() { return ", expire"; }
     static std::string insert_placeholders() { return ", ?"; }
 };
@@ -33,7 +36,10 @@ struct WithEviction
                ", last_use REAL NOT NULL DEFAULT 0"
                ", access_count_since_last_update INT NOT NULL DEFAULT 0";
     }
-    static std::string extra_indexes() { return ""; }
+    static std::string extra_indexes()
+    {
+        return "CREATE INDEX IF NOT EXISTS idx_cache_last_use ON cache(last_use);";
+    }
     static std::string insert_columns() { return ", last_use"; }
     static std::string insert_placeholders() { return ", ?"; }
 };
