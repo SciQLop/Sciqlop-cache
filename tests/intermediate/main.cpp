@@ -18,14 +18,18 @@
 #include "sciqlop_cache/sciqlop_cache.hpp"
 #include "sciqlop_cache/utils/time.hpp"
 using namespace std::chrono_literals;
-#include <cpp_utils/lifetime/scope_leaving_guards.hpp>
 
 SCENARIO("Limit testing sciqlop_cache", "[cache]")
 {
+    // db_path is declared before cache, so (reverse destruction order) it is
+    // destroyed after ~Cache() has already stopped the bg checkpoint thread
+    // and closed the DB — AutoCleanDirectory's own destructor removes the
+    // directory safely at that point. A scope_leaving_guard declared after
+    // cache would instead run remove_all() while the Cache and its bg thread
+    // are still alive, racing SQLite writes to the directory being walked
+    // and throwing filesystem_error out of a noexcept destructor.
     AutoCleanDirectory db_path { "LimitTest01" };
     Cache cache(db_path.path());
-    auto scope_guard = cpp_utils::lifetime::scope_leaving_guard<
-        Cache, [](Cache* c) { std::filesystem::remove_all(c->path()); }>(&cache);
 
     std::string test_key = "random/test";
     std::vector<char> original_value1(128);
