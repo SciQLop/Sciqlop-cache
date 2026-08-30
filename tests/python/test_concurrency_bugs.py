@@ -303,6 +303,10 @@ class GetFallbackPathAware(unittest.TestCase):
         # is exactly `big` and survivor_path content stays raw bytes.
         cache.__setitem__("K", big)
         db_path = os.path.join(self.tmp, "sciqlop-cache.db")
+        del cache
+        # Python's sqlite3 is a second SQLite library in this process; it must
+        # never touch a DB our own connection has open (per-process fcntl
+        # locks let it truncate the -shm under our mapping → SIGBUS).
         conn = sqlite3.connect(db_path)
         try:
             row = conn.execute(
@@ -325,6 +329,7 @@ class GetFallbackPathAware(unittest.TestCase):
             conn.commit()
         finally:
             conn.close()
+        cache = Cache(self.tmp)
 
         # Use the raw __getitem__ → C++ get → returns Buffer. We don't need
         # to interpret the value; just verify the survivor file is intact.
@@ -338,6 +343,10 @@ class GetFallbackPathAware(unittest.TestCase):
         cache = Cache(self.tmp)
         cache.__setitem__("K", b"D" * (12 * 1024))
         db_path = os.path.join(self.tmp, "sciqlop-cache.db")
+        del cache
+        # Python's sqlite3 is a second SQLite library in this process; it must
+        # never touch a DB our own connection has open (per-process fcntl
+        # locks let it truncate the -shm under our mapping → SIGBUS).
         # Force the row to point at a non-existent path: get() will fail load.
         conn = sqlite3.connect(db_path)
         try:
@@ -348,6 +357,7 @@ class GetFallbackPathAware(unittest.TestCase):
             conn.commit()
         finally:
             conn.close()
+        cache = Cache(self.tmp)
 
         # With the fix: DELETE WHERE key='K' AND path='/nonexistent/path/at_all'
         # — matches, row removed.
