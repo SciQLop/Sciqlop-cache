@@ -9,6 +9,124 @@
 #include <stdexcept>
 #include <thread>
 
+static std::size_t read_meta_uint(const std::filesystem::path& db_path, const std::string& key)
+{
+    sqlite3* db = nullptr;
+    REQUIRE(sqlite3_open_v2(db_path.string().c_str(), &db, SQLITE_OPEN_READONLY, nullptr)
+        == SQLITE_OK);
+    sqlite3_stmt* stmt = nullptr;
+    REQUIRE(sqlite3_prepare_v2(db, "SELECT value FROM meta WHERE key = ?;", -1, &stmt, nullptr)
+        == SQLITE_OK);
+    sqlite3_bind_text(stmt, 1, key.c_str(), -1, SQLITE_TRANSIENT);
+    std::size_t value = 0;
+    if (sqlite3_step(stmt) == SQLITE_ROW)
+        value = static_cast<std::size_t>(sqlite3_column_int64(stmt, 0));
+    sqlite3_finalize(stmt);
+    sqlite3_close(db);
+    return value;
+}
+
+SCENARIO("volume() is derived from maintained counters", "[counters][volume]")
+{
+    GIVEN("a Cache with two file-backed values and one inline blob")
+    {
+        AutoCleanDirectory dir("checkpoint_volume_counters");
+        auto db_path = dir.path() / "sciqlop-cache.db";
+        Cache cache { dir.path() };
+        const std::string file_value(12 * 1024, 'x');
+        const std::string inline_value(100, 'y');
+
+        REQUIRE(cache.set("f1", file_value));
+        REQUIRE(cache.set("f2", file_value));
+        REQUIRE(cache.set("b1", inline_value));
+
+        WHEN("volume() is queried")
+        {
+            THEN("it reflects both file-backed values plus a bounded DB overhead, in O(1)")
+            {
+                auto v = cache.volume();
+                REQUIRE(v >= 2 * 12 * 1024);
+                REQUIRE(v < 2 * 12 * 1024 + 5 * 1024 * 1024);
+                REQUIRE(read_meta_uint(db_path, "file_size") == 2 * 12 * 1024);
+            }
+
+            AND_THEN("a second instance on the same directory sees the same volume and count")
+            {
+                Cache other { dir.path() };
+                REQUIRE(other.volume() == cache.volume());
+                REQUIRE(other.count() == cache.count());
+            }
+        }
+
+        WHEN("a file-backed key is overwritten with a small inline blob")
+        {
+            REQUIRE(cache.set("f1", inline_value));
+            THEN("the file_size counter drops by the file-backed value's size")
+            {
+                REQUIRE(read_meta_uint(db_path, "file_size") == 12 * 1024);
+                REQUIRE(cache.volume() < 12 * 1024 + 5 * 1024 * 1024);
+            }
+
+            AND_WHEN("the remaining file-backed key is deleted")
+            {
+                REQUIRE(cache.del("f2"));
+                THEN("file_size no longer includes it")
+                {
+                    REQUIRE(read_meta_uint(db_path, "file_size") == 0);
+                }
+            }
+        }
+    }
+}
+
+SCENARIO("file_size counter is unaffected by the non-file UPDATE trigger path", "[counters][volume]")
+{
+    GIVEN("a Cache with a blob-backed counter key updated in place via incr()")
+    {
+        AutoCleanDirectory dir("checkpoint_volume_incr");
+        auto db_path = dir.path() / "sciqlop-cache.db";
+        Cache cache { dir.path() };
+
+        // First incr() inserts the row with path = NULL (no fsize trigger
+        // effect); the second goes through INCR_UPDATE_STMT, a real UPDATE
+        // OF size, path that flips NULL -> NULL. This is exactly the path
+        // the WHEN-less update trigger must leave file_size alone on.
+        cache.incr("counter");
+        cache.incr("counter");
+
+        THEN("file_size stays zero")
+        {
+            REQUIRE(read_meta_uint(db_path, "file_size") == 0);
+        }
+    }
+}
+
+SCENARIO("count() is O(1) and includes not-yet-expired entries", "[counters][count]")
+{
+    GIVEN("a Cache with three entries, one carrying a future expiration")
+    {
+        AutoCleanDirectory dir("checkpoint_count_o1");
+        Cache cache { dir.path() };
+        REQUIRE(cache.set("k1", std::string(10, 'a')));
+        REQUIRE(cache.set("k2", std::string(10, 'b'), std::chrono::hours(1)));
+        REQUIRE(cache.set("k3", std::string(10, 'c')));
+
+        THEN("count() reflects all three")
+        {
+            REQUIRE(cache.count() == 3);
+        }
+
+        WHEN("one entry is deleted")
+        {
+            REQUIRE(cache.del("k2"));
+            THEN("count() drops accordingly")
+            {
+                REQUIRE(cache.count() == 2);
+            }
+        }
+    }
+}
+
 SCENARIO("size() and count() are consistent across instances on the same directory without waiting", "[counters]")
 {
     GIVEN("two Cache instances opened on the same directory")

@@ -153,9 +153,6 @@ class _Store : private Policies..., private _ForkAware
 
     // --- Compiled statements (SQL built from policies) ---
 
-    CompiledStatement COUNT_STMT {
-        std::string("SELECT COUNT(*) FROM cache WHERE 1=1") + _where_valid() + ";"
-    };
     CompiledStatement KEYS_STMT {
         std::string("SELECT key FROM cache WHERE 1=1") + _where_valid() + ";"
     };
@@ -187,6 +184,7 @@ class _Store : private Policies..., private _ForkAware
     CompiledStatement GET_META_STMT { "SELECT value FROM meta WHERE key = ?;" };
     CompiledStatement META_SIZE_STMT { "SELECT value FROM meta WHERE key = 'size';" };
     CompiledStatement META_COUNT_STMT { "SELECT value FROM meta WHERE key = 'count';" };
+    CompiledStatement META_FILE_SIZE_STMT { "SELECT value FROM meta WHERE key = 'file_size';" };
 
     // Incr/decr statements
     CompiledStatement INCR_GET_STMT {
@@ -235,11 +233,12 @@ class _Store : private Policies..., private _ForkAware
     auto _all_statements()
     {
         std::vector<CompiledStatement*> stmts = {
-            &COUNT_STMT, &KEYS_STMT, &EXISTS_STMT, &GET_STMT,
+            &KEYS_STMT, &EXISTS_STMT, &GET_STMT,
             &GET_PATH_SIZE_STMT,
             &REPLACE_VALUE_STMT, &REPLACE_PATH_STMT,
             &INSERT_VALUE_STMT, &INSERT_PATH_STMT, &DELETE_STMT,
             &SET_META_STMT, &GET_META_STMT, &META_SIZE_STMT, &META_COUNT_STMT,
+            &META_FILE_SIZE_STMT,
             &INCR_GET_STMT, &INCR_UPDATE_STMT
         };
         if constexpr (has_expiration)
@@ -294,6 +293,7 @@ class _Store : private Policies..., private _ForkAware
               "key TEXT PRIMARY KEY, value);"
               " INSERT OR IGNORE INTO meta (key, value) VALUES ('size', 0);"
               " INSERT OR IGNORE INTO meta (key, value) VALUES ('count', 0);"
+              " INSERT OR IGNORE INTO meta (key, value) VALUES ('file_size', 0);"
               " CREATE TRIGGER IF NOT EXISTS cache_count_insert AFTER INSERT ON cache BEGIN"
               "   UPDATE meta SET value = value + 1 WHERE key = 'count'; END;"
               " CREATE TRIGGER IF NOT EXISTS cache_count_delete AFTER DELETE ON cache BEGIN"
@@ -304,6 +304,23 @@ class _Store : private Policies..., private _ForkAware
               "   UPDATE meta SET value = value + NEW.size - OLD.size WHERE key = 'size'; END;"
               " CREATE TRIGGER IF NOT EXISTS cache_size_delete AFTER DELETE ON cache BEGIN"
               "   UPDATE meta SET value = value - OLD.size WHERE key = 'size'; END;"
+              " CREATE TRIGGER IF NOT EXISTS cache_fsize_insert AFTER INSERT ON cache"
+              "   WHEN NEW.path IS NOT NULL BEGIN"
+              "   UPDATE meta SET value = value + NEW.size WHERE key = 'file_size'; END;"
+              " CREATE TRIGGER IF NOT EXISTS cache_fsize_delete AFTER DELETE ON cache"
+              "   WHEN OLD.path IS NOT NULL BEGIN"
+              "   UPDATE meta SET value = value - OLD.size WHERE key = 'file_size'; END;"
+              // No WHEN guard: this must also catch the blob<->file
+              // transitions of a real UPDATE (e.g. incr() rewriting a
+              // file-backed entry to path = NULL via INCR_UPDATE_STMT).
+              // REPLACE (used by set()) never reaches this trigger — with
+              // recursive_triggers=ON it fires as DELETE+INSERT, handled by
+              // the WHEN-guarded pair above.
+              " CREATE TRIGGER IF NOT EXISTS cache_fsize_update AFTER UPDATE OF size, path ON cache BEGIN"
+              "   UPDATE meta SET value = value"
+              "     - (CASE WHEN OLD.path IS NOT NULL THEN OLD.size ELSE 0 END)"
+              "     + (CASE WHEN NEW.path IS NOT NULL THEN NEW.size ELSE 0 END)"
+              "   WHERE key = 'file_size'; END;"
             + _extra_schema_indexes();
     }
 
@@ -381,17 +398,23 @@ class _Store : private Policies..., private _ForkAware
                 "CREATE INDEX IF NOT EXISTS idx_cache_tag ON cache(tag) WHERE tag IS NOT NULL;",
                 nullptr, nullptr, nullptr);
         }
-        // One-time reconciliation for DBs created before size/count moved
-        // into SQLite (guarded by a marker row so it runs once per DB, not
-        // once per open): recompute both from the cache table directly. This
-        // is the last O(N) scan; every write after this point is kept
-        // current incrementally by the triggers in _schema_sql.
-        if (!_db.exec<std::string>("SELECT value FROM meta WHERE key = 'counters_v';"))
+        // One-time reconciliation for DBs whose maintained counters predate
+        // the current counters_v (guarded by that marker row so each
+        // reconciliation runs once per DB, not once per open): recompute
+        // every counter from the cache table directly. This is the only O(N)
+        // scan; every write after this point is kept current incrementally
+        // by the triggers in _schema_sql. v1 -> v2 added 'file_size'
+        // (0.1.6 DBs have counters_v='1' but no file_size row yet), so a
+        // missing marker or one below the current version both trigger it.
+        auto counters_v = _db.exec<std::size_t>("SELECT value FROM meta WHERE key = 'counters_v';");
+        if (!counters_v || *counters_v < 2)
         {
             (void)_db.exec("BEGIN IMMEDIATE;"
                 "UPDATE meta SET value = (SELECT COUNT(*) FROM cache) WHERE key = 'count';"
                 "UPDATE meta SET value = (SELECT COALESCE(SUM(size), 0) FROM cache) WHERE key = 'size';"
-                "INSERT OR REPLACE INTO meta (key, value) VALUES ('counters_v', '1');"
+                "UPDATE meta SET value = (SELECT COALESCE(SUM(size), 0) FROM cache WHERE path IS NOT NULL) "
+                "WHERE key = 'file_size';"
+                "INSERT OR REPLACE INTO meta (key, value) VALUES ('counters_v', '2');"
                 "COMMIT;");
         }
     }
@@ -961,19 +984,14 @@ public:
 
     [[nodiscard]] inline std::size_t count()
     {
-        if constexpr (has_expiration)
-        {
-            // Must query DB to exclude expired entries
-            if (auto r = db()->template exec<std::size_t>(COUNT_STMT))
-                return *r;
-            return 0;
-        }
-        else
-        {
-            if (auto r = db()->template exec<std::size_t>(META_COUNT_STMT))
-                return *r;
-            return 0;
-        }
+        // The maintained counter can briefly include entries that are
+        // already expired but not yet evicted — the background thread
+        // sweeps those every ~1 s. Same semantics as Python diskcache's
+        // len(), and O(1) instead of the full-table scan a WHERE-filtered
+        // COUNT(*) would need.
+        if (auto r = db()->template exec<std::size_t>(META_COUNT_STMT))
+            return *r;
+        return 0;
     }
 
     [[nodiscard]] inline size_t size()
@@ -983,6 +1001,10 @@ public:
         return 0;
     }
 
+    // O(1): page_count*page_size for the DB file, plus the trigger-maintained
+    // 'file_size' counter for on-disk values. Counts live values only — a
+    // file on disk with no matching row (orphaned, e.g. after a crash mid-
+    // write) contributes nothing here; check() reports those separately.
     [[nodiscard]] inline size_t volume()
     {
         auto g = db();
@@ -991,16 +1013,8 @@ public:
             if (auto ps = g->template exec<std::size_t>("PRAGMA page_size;"))
                 db_size = *pc * *ps;
         std::size_t file_size = 0;
-        if (std::filesystem::exists(cache_path) && std::filesystem::is_directory(cache_path))
-        {
-            for (const auto& entry : std::filesystem::recursive_directory_iterator(cache_path))
-            {
-                if (entry.is_regular_file() && entry.path().extension() != ".db"
-                    && entry.path().extension() != ".db-wal"
-                    && entry.path().extension() != ".db-shm")
-                    file_size += entry.file_size();
-            }
-        }
+        if (auto fs = g->template exec<std::size_t>(META_FILE_SIZE_STMT))
+            file_size = *fs;
         return db_size + file_size;
     }
 
@@ -1370,7 +1384,7 @@ public:
 
     inline void set_meta(const std::string& key, const std::string& value)
     {
-        if (key == "size" || key == "count" || key == "counters_v")
+        if (key == "size" || key == "count" || key == "counters_v" || key == "file_size")
             throw std::runtime_error("set_meta: reserved key");
         db()->exec(SET_META_STMT, key, value);
     }
