@@ -402,16 +402,18 @@ class LockReleaseDetectsLost(unittest.TestCase):
 
 
 class CounterBgResyncRace(unittest.TestCase):
-    """T1-B: the background checkpoint thread runs _resync_counters every ~1s
-    while the main thread does set/del operations. Sequence:
-       main: SQL commit (DB has +1 row, atomic counter still old)
-       bg:   _resync reads DB, stores new value into atomic
-       main: fetch_add(1) — atomic now over-counts by 1
-    is observable. After the fix BG takes _mtx around resync so it can't
-    fire between user's commit and atomic update.
+    """Regression check for counter drift under steady concurrent writes.
+
+    size()/count() are now `meta` rows kept exactly by per-row INSERT/UPDATE/
+    DELETE triggers on `cache`, in the same transaction as the row change —
+    so there's no separate resync step and no window for the background
+    checkpoint thread to race a counter update (it no longer touches
+    counters or takes _mtx at all). This test remains as a guard: run a
+    steady stream of set/del while the BG thread ticks in the background,
+    then verify the trigger-maintained counters still match DB ground truth.
 
     Reproducer: a single process loops set/del while the BG thread runs;
-    afterwards check() compares atomic counters to DB ground truth.
+    afterwards check() compares the meta counters to DB ground truth.
     """
 
     def setUp(self):

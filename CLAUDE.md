@@ -25,7 +25,7 @@ meson test -C build sciqlop-cache:basic
 #   C++ (always-on):  sciqlop-cache:basic, sciqlop-cache:basic_index,
 #                     sciqlop-cache:database, sciqlop-cache:intermediate,
 #                     sciqlop-cache:multithreads, sciqlop-cache:fanout,
-#                     sciqlop-cache:check
+#                     sciqlop-cache:check, sciqlop-cache:checkpoint
 #   C++ (with_torture_tests=true):
 #                     sciqlop-cache:torture, sciqlop-cache:concurrency_bugs
 #   Python (always-on if Python wrapper enabled):
@@ -39,6 +39,10 @@ meson test -C build sciqlop-cache:basic
 
 # Build Python wheel
 pip install meson-python numpy && python -m build --wheel
+
+# Run the bulk-insert benchmark (bg checkpoint/eviction stall + WAL size
+# under sustained writes; not run by `meson test` by default)
+meson test -C build --benchmark bgscan
 ```
 
 ### Meson Options
@@ -78,8 +82,9 @@ All vendored in `subprojects/`: SQLite amalgamation, fmt, nanobind, Catch2, stdu
 - WAL mode + 600s busy_timeout for multi-process safety
 - **`_NestedTxn` (private RAII helper in `_Store`)** — every internal write path (`_set_impl`, `del`, `pop`, `incr`, `evict_tag`) wraps in a `BEGIN EXCLUSIVE` only at the outermost level (depth-counted via `_txn_depth`). Inner levels are no-ops. Both for cross-process atomicity (read-modify-write inside one txn) and to compose cleanly inside a user `transact()`.
 - **`TransactionGuard` is reentrant on the same thread** (depth-counted same as `_NestedTxn`). Nested `with cache.transact():` is supported; outer rollback discards inner work (no real SAVEPOINTs — same semantics as diskcache).
-- **BG checkpoint thread takes `_mtx`** around `_bg_evict` + `_resync_counters` so it can't clobber atomic counters mid-update on the user-thread side.
-- `size()` and `count()` use in-memory atomic counters (O(1)) for types without expiration; `count()` queries DB when expiration filtering needed (deliberate — see `tier2_perf_decisions.md` in the auto-memory)
+- **Counters live in the DB, not memory** — `size()`/`count()` are `meta` rows kept exactly by incremental (`value + NEW.size`, O(1)) INSERT/UPDATE/DELETE triggers on `cache`, in the same transaction as the row change. Cross-process exact by construction, so there's no resync step and the bg thread never needs `_mtx` for counters. `count()` on types with expiration still queries the DB (deliberate — see `tier2_perf_decisions.md` in the auto-memory); `size()`/`count()` without expiration are an O(1) `meta` read.
+- **BG checkpoint thread never takes `_mtx`** — it only runs a PASSIVE `wal_checkpoint` + eviction (`_bg_evict`) each tick, both of which are safe against the DB's own locking without the store mutex. The WAL is bounded by `PRAGMA wal_autocheckpoint=4000` on the writer connection instead: the bg thread's PASSIVE checkpoint alone can't reset the WAL under a continuous writer (checkpoint starvation), but the writer's own autocheckpoint finishes the small remainder once the WAL exceeds ~16 MB, keeping it flat instead of growing unbounded.
+- **Never open a live cache DB with a second SQLite library in the same process** (e.g. Python's `sqlite3`) — per-process `fcntl` locks let the second library's connection truncate the `-shm` file under our own mmap, causing SIGBUS. Tests must `del cache` (closing our connection) before calling `sqlite3.connect()` on the same path.
 - Expiration handled at query time via SQL (`WHERE expire IS NULL OR expire > unixepoch('now')`) — only present in types with `WithExpiration`
 - No-expiry default: `set()`/`add()` without expire stores NULL (never expires)
 - LRU eviction: `max_size` in bytes (0 = unlimited, default). Background thread evicts using monotonic access counter — only present with `WithEviction`

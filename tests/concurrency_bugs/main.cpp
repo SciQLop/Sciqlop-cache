@@ -45,9 +45,10 @@ SCENARIO("DiskStorage mmap cache races with background eviction thread", "[concu
             std::atomic<int> ops { 0 };
             std::atomic<int> next_id { 0 };
 
-            // Writer: continuously sets unique large values → grows _total_size
-            // past max_size → bg thread's _bg_evict picks them up and calls
-            // storage->remove (no _mtx) while reader threads call storage->load.
+            // Writer: continuously sets unique large values → grows the
+            // trigger-maintained meta 'size' counter past max_size → bg
+            // thread's _bg_evict picks them up and calls storage->remove
+            // (no _mtx) while reader threads call storage->load.
             auto writer = [&]
             {
                 while (!stop.load(std::memory_order_relaxed))

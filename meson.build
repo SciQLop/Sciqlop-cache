@@ -126,6 +126,17 @@ fork_safety_exe = executable(
 )
 test('fork_safety', fork_safety_exe, is_parallel: false, timeout: 120)
 
+bench_bgscan_exe = executable(
+    'bench-bgscan', 'tests/bench_bgscan/main.cpp',
+    include_directories: my_include,
+    dependencies:[sciqlop_cache_dep, sqlite3_dep],
+    install: false
+)
+benchmark('bgscan', bench_bgscan_exe,
+    args: ['--n', '100000', '--path', meson.current_build_dir() / 'bench-bgscan-store'],
+    timeout: 600
+)
+
 gbench_dep = dependency('benchmark', required: false)
 if gbench_dep.found()
     bench_perf_exe = executable(
