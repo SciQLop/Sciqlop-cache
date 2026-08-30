@@ -194,17 +194,20 @@ SCENARIO("check() detects counter drift", "[check]")
     AutoCleanDirectory dir("check_counters");
     Index index(dir.path().string());
 
-    GIVEN("An index with entries added via raw SQL (bypassing counters)")
+    GIVEN("an index whose meta counters were corrupted directly (bypassing triggers)")
     {
         std::string val = "hello";
         index.set("legit", std::span(val.data(), val.size()));
 
-        // Insert a row directly via SQL, bypassing counter updates
+        // Counters are now maintained by triggers on `cache`, so a raw
+        // INSERT into `cache` (even from another connection) fires them and
+        // stays consistent. The only way left to create drift is to touch
+        // the meta row directly, bypassing the triggers entirely.
         sqlite3* raw_db = nullptr;
         auto db_path = dir.path() / "sciqlop-cache.db";
         sqlite3_open(db_path.string().c_str(), &raw_db);
         sqlite3_exec(raw_db,
-            "INSERT INTO cache (key, value, size) VALUES ('sneaky', X'AABB', 2);",
+            "UPDATE meta SET value = value + 100 WHERE key = 'count';",
             nullptr, nullptr, nullptr);
         sqlite3_close(raw_db);
 
@@ -226,8 +229,8 @@ SCENARIO("check() detects counter drift", "[check]")
             THEN("Counters are reloaded from DB")
             {
                 REQUIRE_FALSE(result.counters_consistent);
-                // After fix, count and size should reflect both rows
-                REQUIRE(index.count() == 2);
+                // After fix, count should reflect the real row count.
+                REQUIRE(index.count() == 1);
             }
 
             AND_THEN("A second check is clean")

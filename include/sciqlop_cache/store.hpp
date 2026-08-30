@@ -124,9 +124,6 @@ class _Store : private Policies..., private _ForkAware
     // logical no-ops. Always read/written under _mtx.
     std::size_t _txn_depth = 0;
 
-    std::atomic<std::size_t> _total_size { 0 };
-    std::atomic<std::size_t> _total_count { 0 };
-
     // --- SQL building helpers (derived from policy fold expressions) ---
 
     static std::string _where_valid()
@@ -188,6 +185,8 @@ class _Store : private Policies..., private _ForkAware
     CompiledStatement DELETE_STMT { "DELETE FROM cache WHERE key = ?;" };
     CompiledStatement SET_META_STMT { "INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?);" };
     CompiledStatement GET_META_STMT { "SELECT value FROM meta WHERE key = ?;" };
+    CompiledStatement META_SIZE_STMT { "SELECT value FROM meta WHERE key = 'size';" };
+    CompiledStatement META_COUNT_STMT { "SELECT value FROM meta WHERE key = 'count';" };
 
     // Incr/decr statements
     CompiledStatement INCR_GET_STMT {
@@ -240,7 +239,7 @@ class _Store : private Policies..., private _ForkAware
             &GET_PATH_SIZE_STMT,
             &REPLACE_VALUE_STMT, &REPLACE_PATH_STMT,
             &INSERT_VALUE_STMT, &INSERT_PATH_STMT, &DELETE_STMT,
-            &SET_META_STMT, &GET_META_STMT,
+            &SET_META_STMT, &GET_META_STMT, &META_SIZE_STMT, &META_COUNT_STMT,
             &INCR_GET_STMT, &INCR_UPDATE_STMT
         };
         if constexpr (has_expiration)
@@ -294,6 +293,17 @@ class _Store : private Policies..., private _ForkAware
             + " CREATE TABLE IF NOT EXISTS meta ("
               "key TEXT PRIMARY KEY, value);"
               " INSERT OR IGNORE INTO meta (key, value) VALUES ('size', '0');"
+              " INSERT OR IGNORE INTO meta (key, value) VALUES ('count', 0);"
+              " CREATE TRIGGER IF NOT EXISTS cache_count_insert AFTER INSERT ON cache BEGIN"
+              "   UPDATE meta SET value = value + 1 WHERE key = 'count'; END;"
+              " CREATE TRIGGER IF NOT EXISTS cache_count_delete AFTER DELETE ON cache BEGIN"
+              "   UPDATE meta SET value = value - 1 WHERE key = 'count'; END;"
+              " CREATE TRIGGER IF NOT EXISTS cache_size_insert AFTER INSERT ON cache BEGIN"
+              "   UPDATE meta SET value = value + NEW.size WHERE key = 'size'; END;"
+              " CREATE TRIGGER IF NOT EXISTS cache_size_update AFTER UPDATE OF size ON cache BEGIN"
+              "   UPDATE meta SET value = value + NEW.size - OLD.size WHERE key = 'size'; END;"
+              " CREATE TRIGGER IF NOT EXISTS cache_size_delete AFTER DELETE ON cache BEGIN"
+              "   UPDATE meta SET value = value - OLD.size WHERE key = 'size'; END;"
             + _extra_schema_indexes();
     }
 
@@ -320,7 +330,7 @@ class _Store : private Policies..., private _ForkAware
                 _db.open(this->cache_path / db_fname, init_stmts);
                 _compile_statements();
                 _migrate_schema();
-                _load_counters();
+                _seed_access_seq();
                 return;
             }
             catch (const std::runtime_error&)
@@ -332,12 +342,8 @@ class _Store : private Policies..., private _ForkAware
         }
     }
 
-    void _load_counters()
+    void _seed_access_seq()
     {
-        if (auto r = _db.exec<std::size_t>("SELECT COALESCE(SUM(size), 0) FROM cache;"))
-            _total_size.store(*r, std::memory_order_relaxed);
-        if (auto r = _db.exec<std::size_t>("SELECT COUNT(*) FROM cache;"))
-            _total_count.store(*r, std::memory_order_relaxed);
         // last_use is the monotonic access counter. Resume it above the
         // persisted maximum so entries written after a reopen are ranked
         // more-recently-used than older ones (otherwise the counter restarts
@@ -361,10 +367,19 @@ class _Store : private Policies..., private _ForkAware
                 "CREATE INDEX IF NOT EXISTS idx_cache_tag ON cache(tag) WHERE tag IS NOT NULL;",
                 nullptr, nullptr, nullptr);
         }
-        // Drop any triggers from previous versions (replaced by in-memory tracking)
-        sqlite3_exec(_db.get(), "DROP TRIGGER IF EXISTS cache_insert_meta;", nullptr, nullptr, nullptr);
-        sqlite3_exec(_db.get(), "DROP TRIGGER IF EXISTS cache_delete_meta;", nullptr, nullptr, nullptr);
-        sqlite3_exec(_db.get(), "DROP TRIGGER IF EXISTS cache_update_size;", nullptr, nullptr, nullptr);
+        // One-time reconciliation for DBs created before size/count moved
+        // into SQLite (guarded by a marker row so it runs once per DB, not
+        // once per open): recompute both from the cache table directly. This
+        // is the last O(N) scan; every write after this point is kept
+        // current incrementally by the triggers in _schema_sql.
+        if (!_db.exec<std::string>("SELECT value FROM meta WHERE key = 'counters_v';"))
+        {
+            (void)_db.exec("BEGIN IMMEDIATE;"
+                "UPDATE meta SET value = (SELECT COUNT(*) FROM cache) WHERE key = 'count';"
+                "UPDATE meta SET value = (SELECT COALESCE(SUM(size), 0) FROM cache) WHERE key = 'size';"
+                "INSERT OR REPLACE INTO meta (key, value) VALUES ('counters_v', '1');"
+                "COMMIT;");
+        }
     }
 
     // --- Fork safety (pthread_atfork hooks; see _ForkAware above) ---
@@ -420,8 +435,6 @@ class _Store : private Policies..., private _ForkAware
 
     void _bg_evict([[maybe_unused]] sqlite3* bg_db)
     {
-        bool modified = false;
-
         if constexpr (has_expiration)
         {
             sqlite3_stmt* stmt = nullptr;
@@ -439,8 +452,6 @@ class _Store : private Policies..., private _ForkAware
             sqlite3_exec(bg_db,
                 "DELETE FROM cache WHERE expire IS NOT NULL AND expire <= unixepoch('now');",
                 nullptr, nullptr, nullptr);
-            if (sqlite3_changes(bg_db) > 0)
-                modified = true;
             for (auto& f : files)
                 storage->remove(f);
         }
@@ -449,7 +460,15 @@ class _Store : private Policies..., private _ForkAware
         {
             if (max_size > 0)
             {
-                auto current_size = _total_size.load(std::memory_order_relaxed);
+                std::size_t current_size = 0;
+                {
+                    sqlite3_stmt* stmt = nullptr;
+                    sqlite3_prepare_v2(bg_db, "SELECT value FROM meta WHERE key = 'size';",
+                                       -1, &stmt, nullptr);
+                    if (stmt && sqlite3_step(stmt) == SQLITE_ROW)
+                        current_size = static_cast<std::size_t>(sqlite3_column_int64(stmt, 0));
+                    if (stmt) sqlite3_finalize(stmt);
+                }
                 if (current_size > max_size)
                 {
                     auto target = max_size * 9 / 10;
@@ -482,32 +501,9 @@ class _Store : private Policies..., private _ForkAware
                             storage->remove(path);
                     }
                     if (stmt) sqlite3_finalize(stmt);
-                    if (!to_evict.empty())
-                        modified = true;
                 }
             }
         }
-
-        if (modified)
-            _resync_counters(bg_db);
-    }
-
-    void _resync_counters(sqlite3* conn)
-    {
-        sqlite3_stmt* stmt = nullptr;
-        sqlite3_prepare_v2(conn,
-            "SELECT COUNT(*), COALESCE(SUM(size), 0) FROM cache;",
-            -1, &stmt, nullptr);
-        if (stmt && sqlite3_step(stmt) == SQLITE_ROW)
-        {
-            _total_count.store(
-                static_cast<std::size_t>(sqlite3_column_int64(stmt, 0)),
-                std::memory_order_relaxed);
-            _total_size.store(
-                static_cast<std::size_t>(sqlite3_column_int64(stmt, 1)),
-                std::memory_order_relaxed);
-        }
-        if (stmt) sqlite3_finalize(stmt);
     }
 
     void _checkpoint_loop()
@@ -539,17 +535,13 @@ class _Store : private Policies..., private _ForkAware
             if (_stop_checkpoint.load(std::memory_order_relaxed))
                 break;
             sqlite3_wal_checkpoint_v2(cp_db, nullptr, SQLITE_CHECKPOINT_PASSIVE, nullptr, nullptr);
-            // Hold _mtx across _bg_evict + _resync_counters so we don't clobber
-            // user-thread atomic counters mid-update. Without this, sequence:
-            //   user: SQL commit (DB has +1 row, atomic still old)
-            //   bg:   _resync reads DB → stores atomic to DB-truth
-            //   user: fetch_add(1) → atomic now over-counts by 1
-            // is observable. _mtx is recursive_mutex so it's safe to take
+            // Hold _mtx across _bg_evict so its reads (candidate rows, current
+            // size) and deletes are never interleaved with a concurrent
+            // user-thread write. _mtx is recursive_mutex so it's safe to take
             // here even though main-thread paths also hold it via DbGuard.
             std::lock_guard mtx_guard(_mtx);
             if constexpr (has_expiration || has_eviction)
                 _bg_evict(cp_db);
-            _resync_counters(cp_db);
         }
 
         sqlite3_wal_checkpoint_v2(cp_db, nullptr, SQLITE_CHECKPOINT_PASSIVE, nullptr, nullptr);
@@ -780,13 +772,9 @@ private:
         // Single query to get old path and size (saves a round-trip vs separate queries)
         auto old_entry = db->template exec<std::filesystem::path, std::size_t>(
             GET_PATH_SIZE_STMT, key);
-        std::optional<std::size_t> old_size_opt;
         std::filesystem::path old_filepath;
         if (old_entry)
-        {
             old_filepath = std::get<0>(*old_entry);
-            old_size_opt = std::get<1>(*old_entry);
-        }
 
         if (new_size <= _file_size_threshold)
         {
@@ -794,7 +782,6 @@ private:
             _bind_core_and_policies(binded.get(), key, value, new_size, abs_exp, seq, tag);
             sqlite3_step(binded.get());
             txn.commit();
-            _update_counters_after_set(old_size_opt, new_size);
             if (!old_filepath.empty())
                 storage->remove(old_filepath);
             return true;
@@ -825,25 +812,7 @@ private:
         }
         if (!old_filepath.empty())
             storage->remove(old_filepath);
-        _update_counters_after_set(old_size_opt, new_size);
         return true;
-    }
-
-    void _update_counters_after_set(const std::optional<std::size_t>& old_size,
-                                     std::size_t new_size)
-    {
-        if (old_size)
-        {
-            if (new_size >= *old_size)
-                _total_size.fetch_add(new_size - *old_size, std::memory_order_relaxed);
-            else
-                _total_size.fetch_sub(*old_size - new_size, std::memory_order_relaxed);
-        }
-        else
-        {
-            _total_size.fetch_add(new_size, std::memory_order_relaxed);
-            _total_count.fetch_add(1, std::memory_order_relaxed);
-        }
     }
 
     inline bool _add_impl(const std::string& key, const Bytes auto& value,
@@ -866,13 +835,7 @@ private:
             auto binded = INSERT_VALUE_STMT.bind_all();
             _bind_core_and_policies(binded.get(), key, value, new_size, abs_exp, seq, tag);
             sqlite3_step(binded.get());
-            if (sqlite3_changes(db->get()) > 0)
-            {
-                _total_size.fetch_add(new_size, std::memory_order_relaxed);
-                _total_count.fetch_add(1, std::memory_order_relaxed);
-                return true;
-            }
-            return false;
+            return sqlite3_changes(db->get()) > 0;
         }
 
         auto file_path = storage->store(value);
@@ -891,8 +854,6 @@ private:
             storage->remove(*file_path);
             return false;
         }
-        _total_size.fetch_add(new_size, std::memory_order_relaxed);
-        _total_count.fetch_add(1, std::memory_order_relaxed);
         return true;
     }
 
@@ -978,13 +939,17 @@ public:
         }
         else
         {
-            return _total_count.load(std::memory_order_relaxed);
+            if (auto r = db()->template exec<std::size_t>(META_COUNT_STMT))
+                return *r;
+            return 0;
         }
     }
 
     [[nodiscard]] inline size_t size()
     {
-        return _total_size.load(std::memory_order_relaxed);
+        if (auto r = db()->template exec<std::size_t>(META_SIZE_STMT))
+            return *r;
+        return 0;
     }
 
     [[nodiscard]] inline size_t volume()
@@ -1111,16 +1076,8 @@ public:
                 // if the row still references the path we just failed to
                 // load.
                 auto path_str = path.string();
-                auto size_opt = db->template exec<std::size_t>(
-                    "SELECT size FROM cache WHERE key = ? AND path = ?;",
-                    key, path_str);
                 db->exec("DELETE FROM cache WHERE key = ? AND path = ?;",
                          key, path_str);
-                if (sqlite3_changes(db->get()) > 0 && size_opt)
-                {
-                    _total_size.fetch_sub(*size_opt, std::memory_order_relaxed);
-                    _total_count.fetch_sub(1, std::memory_order_relaxed);
-                }
                 std::cerr << "Error loading file for key: " << key << ", deleting entry."
                           << std::endl;
                 return std::nullopt;
@@ -1187,13 +1144,8 @@ public:
             return false;
         }
         txn.commit();
-        if (old_entry)
-        {
-            _total_size.fetch_sub(std::get<1>(*old_entry), std::memory_order_relaxed);
-            _total_count.fetch_sub(1, std::memory_order_relaxed);
-            if (!std::get<0>(*old_entry).empty())
-                storage->remove(std::get<0>(*old_entry));
-        }
+        if (old_entry && !std::get<0>(*old_entry).empty())
+            storage->remove(std::get<0>(*old_entry));
         return true;
     }
 
@@ -1228,25 +1180,15 @@ public:
         requires (has_expiration)
     {
         auto db = this->db();
-        std::size_t exp_count = 0;
-        std::size_t exp_size = 0;
         {
             auto binded = EXPIRE_STMT.bind_all();
-            while (auto r = db->template step<std::filesystem::path, std::size_t>(binded))
+            while (auto file_path = db->template step<std::filesystem::path>(binded))
             {
-                auto [file_path, entry_size] = *r;
-                ++exp_count;
-                exp_size += entry_size;
-                if (!file_path.empty() && !storage->remove(file_path))
-                    std::cerr << "Failed to delete file: " << file_path << std::endl;
+                if (!file_path->empty() && !storage->remove(*file_path))
+                    std::cerr << "Failed to delete file: " << *file_path << std::endl;
             }
         }
         db->exec(EVICT_EXPIRED_STMT);
-        if (exp_count > 0)
-        {
-            _total_count.fetch_sub(exp_count, std::memory_order_relaxed);
-            _total_size.fetch_sub(exp_size, std::memory_order_relaxed);
-        }
     }
 
     // --- Eviction-specific ---
@@ -1281,13 +1223,11 @@ public:
             }
         }
 
-        for (auto& [key, path, entry_size] : to_evict)
+        for (auto& entry : to_evict)
         {
-            db->exec(DELETE_STMT, key);
-            _total_size.fetch_sub(entry_size, std::memory_order_relaxed);
-            _total_count.fetch_sub(1, std::memory_order_relaxed);
-            if (!path.empty())
-                storage->remove(path);
+            db->exec(DELETE_STMT, entry.key);
+            if (!entry.path.empty())
+                storage->remove(entry.path);
         }
 
         return to_evict.size();
@@ -1298,13 +1238,10 @@ public:
     inline std::size_t evict_tag(const std::string& tag)
         requires (has_tags)
     {
-        // Wrap the whole op in BEGIN EXCLUSIVE so SELECT-paths, DELETE, and
-        // counter resync all see the same DB snapshot.
-        // Recompute total counters from the DB inside the txn instead of
-        // subtracting per-process deltas: evict_tag can wipe rows written
-        // by *other* processes, which our local atomic counters never saw.
-        // Subtracting their sizes from a counter that doesn't include them
-        // underflows the atomic (observed: size() = 0xFFFF...).
+        // Wrap the whole op in BEGIN EXCLUSIVE so the SELECT-paths and DELETE
+        // see the same DB snapshot. The per-row DELETE triggers keep meta
+        // 'size'/'count' correct as part of the same transaction, including
+        // for rows written by other processes.
         auto db = this->db();
         _NestedTxn txn(*this);
 
@@ -1319,15 +1256,7 @@ public:
         }
         db->exec(EVICT_TAG_STMT, tag);
         auto evicted = static_cast<std::size_t>(sqlite3_changes(db->get()));
-        // Authoritative recomputation while we still hold the EXCLUSIVE lock.
-        auto new_size = db->template exec<std::size_t>(
-            "SELECT COALESCE(SUM(size), 0) FROM cache;").value_or(0);
-        auto new_count = db->template exec<std::size_t>(
-            "SELECT COUNT(*) FROM cache;").value_or(0);
         txn.commit();
-
-        _total_size.store(new_size, std::memory_order_relaxed);
-        _total_count.store(new_count, std::memory_order_relaxed);
 
         for (auto& f : files)
             storage->remove(f);
@@ -1372,11 +1301,7 @@ public:
             _bind_core_and_policies(binded.get(), key, data, sizeof(int64_t),
                                     std::optional<double> {}, seq, std::optional<std::string> {});
             sqlite3_step(binded.get());
-            // New entry created
-            _total_size.fetch_add(sizeof(int64_t), std::memory_order_relaxed);
-            _total_count.fetch_add(1, std::memory_order_relaxed);
         }
-        // Size doesn't change on update (always sizeof(int64_t))
 
         txn.commit();
         return new_value;
@@ -1393,8 +1318,6 @@ public:
     {
         auto db = this->db();
         sqlite3_exec(db->get(), "DELETE FROM cache;", nullptr, nullptr, nullptr);
-        _total_size.store(0, std::memory_order_relaxed);
-        _total_count.store(0, std::memory_order_relaxed);
         // Drop every mmap handle BEFORE removing files. On Linux removing an
         // mmap'd file succeeds (the inode lingers), but on Windows the file
         // can't be removed while a mapping exists — clear() would silently
@@ -1487,14 +1410,12 @@ public:
     std::size_t _check_dangling_rows(DbGuard& db, bool fix)
     {
         std::size_t count = 0;
-
-        struct Dangling { std::string key; std::size_t entry_size; };
-        std::vector<Dangling> to_fix;
+        std::vector<std::string> to_fix;
 
         {
             sqlite3_stmt* stmt = nullptr;
             sqlite3_prepare_v2(db->get(),
-                "SELECT key, path, size FROM cache WHERE path IS NOT NULL;",
+                "SELECT key, path FROM cache WHERE path IS NOT NULL;",
                 -1, &stmt, nullptr);
             while (sqlite3_step(stmt) == SQLITE_ROW)
             {
@@ -1505,8 +1426,7 @@ public:
                     if (fix)
                     {
                         auto key = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
-                        auto sz = static_cast<std::size_t>(sqlite3_column_int64(stmt, 2));
-                        to_fix.push_back({ key, sz });
+                        to_fix.emplace_back(key);
                     }
                 }
             }
@@ -1515,12 +1435,8 @@ public:
 
         if (fix)
         {
-            for (auto& [key, sz] : to_fix)
-            {
+            for (auto& key : to_fix)
                 db->exec(DELETE_STMT, key);
-                _total_size.fetch_sub(sz, std::memory_order_relaxed);
-                _total_count.fetch_sub(1, std::memory_order_relaxed);
-            }
         }
 
         return count;
@@ -1530,7 +1446,7 @@ public:
     {
         std::size_t count = 0;
 
-        struct Mismatch { std::string key; std::size_t db_size; std::size_t file_size; };
+        struct Mismatch { std::string key; std::size_t file_size; };
         std::vector<Mismatch> to_fix;
 
         {
@@ -1553,23 +1469,19 @@ public:
                     if (fix)
                     {
                         auto key = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
-                        to_fix.push_back({ key, db_size, file_size });
+                        to_fix.push_back({ key, file_size });
                     }
                 }
             }
             sqlite3_finalize(stmt);
         }
 
+        // UPDATE ... SET size = ... fires cache_size_update, which keeps
+        // meta 'size' correct from the (old size, new size) delta.
         if (fix)
         {
-            for (auto& [key, db_size, file_size] : to_fix)
-            {
+            for (auto& [key, file_size] : to_fix)
                 db->exec("UPDATE cache SET size = ? WHERE key = ?;", file_size, key);
-                if (file_size > db_size)
-                    _total_size.fetch_add(file_size - db_size, std::memory_order_relaxed);
-                else
-                    _total_size.fetch_sub(db_size - file_size, std::memory_order_relaxed);
-            }
         }
 
         return count;
@@ -1619,9 +1531,11 @@ public:
         return count;
     }
 
-    // The background checkpoint thread now takes _mtx around _bg_evict and
-    // _resync_counters, so check() and the BG thread no longer race on the
-    // atomic counters.
+    // Cross-checks the trigger-maintained meta counters against a direct
+    // recomputation from the cache table. These should always agree — the
+    // triggers update meta in the same transaction as the row change — so a
+    // mismatch here means something wrote to `cache` without going through
+    // the triggers (e.g. manual DB surgery).
     bool _check_counters(DbGuard& db, bool fix)
     {
         auto db_size = db->template exec<std::size_t>(
@@ -1632,14 +1546,16 @@ public:
         if (!db_size || !db_count)
             return false;
 
-        bool consistent =
-            _total_size.load(std::memory_order_relaxed) == *db_size
-         && _total_count.load(std::memory_order_relaxed) == *db_count;
+        auto meta_size = db->template exec<std::size_t>(META_SIZE_STMT);
+        auto meta_count = db->template exec<std::size_t>(META_COUNT_STMT);
+
+        bool consistent = meta_size && meta_count
+                        && *meta_size == *db_size && *meta_count == *db_count;
 
         if (!consistent && fix)
         {
-            _total_size.store(*db_size, std::memory_order_relaxed);
-            _total_count.store(*db_count, std::memory_order_relaxed);
+            db->exec(SET_META_STMT, std::string("size"), *db_size);
+            db->exec(SET_META_STMT, std::string("count"), *db_count);
         }
 
         return consistent;
