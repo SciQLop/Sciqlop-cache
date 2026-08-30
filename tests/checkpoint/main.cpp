@@ -6,6 +6,8 @@
 #include <filesystem>
 #include <set>
 #include <sqlite3.h>
+#include <stdexcept>
+#include <thread>
 
 SCENARIO("size() and count() are consistent across instances on the same directory without waiting", "[counters]")
 {
@@ -40,7 +42,7 @@ SCENARIO("size() and count() are consistent across instances on the same directo
     }
 }
 
-SCENARIO("size() and count() are consistent across instances on the same directory without waiting", "[counters][index]")
+SCENARIO("size() and count() are consistent across instances on the same directory without waiting (Index)", "[counters][index]")
 {
     GIVEN("two Index instances opened on the same directory")
     {
@@ -108,25 +110,95 @@ SCENARIO("Cache schema creates indexes on expire and last_use", "[schema][index]
 
 SCENARIO("WAL does not grow without bound under a continuous writer", "[wal]")
 {
-    GIVEN("a Cache written to continuously for several seconds")
+    GIVEN("a Cache written to continuously until a data or time bound is hit")
     {
         AutoCleanDirectory dir("checkpoint_wal_bound");
         std::size_t written = 0;
         {
             Cache cache { dir.path() };
             const std::string v(8000, 'x');
-            const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(6);
+            const std::size_t target = 64 * 1024 * 1024;
+            const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
             std::size_t i = 0;
-            while (std::chrono::steady_clock::now() < deadline)
+            while (written < target && std::chrono::steady_clock::now() < deadline)
             {
                 REQUIRE(cache.set("key-" + std::to_string(i++), v));
                 written += v.size();
             }
-            THEN("the WAL file is a fraction of what was written (it has been reset)")
+            THEN("the WAL file stays bounded (it has been reset), regardless of total volume written")
             {
                 auto wal = dir.path() / "sciqlop-cache.db-wal";
                 REQUIRE(std::filesystem::exists(wal));
-                REQUIRE(std::filesystem::file_size(wal) < written / 2);
+                REQUIRE(std::filesystem::file_size(wal) < 32 * 1024 * 1024);
+            }
+        }
+    }
+}
+
+SCENARIO("background LRU eviction never leaves dangling rows under a sustained writer", "[eviction][bg]")
+{
+    GIVEN("a Cache with a small max_size written to continuously for several seconds")
+    {
+        AutoCleanDirectory dir("checkpoint_bg_evict_dangling");
+        constexpr std::size_t max_size = 2 * 1024 * 1024;
+        constexpr std::size_t converged_bound = 4 * 1024 * 1024;
+        {
+            Cache cache { dir.path(), max_size };
+            const std::string v(12 * 1024, 'x'); // file-backed: above the 8 KB threshold
+            const auto write_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(4);
+            std::size_t i = 0;
+            while (std::chrono::steady_clock::now() < write_deadline)
+                cache.set("key-" + std::to_string(i++), v);
+            // cache destructs here, immediately: joins the bg checkpoint
+            // thread without giving it any further, now-uncontended ticks.
+            // A dangling row created under contention would otherwise be
+            // re-picked as the oldest LRU candidate and cleaned up by a
+            // later, uncontended tick — self-healing the very state this
+            // test needs to observe. The persisted on-disk state below is
+            // exactly what eviction left behind while the writer was live.
+        }
+
+        THEN("check() right after reopening finds no dangling rows or orphaned files")
+        {
+            Cache reopened { dir.path(), max_size };
+            auto r = reopened.check(false);
+            REQUIRE(r.dangling_rows == 0);
+            REQUIRE(r.orphaned_files == 0);
+
+            AND_THEN("left running, it converges size back down to a generous but finite bound")
+            {
+                const auto settle_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+                while (reopened.size() > converged_bound
+                       && std::chrono::steady_clock::now() < settle_deadline)
+                    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                REQUIRE(reopened.size() <= converged_bound);
+            }
+        }
+    }
+}
+
+SCENARIO("set_meta rejects reserved keys", "[meta]")
+{
+    GIVEN("a Cache instance")
+    {
+        AutoCleanDirectory dir("checkpoint_meta_reserved");
+        Cache cache { dir.path() };
+
+        WHEN("setting a reserved key")
+        {
+            THEN("it throws")
+            {
+                REQUIRE_THROWS_AS(cache.set_meta("size", "0"), std::runtime_error);
+                REQUIRE_THROWS_AS(cache.set_meta("count", "0"), std::runtime_error);
+                REQUIRE_THROWS_AS(cache.set_meta("counters_v", "0"), std::runtime_error);
+            }
+        }
+        WHEN("setting a user key")
+        {
+            cache.set_meta("version", "1.0");
+            THEN("get_meta retrieves it")
+            {
+                REQUIRE(cache.get_meta("version") == "1.0");
             }
         }
     }

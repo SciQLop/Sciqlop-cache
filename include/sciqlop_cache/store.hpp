@@ -463,11 +463,15 @@ class _Store : private Policies..., private _ForkAware
                     files.emplace_back(p);
             }
             if (stmt) sqlite3_finalize(stmt);
-            sqlite3_exec(bg_db,
+            auto rc = sqlite3_exec(bg_db,
                 "DELETE FROM cache WHERE expire IS NOT NULL AND expire <= unixepoch('now');",
                 nullptr, nullptr, nullptr);
-            for (auto& f : files)
-                storage->remove(f);
+            // Only unlink files whose rows are confirmed deleted — a DELETE
+            // that failed (e.g. SQLITE_BUSY against the writer's own
+            // BEGIN EXCLUSIVE) must not orphan the row by removing its file.
+            if (rc == SQLITE_OK)
+                for (auto& f : files)
+                    storage->remove(f);
         }
 
         if constexpr (has_eviction)
@@ -505,13 +509,19 @@ class _Store : private Policies..., private _ForkAware
                     sqlite3_prepare_v2(bg_db, "DELETE FROM cache WHERE key = ?;", -1, &stmt, nullptr);
                     for (auto& [key, path] : to_evict)
                     {
+                        // Only unlink a key's file once its row is confirmed
+                        // deleted — a DELETE that lost the busy-timeout race
+                        // against the writer's own BEGIN EXCLUSIVE leaves the
+                        // row untouched, and removing the file anyway would
+                        // orphan it.
+                        bool gone = false;
                         if (stmt)
                         {
                             sqlite3_bind_text(stmt, 1, key.c_str(), -1, SQLITE_TRANSIENT);
-                            sqlite3_step(stmt);
+                            gone = sqlite3_step(stmt) == SQLITE_DONE && sqlite3_changes(bg_db) > 0;
                             sqlite3_reset(stmt);
                         }
-                        if (!path.empty())
+                        if (gone && !path.empty())
                             storage->remove(path);
                     }
                     if (stmt) sqlite3_finalize(stmt);
@@ -546,6 +556,12 @@ class _Store : private Policies..., private _ForkAware
         // sqlite3_wal_checkpoint_v2 on it is a silent no-op returning
         // SQLITE_OK (with *pnLog left at -1).
         sqlite3_exec(cp_db, "SELECT count(*) FROM sqlite_master;", nullptr, nullptr, nullptr);
+
+        // _bg_evict's DELETEs contend with the writer's BEGIN EXCLUSIVE; a
+        // short bounded wait avoids an immediate SQLITE_BUSY (which would
+        // otherwise leave the row in place while we go on to unlink its
+        // file). Never applies to the writer's own connection/path.
+        sqlite3_busy_timeout(cp_db, 250);
 
         while (!_stop_checkpoint.load(std::memory_order_relaxed))
         {
@@ -1354,6 +1370,8 @@ public:
 
     inline void set_meta(const std::string& key, const std::string& value)
     {
+        if (key == "size" || key == "count" || key == "counters_v")
+            throw std::runtime_error("set_meta: reserved key");
         db()->exec(SET_META_STMT, key, value);
     }
 
@@ -1553,13 +1571,22 @@ public:
     // the triggers (e.g. manual DB surgery).
     bool _check_counters(DbGuard& db, bool fix)
     {
+        // The two ground-truth queries, the two meta reads, and (when
+        // fixing) the two meta writes must all see one consistent snapshot
+        // — otherwise a concurrent writer between them can make fix=true
+        // overwrite meta with an already-stale value.
+        _NestedTxn txn(*this);
+
         auto db_size = db->template exec<std::size_t>(
             "SELECT COALESCE(SUM(size), 0) FROM cache;");
         auto db_count = db->template exec<std::size_t>(
             "SELECT COUNT(*) FROM cache;");
 
         if (!db_size || !db_count)
+        {
+            txn.rollback();
             return false;
+        }
 
         auto meta_size = db->template exec<std::size_t>(META_SIZE_STMT);
         auto meta_count = db->template exec<std::size_t>(META_COUNT_STMT);
@@ -1573,6 +1600,7 @@ public:
             db->exec(SET_META_STMT, std::string("count"), *db_count);
         }
 
+        txn.commit();
         return consistent;
     }
 };
