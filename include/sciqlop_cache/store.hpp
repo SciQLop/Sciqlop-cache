@@ -291,6 +291,16 @@ class _Store : private Policies..., private _ForkAware
             + ") WITHOUT ROWID;"
             + " CREATE TABLE IF NOT EXISTS meta ("
               "key TEXT PRIMARY KEY, value);"
+              // Files displaced by a row change (REPLACE of a file-backed
+              // value, incr() rewriting one to a blob) are never unlinked
+              // inline: a reader in another process may already hold the old
+              // path between its "SELECT path" and open() (see
+              // docs/known-issues/pool-reuse-fork-safety-gap.md). They are
+              // queued here in the same transaction as the row change and
+              // unlinked by the background thread after a grace period.
+              " CREATE TABLE IF NOT EXISTS trash ("
+              "path TEXT PRIMARY KEY NOT NULL,"
+              "ts INT NOT NULL) WITHOUT ROWID;"
               " INSERT OR IGNORE INTO meta (key, value) VALUES ('size', 0);"
               " INSERT OR IGNORE INTO meta (key, value) VALUES ('count', 0);"
               " INSERT OR IGNORE INTO meta (key, value) VALUES ('file_size', 0);"
@@ -595,8 +605,12 @@ class _Store : private Policies..., private _ForkAware
             sqlite3_wal_checkpoint_v2(cp_db, nullptr, SQLITE_CHECKPOINT_PASSIVE, nullptr, nullptr);
             if constexpr (has_expiration || has_eviction)
                 _bg_evict(cp_db);
+            _drain_trash(cp_db);
         }
 
+        // Final drain so a short-lived process doesn't leave past-grace trash
+        // behind; still-in-grace entries are left for the next open's thread.
+        _drain_trash(cp_db);
         sqlite3_wal_checkpoint_v2(cp_db, nullptr, SQLITE_CHECKPOINT_PASSIVE, nullptr, nullptr);
         sqlite3_wal_checkpoint_v2(cp_db, nullptr, SQLITE_CHECKPOINT_TRUNCATE, nullptr, nullptr);
         sqlite3_close(cp_db);
@@ -798,6 +812,63 @@ private:
         if constexpr (has_tags) sql_bind(stmt, i++, tag);
     }
 
+    // --- deferred file deletion (trash) ---
+
+    // Grace period before a displaced file is really unlinked. A reader's
+    // exposure window (row read → mmap open) is microseconds; 5 s gives a
+    // >10^5 margin while keeping displaced files from lingering on disk.
+    static constexpr int _trash_grace_secs = 5;
+
+    // Queue a displaced file for deferred deletion. Must be called inside
+    // the transaction that displaces it, so the row change and the trash
+    // entry commit (or roll back) atomically — this also closes the old
+    // crash window where a commit-then-crash-before-unlink orphaned the file.
+    void _trash_file(DbGuard& db, const std::filesystem::path& p)
+    {
+        auto path_str = p.string();
+        db->exec("INSERT OR REPLACE INTO trash (path, ts) VALUES (?, unixepoch('now'));",
+                 path_str);
+    }
+
+    // Unlink trashed files once their grace period has passed. Runs on the
+    // background connection without _mtx. DELETE-first: several processes'
+    // background threads can race on the same row; only the one whose
+    // DELETE reports a change unlinks the file.
+    void _drain_trash(sqlite3* bg_db)
+    {
+        static const std::string select_sql
+            = "SELECT path FROM trash WHERE ts <= unixepoch('now') - "
+            + std::to_string(_trash_grace_secs) + ";";
+        sqlite3_stmt* stmt = nullptr;
+        sqlite3_prepare_v2(bg_db, select_sql.c_str(), -1, &stmt, nullptr);
+        std::vector<std::string> paths;
+        while (stmt && sqlite3_step(stmt) == SQLITE_ROW)
+        {
+            auto p = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
+            if (p && p[0])
+                paths.emplace_back(p);
+        }
+        if (stmt) sqlite3_finalize(stmt);
+        if (paths.empty())
+            return;
+
+        stmt = nullptr;
+        sqlite3_prepare_v2(bg_db, "DELETE FROM trash WHERE path = ?;", -1, &stmt, nullptr);
+        for (auto& p : paths)
+        {
+            bool won = false;
+            if (stmt)
+            {
+                sqlite3_bind_text(stmt, 1, p.c_str(), -1, SQLITE_TRANSIENT);
+                won = sqlite3_step(stmt) == SQLITE_DONE && sqlite3_changes(bg_db) > 0;
+                sqlite3_reset(stmt);
+            }
+            if (won)
+                storage->remove(p);
+        }
+        if (stmt) sqlite3_finalize(stmt);
+    }
+
     // --- set/add implementation ---
 
     inline bool _set_impl(const std::string& key, const Bytes auto& value,
@@ -835,9 +906,9 @@ private:
             auto binded = REPLACE_VALUE_STMT.bind_all();
             _bind_core_and_policies(binded.get(), key, value, new_size, abs_exp, seq, tag);
             sqlite3_step(binded.get());
-            txn.commit();
             if (!old_filepath.empty())
-                storage->remove(old_filepath);
+                _trash_file(db, old_filepath);
+            txn.commit();
             return true;
         }
 
@@ -856,16 +927,18 @@ private:
         }
         try
         {
+            if (!old_filepath.empty())
+                _trash_file(db, old_filepath);
             txn.commit();
         }
         catch (const std::runtime_error&)
         {
             txn.rollback();
+            // The new file was never visible to any reader (its row never
+            // committed), so an inline remove is safe here.
             storage->remove(*new_filepath);
             throw;
         }
-        if (!old_filepath.empty())
-            storage->remove(old_filepath);
         return true;
     }
 
@@ -1322,6 +1395,14 @@ public:
                 std::memcpy(&current, blob->data(), sizeof(int64_t));
         }
 
+        // A file-backed row is rewritten to a blob below (path = NULL);
+        // its file is displaced and must go through the trash like any
+        // REPLACE-displaced file (it used to be silently leaked).
+        std::filesystem::path old_filepath;
+        if (auto old_entry = db->template exec<std::filesystem::path, std::size_t>(
+                GET_PATH_SIZE_STMT, key))
+            old_filepath = std::get<0>(*old_entry);
+
         int64_t new_value = current + delta;
         std::size_t seq = 0;
         if constexpr (has_eviction)
@@ -1347,6 +1428,8 @@ public:
                                     std::optional<double> {}, seq, std::optional<std::string> {});
             sqlite3_step(binded.get());
         }
+        if (!old_filepath.empty())
+            _trash_file(db, old_filepath);
 
         txn.commit();
         return new_value;
@@ -1362,7 +1445,9 @@ public:
     inline void clear()
     {
         auto db = this->db();
-        sqlite3_exec(db->get(), "DELETE FROM cache;", nullptr, nullptr, nullptr);
+        // Trash rows go too: the whole file tree is removed below, so keeping
+        // them would only make later drains chase files that no longer exist.
+        sqlite3_exec(db->get(), "DELETE FROM cache; DELETE FROM trash;", nullptr, nullptr, nullptr);
         // Drop every mmap handle BEFORE removing files. On Linux removing an
         // mmap'd file succeeds (the inode lingers), but on Windows the file
         // can't be removed while a mapping exists — clear() would silently
@@ -1536,13 +1621,16 @@ public:
 
     std::size_t _check_orphaned_files(DbGuard& db, bool fix)
     {
-        // Collect all known file paths from DB
+        // Collect all known file paths from DB. Pending trash entries are
+        // known too: they are displaced files inside their grace window, and
+        // unlinking them early would reopen the reader TOCTOU the trash
+        // mechanism exists to close — the background drain owns their removal.
         std::unordered_set<std::string> known_paths;
+        for (auto sql : { "SELECT path FROM cache WHERE path IS NOT NULL;",
+                          "SELECT path FROM trash;" })
         {
             sqlite3_stmt* stmt = nullptr;
-            sqlite3_prepare_v2(db->get(),
-                "SELECT path FROM cache WHERE path IS NOT NULL;",
-                -1, &stmt, nullptr);
+            sqlite3_prepare_v2(db->get(), sql, -1, &stmt, nullptr);
             while (sqlite3_step(stmt) == SQLITE_ROW)
             {
                 if (auto p = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0)))

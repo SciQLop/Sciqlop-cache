@@ -84,6 +84,10 @@ class DiskStorage
             if (!ofs)
                 return false;
             ofs.write(value.data(), value.size());
+            // close() runs the final flush; without it the destructor flushes
+            // AFTER good() is evaluated, so a failed last flush (ENOSPC,
+            // quota) silently produced a truncated file under a committed row.
+            ofs.close();
             return ofs.good();
         }
         catch (const std::exception& e)

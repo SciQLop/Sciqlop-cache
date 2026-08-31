@@ -95,10 +95,24 @@ This closes the overwhelming majority of the race (in testing: ~0.0155% miss
 rate down to 0 misses across several million ops at a realistic pace, and a
 ~100x reduction even under the pathological zero-delay stress case). It does
 **not** provide a hard guarantee under unbounded adversarial contention on a
-single key — no bounded retry count can, without reference-counted blob
-files and deferred deletion, which is a materially bigger change than this
-low-severity, already-gracefully-handled race justifies. This residual
-limitation is intentional and documented here rather than fixed further.
+single key — no bounded retry count can without deferred deletion.
+
+## Fix, part 2: deferred deletion (trash table)
+
+The residual was eliminated once the race showed up in speasy-proxy
+production logs (~13 spurious misses/hour under bot-driven same-key retry
+bursts on multi-MB values, pysciqlop-cache 0.1.7). Displaced files are no
+longer unlinked inline: `_set_impl` (both branches) and `incr()`'s
+file→blob rewrite insert the old path into a `trash` table *in the same
+transaction* as the row change, and the background thread unlinks trash
+entries only after a 5 s grace period (`_trash_grace_secs`), with a final
+drain at close. A reader's exposure window (row read → mmap open) is
+microseconds, so the grace gives a >10^5 margin; the bounded retry above
+remains as belt-and-braces. This also closed two adjacent orphan leaks:
+commit-then-crash-before-unlink, and `incr()` on a file-backed row (which
+never removed the displaced file at all). `check()` treats pending trash as
+known files; `clear()` clears the trash table. Contract pinned by
+`tests/python/test_trash_deferred_delete.py`.
 
 ## Guidance
 
@@ -106,7 +120,7 @@ Reusing an OS-level worker pool (`multiprocessing.Pool`,
 `concurrent.futures.ProcessPoolExecutor`) whose workers repeatedly touch a
 `Cache`/`Index`/`FanoutCache` backed by the same file across many tasks is
 now a **supported, tested pattern** (`test_pool_reuse_fork_safety.py`).
-Extremely hot single-key contention (many processes REPLACE-ing the exact
-same key back-to-back with no work in between) can still produce an
-occasional spurious miss — treat a `None` `get()` result as "recompute", the
-same tolerance any cache client should already have.
+With deferred deletion in place, even extremely hot single-key contention
+no longer produces spurious misses (a stalled reader would need to sleep
+through the whole grace period on every retry). Treating a `None` `get()`
+result as "recompute" remains the right client-side posture regardless.
