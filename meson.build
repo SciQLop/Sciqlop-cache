@@ -217,7 +217,9 @@ if not get_option('disable_python_wrapper')
             args:files('tests/python/test_torture.py'),
             env : {'PYTHONPATH': meson.current_build_dir()},
             is_parallel : false,
-            timeout : 300,
+            # ~390-400s on the dev box (measured on main and on the trash
+            # branch alike) — 300 was simply too tight.
+            timeout : 600,
         )
         test('test_hypothesis', python3,
             args:['-m', 'pytest', files('tests/python/test_hypothesis.py'), '-x', '-v'],
