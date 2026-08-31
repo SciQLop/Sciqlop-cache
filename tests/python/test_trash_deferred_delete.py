@@ -144,6 +144,7 @@ class ReplaceDeferredDeletion(unittest.TestCase):
         )
         self.assertEqual(cache.check().orphaned_files, 0)
 
+    @unittest.skipUnless(hasattr(os, "fork"), "fork() not available on this platform")
     def test_no_spurious_miss_under_replace_hammer(self):
         """Regression guard: dedicated writer + reader processes hammering one
         file-backed key must never observe a miss for a key that always
