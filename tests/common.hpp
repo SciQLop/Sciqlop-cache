@@ -1,5 +1,6 @@
 #include <filesystem>
 #include <random>
+#include <unistd.h>
 #include <cpp_utils/lifetime/scope_leaving_guards.hpp>
 
 class AutoCleanDirectory

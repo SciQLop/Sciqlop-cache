@@ -212,6 +212,18 @@ if not get_option('disable_python_wrapper')
         is_parallel : false,
         timeout : 180,
     )
+    test('test_mmap_fd_leak', python3,
+        args:files('tests/python/test_mmap_fd_leak.py'),
+        env : {'PYTHONPATH': meson.current_build_dir()},
+        is_parallel : false,
+        timeout : 60,
+    )
+    test('test_get_transient_open_failure', python3,
+        args:files('tests/python/test_get_transient_open_failure.py'),
+        env : {'PYTHONPATH': meson.current_build_dir()},
+        is_parallel : false,
+        timeout : 60,
+    )
     if get_option('with_torture_tests')
         test('test_torture', python3,
             args:files('tests/python/test_torture.py'),

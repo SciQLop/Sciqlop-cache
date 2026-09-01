@@ -1186,18 +1186,33 @@ public:
                     last_path = *retry_path;
                 }
 
-                // Path-aware cleanup. Without this, a concurrent process
-                // that swapped the entry between our SELECT and this
-                // fallback would have its file removed by the bare del()
-                // (del re-reads the row, finds the new path, removes the
-                // wrong file). DELETE WHERE key=? AND path=? only fires
-                // if the row still references the path we just failed to
-                // load.
-                auto path_str = path.string();
-                db->exec("DELETE FROM cache WHERE key = ? AND path = ?;",
-                         key, path_str);
-                std::cerr << "Error loading file for key: " << key << ", deleting entry."
-                          << std::endl;
+                // Only delete the row once the file is confirmed absent from
+                // disk. A transient open failure (fd exhaustion, permission
+                // error, ...) on a file that is still present must be a soft
+                // miss, not row deletion — deleting here previously turned a
+                // fleeting open failure into a permanent data loss, and the
+                // blob file itself was never unlinked either (it just became
+                // orphaned on disk).
+                if (!storage->file_exists(path))
+                {
+                    // Path-aware cleanup. Without this, a concurrent process
+                    // that swapped the entry between our SELECT and this
+                    // fallback would have its file removed by the bare del()
+                    // (del re-reads the row, finds the new path, removes the
+                    // wrong file). DELETE WHERE key=? AND path=? only fires
+                    // if the row still references the path we just failed to
+                    // load.
+                    auto path_str = path.string();
+                    db->exec("DELETE FROM cache WHERE key = ? AND path = ?;",
+                             key, path_str);
+                    std::cerr << "Error loading file for key: " << key << ", deleting entry."
+                              << std::endl;
+                }
+                else
+                {
+                    std::cerr << "Error loading file for key: " << key
+                              << ", file present, keeping entry." << std::endl;
+                }
                 return std::nullopt;
             }
             return Buffer(std::move(std::get<0>(*values)));

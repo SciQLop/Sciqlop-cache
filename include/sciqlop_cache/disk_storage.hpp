@@ -130,6 +130,14 @@ public:
         return stored.is_absolute() ? stored : _path / stored;
     }
 
+    // Used by callers to tell a genuinely-missing file from a transient open
+    // failure (permissions, fd exhaustion, ...) on a file that is still
+    // present on disk.
+    [[nodiscard]] inline bool file_exists(const std::filesystem::path& stored) const
+    {
+        return std::filesystem::exists(abs_path(stored));
+    }
+
     [[nodiscard]] inline std::string generate_random_filename()
     {
         return uuids::to_string(uuid_generator());

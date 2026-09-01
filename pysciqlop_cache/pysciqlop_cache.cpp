@@ -91,6 +91,29 @@ void bind_key_cursor(nb::module_& m, const char* name)
         });
 }
 
+// CPython buffer-protocol getbuffer slot for Buffer. Exporting the protocol
+// on the type itself (rather than hand-rolling a Py_buffer + capsule and
+// building the memoryview via PyMemoryView_FromBuffer) keeps the INCREF/DECREF
+// of the exporter object balanced: PyBuffer_FillInfo INCREFs `exporter` into
+// view->obj, and PyBuffer_Release (called when the memoryview is released or
+// collected) DECREFs it back. The old capsule-based approach lost this
+// balance because PyMemoryView_FromBuffer clears the managed buffer's `obj`
+// after FillInfo already bumped its refcount, so the capsule (and the mmap
+// it kept alive) leaked forever — one fd + one mapping per distinct
+// file-backed key, immune to release()/gc.collect()/Cache destruction.
+static int Buffer_getbuffer(PyObject* exporter, Py_buffer* view, int flags)
+{
+    Buffer* b = nullptr;
+    if (!nb::try_cast<Buffer*>(nb::handle(exporter), b, false) || !b || !*b)
+    {
+        PyErr_SetString(PyExc_BufferError, "Cannot create memory view of invalid buffer");
+        view->obj = nullptr;
+        return -1;
+    }
+    return PyBuffer_FillInfo(view, exporter, const_cast<char*>(b->data()),
+                              (Py_ssize_t) b->size(), 1, flags);
+}
+
 NB_MODULE(_pysciqlop_cache, m)
 {
     m.doc() = R"pbdoc(
@@ -104,7 +127,12 @@ NB_MODULE(_pysciqlop_cache, m)
     bind_key_cursor<FanoutCache::KeyCursor>(m, "FanoutCacheKeyCursor");
     bind_key_cursor<FanoutIndex::KeyCursor>(m, "FanoutIndexKeyCursor");
 
-    nb::class_<Buffer>(m, "Buffer")
+    static PyType_Slot buffer_slots[] = {
+        { Py_bf_getbuffer, (void*) Buffer_getbuffer },
+        { 0, nullptr },
+    };
+
+    nb::class_<Buffer>(m, "Buffer", nb::type_slots(buffer_slots))
         .def("memoryview",
              [](nb::handle self) -> nb::object
              {
@@ -118,31 +146,7 @@ NB_MODULE(_pysciqlop_cache, m)
                      return nb::steal(PyMemoryView_FromMemory(nullptr, 0, PyBUF_READ));
                  }
 
-                 // Lifetime anchor: heap-allocate a Buffer copy (just bumps the
-                 // shared_ptr<IMemoryView> refcount) and wrap it in a PyCapsule.
-                 // We pass the capsule — not the Python Buffer wrapper — as the
-                 // exporter so the memoryview keeps the underlying mmap alive
-                 // without pinning the Python Buffer past interpreter shutdown.
-                 // Why: PyBuffer_FillInfo(view, exporter, ...) INCREFs exporter
-                 // and stores it in view->obj; using self.ptr() makes any surviving
-                 // memoryview keep its Buffer alive, which nanobind reports as a
-                 // leak at module teardown even though it's a one-way reference.
-                 auto* keep_alive = new Buffer(b);
-                 nb::capsule cap(keep_alive,
-                                 [](void* p) noexcept { delete static_cast<Buffer*>(p); });
-
-                 Py_buffer view;
-                 if (PyBuffer_FillInfo(&view, cap.ptr(), const_cast<char*>(b.data()),
-                                       b.size(), 1, PyBUF_SIMPLE) == -1) {
-                     throw std::runtime_error("Failed to create memory view");
-                 }
-
-                 PyObject* memview = PyMemoryView_FromBuffer(&view);
-                 if (!memview) {
-                     throw std::runtime_error("Failed to create memory view object");
-                 }
-
-                 return nb::steal(memview);
+                 return nb::steal(PyMemoryView_FromObject(self.ptr()));
              });
 
 
