@@ -335,7 +335,8 @@ sequenceDiagram
     D->>D: open ab/cd/<uuid>-<pid> O_CREAT|O_EXCL
     alt path already exists (astronomically rare)
         D->>Q: is it referenced? (cache or trash table)
-        Q-->>D: yes -> new random name, retry; no -> overwrite in place
+        Q-->>D: referenced - regenerate a fresh name and retry
+        Q-->>D: orphaned leftover - overwrite in place and reuse
     end
     D-->>S: relative path
     S->>Q: REPLACE INTO cache (key, path, size, …)
