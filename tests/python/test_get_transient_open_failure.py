@@ -40,7 +40,8 @@ def _find_blob_file(root):
     return None
 
 
-@unittest.skipIf(os.geteuid() == 0, "root ignores file permission bits")
+@unittest.skipUnless(hasattr(os, "geteuid"), "POSIX-only: relies on file permission bits")
+@unittest.skipIf(getattr(os, "geteuid", lambda: -1)() == 0, "root ignores file permission bits")
 class GetTransientOpenFailure(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
