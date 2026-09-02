@@ -296,6 +296,7 @@ SCENARIO("background LRU eviction never leaves dangling rows under a sustained w
 }
 
 SCENARIO("set_meta rejects reserved keys", "[meta]")
+
 {
     GIVEN("a Cache instance")
     {
@@ -318,6 +319,74 @@ SCENARIO("set_meta rejects reserved keys", "[meta]")
             {
                 REQUIRE(cache.get_meta("version") == "1.0");
             }
+        }
+    }
+}
+
+static bool query_finds_path(const std::filesystem::path& db_path,
+                             const std::string& sql, const std::string& path)
+{
+    sqlite3* db = nullptr;
+    REQUIRE(sqlite3_open_v2(db_path.string().c_str(), &db, SQLITE_OPEN_READONLY, nullptr)
+        == SQLITE_OK);
+    sqlite3_stmt* stmt = nullptr;
+    REQUIRE(sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, nullptr) == SQLITE_OK);
+    // Bind every placeholder with the path under test.
+    const int params = sqlite3_bind_parameter_count(stmt);
+    for (int i = 1; i <= params; ++i)
+        sqlite3_bind_text(stmt, i, path.c_str(), -1, SQLITE_TRANSIENT);
+    const bool found = sqlite3_step(stmt) == SQLITE_ROW;
+    sqlite3_finalize(stmt);
+    sqlite3_close(db);
+    return found;
+}
+
+// The collision-healing path in DiskStorage::store() classifies an EEXIST'ed
+// blob via IS_PATH_REFERENCED_SQL: referenced -> regenerate, orphan ->
+// overwrite and reuse. A path displaced by a REPLACE spends 5 s in the trash
+// table pending deferred deletion; if the reference check only looked at the
+// cache table it would classify such a path as orphaned, reuse it, and
+// _drain_trash would then unlink the freshly-reused file — orphaning the new
+// row. The heal path exists precisely for the astronomically-rare collision,
+// so it must be fully correct there.
+SCENARIO("the collision-heal reference check covers paths pending in trash", "[trash][collision-heal]")
+{
+    GIVEN("a file-backed key whose value was just replaced (old file pending in trash)")
+    {
+        AutoCleanDirectory dir("trash_reference_check");
+        auto db_path = dir.path() / "sciqlop-cache.db";
+        Cache cache { dir.path() };
+        const std::string v1(16 * 1024, 'A');
+        const std::string v2(16 * 1024, 'B');
+        REQUIRE(cache.set("k", v1));
+
+        std::string old_path;
+        {
+            sqlite3* db = nullptr;
+            REQUIRE(sqlite3_open_v2(db_path.string().c_str(), &db,
+                                    SQLITE_OPEN_READONLY, nullptr) == SQLITE_OK);
+            sqlite3_stmt* stmt = nullptr;
+            REQUIRE(sqlite3_prepare_v2(db, "SELECT path FROM cache WHERE key = 'k';",
+                                       -1, &stmt, nullptr) == SQLITE_OK);
+            REQUIRE(sqlite3_step(stmt) == SQLITE_ROW);
+            old_path = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
+            sqlite3_finalize(stmt);
+            sqlite3_close(db);
+        }
+        REQUIRE(!old_path.empty());
+
+        REQUIRE(cache.set("k", v2)); // displaces old_path into trash (5 s grace)
+
+        // Sanity: old_path really is pending in trash and no longer in cache.
+        REQUIRE(query_finds_path(db_path, "SELECT 1 FROM trash WHERE path = ? LIMIT 1;",
+                                 old_path));
+        REQUIRE_FALSE(query_finds_path(
+            db_path, "SELECT 1 FROM cache WHERE path = ? LIMIT 1;", old_path));
+
+        THEN("the production reference-check SQL still classifies it as referenced")
+        {
+            REQUIRE(query_finds_path(db_path, std::string(IS_PATH_REFERENCED_SQL),
+                                     old_path));
         }
     }
 }

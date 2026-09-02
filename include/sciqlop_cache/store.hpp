@@ -31,6 +31,18 @@ inline pid_t _sq_getpid() { return getpid(); }
 using _sq_pid_t = pid_t;
 #endif
 
+// Classification query for DiskStorage's collision-healing path (the
+// is_referenced callback in _Store::_set_impl): decides whether an existing
+// blob path is owned by a live cache row (genuine collision -> regenerate)
+// or is an orphaned leftover (safe to overwrite and reuse). It must cover the
+// trash table too: a displaced path spends 5 s there pending deferred
+// deletion, and classifying it as orphaned would let the heal reuse a file
+// that _drain_trash then unlinks — orphaning the new row. Defined at
+// namespace scope so tests exercise the exact production SQL.
+inline constexpr std::string_view IS_PATH_REFERENCED_SQL
+    = "SELECT 1 FROM cache WHERE path = ? UNION ALL "
+      "SELECT 1 FROM trash WHERE path = ? LIMIT 1;";
+
 // --- Fork safety -----------------------------------------------------------
 // A live Store owns a background checkpoint thread that periodically holds the
 // store's mutex AND allocates / runs SQLite. POSIX fork() clones only the
@@ -472,6 +484,12 @@ class _Store : private Policies..., private _ForkAware
         new (&_mtx) std::recursive_mutex();
         _txn_depth = 0;
         _owner_pid = _sq_getpid();
+        // fork() cloned the blob-filename PRNG state verbatim; without a
+        // reseed, parent and children generate lockstep-identical UUID
+        // sequences and file-backed values for different keys collide on the
+        // same on-disk path. (The pid in the filename is the structural
+        // backstop; this removes the root cause.)
+        storage->reseed();
         _finalize_statements();
         _db.close();
         _init_db();
@@ -912,7 +930,17 @@ private:
             return true;
         }
 
-        auto new_filepath = storage->store(value);
+        // Tells DiskStorage's collision-healing path whether an existing blob
+        // file is owned by a live row (regenerate) or is an orphaned leftover
+        // (safe to overwrite and reuse). Only ever runs on EEXIST — the happy
+        // path never queries. Safe to check-then-overwrite here: this function
+        // holds BEGIN EXCLUSIVE plus _mtx, so no concurrent writer can race.
+        auto is_referenced = [&db](const std::filesystem::path& p) {
+            auto path = p.string();
+            return db->template exec<bool>(
+                std::string(IS_PATH_REFERENCED_SQL), path, path).has_value();
+        };
+        auto new_filepath = storage->store(value, is_referenced);
         if (!new_filepath)
         {
             txn.rollback();
