@@ -158,6 +158,9 @@ if get_option('with_torture_tests')
     test('torture', torture_exe,
         is_parallel: false,
         timeout: 300,
+        # Tagged 'slow' so the daily loop can skip it with
+        # `meson test --no-suite slow`; CI/pre-push runs everything.
+        suite: 'slow',
     )
 
     # Reproducers for known concurrency bugs (audit 2026-05-02). Expected to
@@ -232,6 +235,9 @@ if not get_option('disable_python_wrapper')
             # ~390-400s on the dev box (measured on main and on the trash
             # branch alike) — 300 was simply too tight.
             timeout : 600,
+            # Tagged 'slow' so the daily loop can skip it with
+            # `meson test --no-suite slow`; CI/pre-push runs everything.
+            suite : 'slow',
         )
         test('test_hypothesis', python3,
             args:['-m', 'pytest', files('tests/python/test_hypothesis.py'), '-x', '-v'],
