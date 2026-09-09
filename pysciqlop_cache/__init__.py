@@ -308,6 +308,7 @@ class Cache(_Cache):
         return self
 
     def __exit__(self, *exc):
+        self.close()
         return False
 
 
@@ -391,6 +392,7 @@ class Index(_Index):
         return self
 
     def __exit__(self, *exc):
+        self.close()
         return False
 
 
@@ -524,6 +526,7 @@ class FanoutCache(_FanoutCache):
         return self
 
     def __exit__(self, *exc):
+        self.close()
         return False
 
 
@@ -595,4 +598,5 @@ class FanoutIndex(_FanoutIndex):
         return self
 
     def __exit__(self, *exc):
+        self.close()
         return False

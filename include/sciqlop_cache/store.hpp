@@ -1065,8 +1065,14 @@ public:
         return TransactionGuard(*this);
     }
 
+    // Full graceful shutdown: stop the background checkpoint/eviction thread
+    // (it holds its own SQLite connection, independent of _db) before closing
+    // the writer connection, same order the destructor uses. Idempotent:
+    // _stop_checkpoint_thread() is a no-op once already stopped, and
+    // Database::close() is a no-op once _db is already closed.
     inline bool close()
     {
+        _stop_checkpoint_thread();
         auto g = db();
         return _finalize_statements() & g->close();
     }

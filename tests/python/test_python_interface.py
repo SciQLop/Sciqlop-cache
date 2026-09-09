@@ -995,5 +995,54 @@ class TestMemoryViewLifetime(unittest.TestCase):
         self.assertEqual(bytes(mv), large_value)
 
 
+class TestClose(unittest.TestCase):
+    """Reproducer for #11: diskcache-migrated code calls cache.close(); it
+    must exist and must not raise, even though it isn't required for
+    correctness (GC already releases resources deterministically)."""
+
+    def setUp(self):
+        self.tmp_dir = tempfile.mkdtemp()
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp_dir, ignore_errors=True)
+
+    def test_cache_close_does_not_raise(self):
+        cache = Cache(self.tmp_dir)
+        cache.set("k", "v")
+        cache.close()
+
+    def test_cache_close_is_idempotent(self):
+        cache = Cache(self.tmp_dir)
+        cache.close()
+        cache.close()
+
+    def test_index_close_does_not_raise(self):
+        from pysciqlop_cache import Index
+        index = Index(self.tmp_dir)
+        index.set("k", "v")
+        index.close()
+
+    def test_fanout_cache_close_does_not_raise(self):
+        from pysciqlop_cache import FanoutCache
+        cache = FanoutCache(self.tmp_dir, shard_count=4)
+        cache.set("k", "v")
+        cache.close()
+
+    def test_fanout_index_close_does_not_raise(self):
+        from pysciqlop_cache import FanoutIndex
+        index = FanoutIndex(self.tmp_dir, shard_count=4)
+        index.set("k", "v")
+        index.close()
+
+    def test_context_manager_closes_on_exit(self):
+        with Cache(self.tmp_dir) as cache:
+            cache.set("k", "v")
+            self.assertEqual(cache.get("k"), "v")
+        # Reopening the same path right after exit must see the committed
+        # value and must not hang behind a still-open writer connection.
+        reopened = Cache(self.tmp_dir)
+        self.assertEqual(reopened.get("k"), "v")
+
+
 if __name__ == "__main__":
     unittest.main()

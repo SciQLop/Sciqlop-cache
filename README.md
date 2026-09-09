@@ -51,6 +51,10 @@ for key in cache: ...       # iterate keys
 len(cache)                  # entry count
 ```
 
+`cache.close()` and `with Cache(...) as cache:` both work, for diskcache-style
+cleanup — but neither is required. The cache closes itself automatically when
+garbage-collected.
+
 ### Expiration and tags
 
 ```python

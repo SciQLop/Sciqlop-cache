@@ -114,6 +114,13 @@ static int Buffer_getbuffer(PyObject* exporter, Py_buffer* view, int flags)
                               (Py_ssize_t) b->size(), 1, flags);
 }
 
+static constexpr const char* close_doc
+    = "Close the cache's SQLite connection and stop its background thread.\n\n"
+      "Not required: this already happens automatically when the object is\n"
+      "garbage-collected. Provided for diskcache-compatible cleanup code\n"
+      "(an explicit close() in a finally: block, or a `with cache:` block).\n"
+      "Safe to call more than once. Do not use the cache after calling this.";
+
 NB_MODULE(_pysciqlop_cache, m)
 {
     m.doc() = R"pbdoc(
@@ -229,6 +236,7 @@ NB_MODULE(_pysciqlop_cache, m)
             return d;
         })
         .def("reset_stats", &Cache::reset_stats)
+        .def("close", &Cache::close, close_doc, nb::call_guard<nb::gil_scoped_release>())
         .def("begin_user_transaction", &Cache::begin_user_transaction,
              nb::call_guard<nb::gil_scoped_release>());
 
@@ -262,6 +270,7 @@ NB_MODULE(_pysciqlop_cache, m)
         .def("set_meta", &Index::set_meta, nb::arg("key"), nb::arg("value"))
         .def("get_meta", &Index::get_meta, nb::arg("key"))
         .def("path", [](Index& idx) { return idx.path().string(); })
+        .def("close", &Index::close, close_doc, nb::call_guard<nb::gil_scoped_release>())
         .def("begin_user_transaction", &Index::begin_user_transaction,
              nb::call_guard<nb::gil_scoped_release>());
 
@@ -317,6 +326,7 @@ NB_MODULE(_pysciqlop_cache, m)
             return d;
         })
         .def("reset_stats", &FanoutCache::reset_stats)
+        .def("close", &FanoutCache::close, close_doc, nb::call_guard<nb::gil_scoped_release>())
         .def("begin_user_transaction", &FanoutCache::begin_user_transaction, nb::arg("key"),
              nb::call_guard<nb::gil_scoped_release>());
 
@@ -352,6 +362,7 @@ NB_MODULE(_pysciqlop_cache, m)
         .def("set_meta", &FanoutIndex::set_meta, nb::arg("key"), nb::arg("value"))
         .def("get_meta", &FanoutIndex::get_meta, nb::arg("key"))
         .def("path", [](FanoutIndex& idx) { return idx.path().string(); })
+        .def("close", &FanoutIndex::close, close_doc, nb::call_guard<nb::gil_scoped_release>())
         .def("begin_user_transaction", &FanoutIndex::begin_user_transaction, nb::arg("key"),
              nb::call_guard<nb::gil_scoped_release>());
 }

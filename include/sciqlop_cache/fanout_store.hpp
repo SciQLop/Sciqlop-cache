@@ -215,6 +215,13 @@ public:
         _for_each_shard([](auto& s) { s.clear(); });
     }
 
+    bool close()
+    {
+        bool ok = true;
+        _for_each_shard([&](auto& s) { ok &= s.close(); });
+        return ok;
+    }
+
     using CheckResult = typename StoreType::CheckResult;
 
     CheckResult check(bool fix = false)
