@@ -1043,6 +1043,80 @@ class TestClose(unittest.TestCase):
         reopened = Cache(self.tmp_dir)
         self.assertEqual(reopened.get("k"), "v")
 
+    def test_reentrant_with_blocks_share_live_cache(self):
+        """Reproducer for #12: `with cache:` must not permanently close the
+        object. diskcache's own __exit__ calls close(), but diskcache's
+        close() is a cheap per-thread connection reset that reopens lazily
+        on next access — ours is a one-way shutdown, so mirroring the
+        "call close() on exit" surface behavior (added, unrequested, in #11)
+        silently killed reuse across sequential `with` blocks."""
+        cache = Cache(self.tmp_dir)
+        with cache as c:
+            c.set("k", "v")
+        with cache as c:
+            self.assertEqual(c.get("k"), "v")
+
+    def test_index_reentrant_with_blocks_share_live_index(self):
+        from pysciqlop_cache import Index
+        index = Index(self.tmp_dir)
+        with index as i:
+            i.set("k", "v")
+        with index as i:
+            self.assertEqual(i.get("k"), "v")
+
+    def test_fanout_cache_reentrant_with_blocks_share_live_cache(self):
+        from pysciqlop_cache import FanoutCache
+        cache = FanoutCache(self.tmp_dir, shard_count=4)
+        with cache as c:
+            c.set("k", "v")
+        with cache as c:
+            self.assertEqual(c.get("k"), "v")
+
+    def test_fanout_index_reentrant_with_blocks_share_live_index(self):
+        from pysciqlop_cache import FanoutIndex
+        index = FanoutIndex(self.tmp_dir, shard_count=4)
+        with index as i:
+            i.set("k", "v")
+        with index as i:
+            self.assertEqual(i.get("k"), "v")
+
+    def test_get_on_closed_cache_raises(self):
+        cache = Cache(self.tmp_dir)
+        cache.set("k", "v")
+        cache.close()
+        with self.assertRaises(RuntimeError):
+            cache.get("k")
+
+    def test_set_on_closed_cache_raises(self):
+        cache = Cache(self.tmp_dir)
+        cache.close()
+        with self.assertRaises(RuntimeError):
+            cache.set("k", "v")
+
+    def test_get_on_closed_index_raises(self):
+        from pysciqlop_cache import Index
+        index = Index(self.tmp_dir)
+        index.set("k", "v")
+        index.close()
+        with self.assertRaises(RuntimeError):
+            index.get("k")
+
+    def test_get_on_closed_fanout_cache_raises(self):
+        from pysciqlop_cache import FanoutCache
+        cache = FanoutCache(self.tmp_dir, shard_count=4)
+        cache.set("k", "v")
+        cache.close()
+        with self.assertRaises(RuntimeError):
+            cache.get("k")
+
+    def test_get_on_closed_fanout_index_raises(self):
+        from pysciqlop_cache import FanoutIndex
+        index = FanoutIndex(self.tmp_dir, shard_count=4)
+        index.set("k", "v")
+        index.close()
+        with self.assertRaises(RuntimeError):
+            index.get("k")
+
 
 if __name__ == "__main__":
     unittest.main()

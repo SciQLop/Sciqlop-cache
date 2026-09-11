@@ -118,8 +118,9 @@ static constexpr const char* close_doc
     = "Close the cache's SQLite connection and stop its background thread.\n\n"
       "Not required: this already happens automatically when the object is\n"
       "garbage-collected. Provided for diskcache-compatible cleanup code\n"
-      "(an explicit close() in a finally: block, or a `with cache:` block).\n"
-      "Safe to call more than once. Do not use the cache after calling this.";
+      "(an explicit close() in a finally: block). `with cache:` does NOT\n"
+      "call this. Safe to call more than once. Any operation on the cache\n"
+      "after calling this raises RuntimeError.";
 
 NB_MODULE(_pysciqlop_cache, m)
 {

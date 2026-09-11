@@ -51,9 +51,11 @@ for key in cache: ...       # iterate keys
 len(cache)                  # entry count
 ```
 
-`cache.close()` and `with Cache(...) as cache:` both work, for diskcache-style
-cleanup — but neither is required. The cache closes itself automatically when
-garbage-collected.
+`cache.close()` works, for diskcache-style cleanup code — but it isn't
+required, since the cache closes itself automatically when garbage-collected.
+Note that closing is a real, one-way shutdown here (unlike diskcache, where
+it's a cheap per-thread reconnect), so `with cache:` does *not* call it —
+using the cache after an explicit `close()` raises `RuntimeError`.
 
 ### Expiration and tags
 

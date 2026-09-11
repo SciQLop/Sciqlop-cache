@@ -644,7 +644,19 @@ class _Store : private Policies..., private _ForkAware
         Database& operator*() { return ref; }
     };
 
-    DbGuard db() const { return { _db, std::unique_lock(_mtx) }; }
+    // Raw access, no open-state check: used only by close()/opened(), which
+    // must work correctly regardless of whether the store is already closed.
+    DbGuard _raw_db() const { return { _db, std::unique_lock(_mtx) }; }
+
+    // Every data operation goes through this. Using the store after close()
+    // must fail loudly instead of silently returning empty/None results.
+    DbGuard db() const
+    {
+        auto g = _raw_db();
+        if (!g->opened())
+            throw std::runtime_error("sciqlop_cache: operation on a closed store");
+        return g;
+    }
 
     // RAII helper for internal C++ paths that need an EXCLUSIVE transaction.
     // At depth 0 it issues a real BEGIN EXCLUSIVE; at depth>0 it's a logical
@@ -1055,7 +1067,7 @@ public:
         try { close(); } catch (...) {}
     }
 
-    [[nodiscard]] inline bool opened() const { return db()->opened(); }
+    [[nodiscard]] inline bool opened() const { return _raw_db()->opened(); }
 
     // Reentrant on the same thread: the TransactionGuard constructor takes
     // _mtx (recursive_mutex re-entry on same thread). Cross-thread callers
@@ -1073,7 +1085,7 @@ public:
     inline bool close()
     {
         _stop_checkpoint_thread();
-        auto g = db();
+        auto g = _raw_db();
         return _finalize_statements() & g->close();
     }
 
