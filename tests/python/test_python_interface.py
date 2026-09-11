@@ -1117,6 +1117,25 @@ class TestClose(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             index.get("k")
 
+    def test_transact_on_closed_cache_raises(self):
+        """opencode review of 31ac89c: begin_user_transaction() constructed
+        Transaction(store._db.get(), ...) directly, bypassing db()'s check --
+        Transaction(nullptr) is a silent no-op, so transact() on a closed
+        store entered the `with` block instead of raising at entry."""
+        cache = Cache(self.tmp_dir)
+        cache.close()
+        with self.assertRaises(RuntimeError):
+            with cache.transact():
+                pass
+
+    def test_transact_on_closed_fanout_cache_raises(self):
+        from pysciqlop_cache import FanoutCache
+        cache = FanoutCache(self.tmp_dir, shard_count=4)
+        cache.close()
+        with self.assertRaises(RuntimeError):
+            with cache.transact("k"):
+                pass
+
 
 if __name__ == "__main__":
     unittest.main()

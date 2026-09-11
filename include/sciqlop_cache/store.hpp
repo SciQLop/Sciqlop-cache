@@ -764,6 +764,11 @@ public:
             , _lock(store._mtx)
             , _outermost(store._txn_depth == 0)
         {
+            // Transaction(nullptr) is a silent no-op, so without this check a
+            // closed store would enter the `with` block instead of raising:
+            // the first data op inside still raises via db(), but only then.
+            if (!store.opened())
+                throw std::runtime_error("sciqlop_cache: operation on a closed store");
             if (_outermost)
                 _txn.emplace(store._db.get(), true);
             ++store._txn_depth;
