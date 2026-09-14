@@ -1087,14 +1087,21 @@ public:
     // the writer connection, same order the destructor uses. Idempotent:
     // _stop_checkpoint_thread() is a no-op once already stopped, and
     // Database::close() is a no-op once _db is already closed.
+    // Also drops the mmap LRU cache, same as clear() does — on Windows a
+    // file can't be removed while still mapped, so leaving it behind would
+    // let a post-close() `shutil.rmtree()` of the cache directory silently
+    // fail on any file-backed value that had been read.
     inline bool close()
     {
         _stop_checkpoint_thread();
+        storage->clear_mmap_cache();
         auto g = _raw_db();
         return _finalize_statements() & g->close();
     }
 
     [[nodiscard]] inline std::filesystem::path path() { return cache_path; }
+
+    [[nodiscard]] inline std::size_t mmap_cache_size() const { return storage->mmap_cache_size(); }
 
     [[nodiscard]] inline size_t max_cache_size()
         requires (has_eviction)

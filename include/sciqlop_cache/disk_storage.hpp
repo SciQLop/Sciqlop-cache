@@ -312,6 +312,12 @@ public:
         _lru_order.clear();
     }
 
+    [[nodiscard]] std::size_t mmap_cache_size() const
+    {
+        std::lock_guard lk { _cache_mutex };
+        return _mmap_cache.size();
+    }
+
 
     // Writes `value` to a fresh random blob file and returns its path relative
     // to the storage root. The happy path is a single exclusive create — no

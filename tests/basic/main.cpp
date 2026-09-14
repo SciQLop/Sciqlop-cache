@@ -992,6 +992,33 @@ SCENARIO("clear() removes file-backed values cleanly even after they were mmap'd
     }
 }
 
+SCENARIO("close() releases mmap'd file handles for file-backed values", "[close][buffer]")
+{
+    GIVEN("a Cache with file-backed values that have been read (and so mmap'd)")
+    {
+        AutoCleanDirectory db_path { "CloseMmap" };
+        Cache cache(db_path.path());
+        std::vector<char> big(16000, 'x');
+        cache.set("a", big);
+        cache.set("b", big);
+        // Reading loads the mmap into the storage's _mmap_cache.
+        REQUIRE(cache.get("a"));
+        REQUIRE(cache.get("b"));
+        REQUIRE(cache.mmap_cache_size() > 0);
+
+        WHEN("close() is called")
+        {
+            REQUIRE(cache.close());
+
+            THEN("no mmap handles remain (a Windows rmtree after close() would "
+                 "otherwise fail on these still-mapped value files)")
+            {
+                REQUIRE(cache.mmap_cache_size() == 0);
+            }
+        }
+    }
+}
+
 SCENARIO("Buffer is safe to inspect after being moved from", "[buffer]")
 {
     GIVEN("a Buffer wrapping a vector")
