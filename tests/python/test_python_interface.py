@@ -1016,6 +1016,38 @@ class TestClose(unittest.TestCase):
         cache.close()
         cache.close()
 
+    def test_rmtree_after_close_removes_file_backed_values(self):
+        """Reproducer for #13: close() must release the mmap LRU cache, not
+        just the SQLite connection. A file-backed value that had been read
+        stayed memory-mapped after close(); on Windows a mapped file can't
+        be deleted, so a diskcache-style `cache.close(); shutil.rmtree(dir)`
+        cleanup silently left those value files (and the directory) behind.
+        This runs cross-platform in CI (test_wheels: macOS/Windows/Linux) so
+        it actually exercises the Windows-only failure mode, not just a
+        Linux-side proxy for it."""
+        cache = Cache(self.tmp_dir)
+        big = b"x" * 16000  # > the 8 KiB blob threshold: stored as a file
+        cache.set("a", big)
+        cache.set("b", big)
+        # get() loads the value into the storage's mmap LRU cache.
+        self.assertEqual(cache.get("a"), big)
+        self.assertEqual(cache.get("b"), big)
+        cache.close()
+        shutil.rmtree(self.tmp_dir)
+        self.assertFalse(os.path.exists(self.tmp_dir))
+
+    def test_rmtree_after_fanout_close_removes_file_backed_values(self):
+        from pysciqlop_cache import FanoutCache
+        cache = FanoutCache(self.tmp_dir, shard_count=4)
+        big = b"x" * 16000
+        cache.set("a", big)
+        cache.set("b", big)
+        self.assertEqual(cache.get("a"), big)
+        self.assertEqual(cache.get("b"), big)
+        cache.close()
+        shutil.rmtree(self.tmp_dir)
+        self.assertFalse(os.path.exists(self.tmp_dir))
+
     def test_index_close_does_not_raise(self):
         from pysciqlop_cache import Index
         index = Index(self.tmp_dir)
