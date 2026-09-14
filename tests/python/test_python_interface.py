@@ -1016,6 +1016,24 @@ class TestClose(unittest.TestCase):
         cache.close()
         cache.close()
 
+    def test_rmtree_after_close_with_small_values_only(self):
+        """Reproducer for #13, isolated from the mmap-cache half of the bug:
+        no file-backed values here, so this fails only if close() leaves the
+        main sciqlop-cache.db connection itself as a SQLite "zombie". That
+        happens because Database's own BEGIN/COMMIT statements are prepared
+        once in open() and reused for every transaction, but close() never
+        finalized them -- sqlite3_close_v2() defers releasing the connection
+        (including its OS file handle) until every statement prepared
+        against it is finalized, so the real close only happened once the
+        whole Database object (and thus the Python Cache) was garbage
+        collected. On Windows that left sciqlop-cache.db locked right after
+        an explicit close(), failing an immediate shutil.rmtree()."""
+        cache = Cache(self.tmp_dir)
+        cache.set("k", "v")
+        cache.close()
+        shutil.rmtree(self.tmp_dir)
+        self.assertFalse(os.path.exists(self.tmp_dir))
+
     def test_rmtree_after_close_removes_file_backed_values(self):
         """Reproducer for #13: close() must release the mmap LRU cache, not
         just the SQLite connection. A file-backed value that had been read

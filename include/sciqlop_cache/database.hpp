@@ -417,6 +417,18 @@ public:
         bool result = true;
         if (db)
         {
+            // BEGIN_STMT/COMMIT_STMT are prepared once in open() and reused
+            // for every transaction. sqlite3_close_v2() only fully releases
+            // the connection -- including its OS file handle -- once every
+            // statement prepared against it is finalized; otherwise it
+            // becomes a "zombie" that lingers until this Database object's
+            // own destructor finalizes them. On Windows that left the .db
+            // file's handle open after an explicit close(), so a caller's
+            // immediate shutil.rmtree() of the cache directory failed
+            // (issue #13); Linux masked it because unlinking an open file
+            // succeeds there regardless.
+            BEGIN_STMT.finalize();
+            COMMIT_STMT.finalize();
             result = sqlite3_close_v2(db.get()) == SQLITE_OK;
             if (!result)
             {
