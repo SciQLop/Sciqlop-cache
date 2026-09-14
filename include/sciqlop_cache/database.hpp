@@ -435,7 +435,16 @@ public:
                 std::cerr << "Error closing database: " << sqlite3_errmsg(db.get()) << std::endl;
                 result = false;
             }
-            db.reset();
+            // sqlite3_close_v2() has already fully torn down (and freed) the
+            // connection now that every statement is finalized -- release()
+            // instead of reset() so the SQLiteDeleter does NOT call
+            // sqlite3_close() again on that now-dangling pointer. Before
+            // BEGIN_STMT/COMMIT_STMT were finalized here, close_v2() always
+            // left a live "zombie" connection for this second close to
+            // (harmlessly) hit; now it doesn't, and reset() was a
+            // heap-use-after-free (caught by ASan: ../subprojects/sqlite-
+            // amalgamation-*/sqlite3.c sqlite3SafetyCheckSickOrOk).
+            (void)db.release();
         }
         return result;
     }
