@@ -208,6 +208,27 @@ SCENARIO("Testing sciqlop_cache more advanced operations", "[cache]")
             REQUIRE_FALSE(cache.get("key1").has_value());
         }
 
+        WHEN("we touch a key without an expiration")
+        {
+            cache.set("key1", original_value1, 2s);
+            REQUIRE(cache.touch("key1"));
+            std::this_thread::sleep_for(2100ms);
+            cache.expire();
+            REQUIRE(cache.get("key1").has_value());
+        }
+
+        WHEN("we touch a missing key")
+        {
+            REQUIRE_FALSE(cache.touch("missing", 10s));
+        }
+
+        WHEN("we touch an already expired key")
+        {
+            cache.set("key1", original_value1, 0s);
+            REQUIRE_FALSE(cache.touch("key1", 3600s));
+            REQUIRE_FALSE(cache.get("key1").has_value());
+        }
+
         WHEN("we test add")
         {
             cache.clear();

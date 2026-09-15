@@ -93,6 +93,19 @@ SCENARIO("FanoutCache set with expiration", "[fanout][expire]")
             fc.set("tagged", v1, "mytag");
             REQUIRE(fc.get("tagged").has_value());
         }
+
+        WHEN("we touch a key without an expiration")
+        {
+            fc.set("expkey", v1, 2s);
+            REQUIRE(fc.touch("expkey"));
+            std::this_thread::sleep_for(2100ms);
+            REQUIRE(fc.get("expkey").has_value());
+        }
+
+        WHEN("we touch a missing key")
+        {
+            REQUIRE_FALSE(fc.touch("missing", 10s));
+        }
     }
 }
 

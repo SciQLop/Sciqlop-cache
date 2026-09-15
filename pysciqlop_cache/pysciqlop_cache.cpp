@@ -57,6 +57,15 @@ inline bool _add_item_impl(T& c, const std::string& key, nb::bytes& buffer,
 }
 
 template <typename T>
+inline bool _touch_impl(T& c, const std::string& key, OptDuration expire)
+{
+    nb::gil_scoped_release release;
+    if (expire)
+        return c.touch(key, *expire);
+    return c.touch(key);
+}
+
+template <typename T>
 inline void _simple_set_item(T& s, const std::string& key, nb::bytes& buffer)
 {
     auto data = std::span<const char>(static_cast<const char*>(buffer.data()), buffer.size());
@@ -210,10 +219,7 @@ NB_MODULE(_pysciqlop_cache, m)
              nb::call_guard<nb::gil_scoped_release>())
         .def("pop", &Cache::pop, nb::arg("key"),
              nb::call_guard<nb::gil_scoped_release>())
-        .def(
-            "touch",
-            [](Cache& c, const std::string& key, std::chrono::system_clock::duration expire)
-            { return c.touch(key, expire); }, nb::arg("key"), nb::arg("expire"))
+        .def("touch", _touch_impl<Cache>, nb::arg("key"), nb::arg("expire") = nb::none())
         .def("expire", &Cache::expire)
         .def("evict", &Cache::evict)
         .def("evict_tag", &Cache::evict_tag, nb::arg("tag"))
@@ -299,10 +305,7 @@ NB_MODULE(_pysciqlop_cache, m)
              nb::call_guard<nb::gil_scoped_release>())
         .def("pop", &FanoutCache::pop, nb::arg("key"),
              nb::call_guard<nb::gil_scoped_release>())
-        .def(
-            "touch",
-            [](FanoutCache& c, const std::string& key, std::chrono::system_clock::duration expire)
-            { return c.touch(key, expire); }, nb::arg("key"), nb::arg("expire"))
+        .def("touch", _touch_impl<FanoutCache>, nb::arg("key"), nb::arg("expire") = nb::none())
         .def("expire", &FanoutCache::expire)
         .def("evict", &FanoutCache::evict)
         .def("evict_tag", &FanoutCache::evict_tag, nb::arg("tag"))

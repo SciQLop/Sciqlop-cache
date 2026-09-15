@@ -222,7 +222,7 @@ class _Store : private Policies..., private _ForkAware
     };
 
     [[no_unique_address]] std::conditional_t<has_expiration, CompiledStatement, NoStmt>
-        TOUCH_STMT { "UPDATE cache SET expire = ? WHERE key = ?;" };
+        TOUCH_STMT { std::string("UPDATE cache SET expire = ? WHERE key = ?") + _where_valid() + ";" };
     [[no_unique_address]] std::conditional_t<has_expiration, CompiledStatement, NoStmt>
         EXPIRE_STMT { "SELECT path, size FROM cache WHERE expire IS NOT NULL AND expire <= unixepoch('now');" };
     [[no_unique_address]] std::conditional_t<has_expiration, CompiledStatement, NoStmt>
@@ -1037,6 +1037,14 @@ private:
         return static_cast<double>(now) + *offset_secs;
     }
 
+    inline bool _touch(const std::string& key, std::optional<double> expire_secs)
+    {
+        auto db = this->db();
+        if (!db->exec(TOUCH_STMT, _abs_expire(expire_secs), key))
+            return false;
+        return sqlite3_changes(db->get()) > 0;
+    }
+
 public:
     static constexpr std::string_view db_fname = "sciqlop-cache.db";
 
@@ -1358,13 +1366,20 @@ public:
 
     // --- Expiration-specific ---
 
+    // Mirrors diskcache: only a live (unexpired) entry is touched, so an
+    // expired-but-not-yet-evicted row is never resurrected.
     inline bool touch(const std::string& key, DurationConcept auto expire)
         requires (has_expiration)
     {
-        auto expire_secs = static_cast<double>(
-            std::chrono::duration_cast<std::chrono::seconds>(expire).count());
-        auto abs_exp = _abs_expire(std::optional<double> { expire_secs });
-        return db()->exec(TOUCH_STMT, abs_exp, key);
+        auto expire_secs
+            = std::chrono::duration_cast<std::chrono::duration<double>>(expire).count();
+        return _touch(key, expire_secs);
+    }
+
+    inline bool touch(const std::string& key)
+        requires (has_expiration)
+    {
+        return _touch(key, std::nullopt);
     }
 
     inline void expire()

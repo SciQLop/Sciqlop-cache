@@ -256,6 +256,12 @@ public:
         return _shard(key).touch(key, expire);
     }
 
+    inline bool touch(const std::string& key)
+        requires requires(StoreType& s, const std::string& k) { s.touch(k); }
+    {
+        return _shard(key).touch(key);
+    }
+
     inline void expire()
         requires requires(StoreType& s) { s.expire(); }
     {

@@ -333,6 +333,43 @@ class TestCache(unittest.TestCase):
         time.sleep(0.1)
         self.assertIsNone(self.cache.get("touchme"))
 
+    def test_touch_accepts_int_seconds(self):
+        self.cache.set("touchme", "val", expire=3600)
+        self.assertTrue(self.cache.touch("touchme", expire=0))
+        self.cache.expire()
+        self.assertIsNone(self.cache.get("touchme"))
+
+    def test_touch_accepts_float_seconds(self):
+        self.cache.set("touchme", "val", expire=3600)
+        self.assertTrue(self.cache.touch("touchme", expire=0.0))
+        self.cache.expire()
+        self.assertIsNone(self.cache.get("touchme"))
+
+    def test_touch_without_expire_removes_expiration(self):
+        self.cache.set("keep", "val", expire=2)
+        self.assertTrue(self.cache.touch("keep"))
+        self.cache.set("keep2", "val", expire=2)
+        self.assertTrue(self.cache.touch("keep2", expire=None))
+        time.sleep(2.1)
+        self.cache.expire()
+        self.assertEqual(self.cache.get("keep"), "val")
+        self.assertEqual(self.cache.get("keep2"), "val")
+
+    def test_touch_extends_lifetime(self):
+        self.cache.set("extend", "val", expire=2)
+        self.assertTrue(self.cache.touch("extend", expire=3600))
+        time.sleep(2.1)
+        self.cache.expire()
+        self.assertEqual(self.cache.get("extend"), "val")
+
+    def test_touch_missing_key_returns_false(self):
+        self.assertFalse(self.cache.touch("missing", expire=10))
+
+    def test_touch_expired_key_returns_false_and_does_not_resurrect(self):
+        self.cache.set("dead", "val", expire=0)
+        self.assertFalse(self.cache.touch("dead", expire=3600))
+        self.assertIsNone(self.cache.get("dead"))
+
     def test_expire(self):
         self.cache.set("short", "val", expire=0)
         self.cache.set("long", "val")
@@ -569,6 +606,22 @@ class TestFanoutCache(unittest.TestCase):
     def test_set_get(self):
         self.cache.set("key1", "value1")
         self.assertEqual(self.cache.get("key1"), "value1")
+
+    def test_touch_accepts_int_seconds(self):
+        self.cache.set("touchme", "val", expire=3600)
+        self.assertTrue(self.cache.touch("touchme", expire=0))
+        self.cache.expire()
+        self.assertIsNone(self.cache.get("touchme"))
+
+    def test_touch_without_expire_removes_expiration(self):
+        self.cache.set("keep", "val", expire=2)
+        self.assertTrue(self.cache.touch("keep"))
+        time.sleep(2.1)
+        self.cache.expire()
+        self.assertEqual(self.cache.get("keep"), "val")
+
+    def test_touch_missing_key_returns_false(self):
+        self.assertFalse(self.cache.touch("missing", expire=10))
 
     def test_count_and_size(self):
         self.cache.set("k1", "aaa")

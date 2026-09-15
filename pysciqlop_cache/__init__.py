@@ -205,6 +205,23 @@ class Cache(_Cache):
             key, self._serializer.dumps(value), expire=expire, tag=tag
         )
 
+    def touch(
+        self, key: AnyStr, expire: Optional[Union[timedelta, int, float]] = None
+    ) -> bool:
+        """Update the expiration time of an existing entry.
+
+        Parameters:
+        key (str): The key of the entry to touch.
+        expire (Optional[Union[timedelta, int, float]]): New expiration time.
+            Can be a `timedelta`, an integer (seconds), or a float (seconds).
+            If `None` (default), the entry will no longer expire.
+        Returns:
+        bool: `True` if the entry existed and was not expired, `False` otherwise.
+        """
+        if type(expire) in (int, float):
+            expire = timedelta(seconds=expire)
+        return super().touch(key, expire=expire)
+
     def incr(self, key: AnyStr, delta: int = 1, default: int = 0) -> int:
         """Increment a value in the cache by delta, returning the new value.
 
@@ -443,6 +460,23 @@ class FanoutCache(_FanoutCache):
         if type(expire) in (int, float):
             expire = timedelta(seconds=expire)
         return super().add(key, self._serializer.dumps(value), expire=expire, tag=tag)
+
+    def touch(
+        self, key: AnyStr, expire: Optional[Union[timedelta, int, float]] = None
+    ) -> bool:
+        """Update the expiration time of an existing entry.
+
+        Parameters:
+        key (str): The key of the entry to touch.
+        expire (Optional[Union[timedelta, int, float]]): New expiration time.
+            Can be a `timedelta`, an integer (seconds), or a float (seconds).
+            If `None` (default), the entry will no longer expire.
+        Returns:
+        bool: `True` if the entry existed and was not expired, `False` otherwise.
+        """
+        if type(expire) in (int, float):
+            expire = timedelta(seconds=expire)
+        return super().touch(key, expire=expire)
 
     def incr(self, key: AnyStr, delta: int = 1, default: int = 0) -> int:
         with self.transact(key):

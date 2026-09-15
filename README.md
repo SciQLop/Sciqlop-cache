@@ -66,6 +66,7 @@ cache.set("sensor/hum", data, expire=600, tag="sensor")
 
 cache.evict_tag("sensor")   # bulk-remove all "sensor" entries
 cache.touch("session/abc", expire=3600)             # extend lifetime
+cache.touch("session/abc")                          # drop the expiration
 ```
 
 ### Bounded caches (LRU eviction)
@@ -206,6 +207,7 @@ cache.del("key");
 cache.pop("key");                       // get + delete
 cache.add("key", data);                 // set only if absent
 cache.touch("key", 120s);
+cache.touch("key");                     // drop the expiration
 cache.evict_tag("mytag");
 cache.incr("counter", 1, /*default=*/0);
 
