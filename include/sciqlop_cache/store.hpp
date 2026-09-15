@@ -130,6 +130,7 @@ class _Store : private Policies..., private _ForkAware
     std::condition_variable _checkpoint_cv;
     _sq_pid_t _owner_pid;
     mutable Database _db;
+    int _busy_timeout_ms = 600'000;
     mutable std::recursive_mutex _mtx;
     // Depth counter for nested transactions. Only the outermost level
     // (depth 0→1) issues an actual SQLite BEGIN/COMMIT; nested levels are
@@ -223,6 +224,8 @@ class _Store : private Policies..., private _ForkAware
 
     [[no_unique_address]] std::conditional_t<has_expiration, CompiledStatement, NoStmt>
         TOUCH_STMT { std::string("UPDATE cache SET expire = ? WHERE key = ?") + _where_valid() + ";" };
+    [[no_unique_address]] std::conditional_t<has_expiration && has_tags, CompiledStatement, NoStmt>
+        EXPIRE_TAG_STMT { std::string("SELECT expire, tag FROM cache WHERE key = ?") + _where_valid() + ";" };
     [[no_unique_address]] std::conditional_t<has_expiration, CompiledStatement, NoStmt>
         EXPIRE_STMT { "SELECT path, size FROM cache WHERE expire IS NOT NULL AND expire <= unixepoch('now');" };
     [[no_unique_address]] std::conditional_t<has_expiration, CompiledStatement, NoStmt>
@@ -264,6 +267,8 @@ class _Store : private Policies..., private _ForkAware
             stmts.push_back(&UPDATE_LAST_USE_STMT);
             stmts.push_back(&EVICT_LRU_STMT);
         }
+        if constexpr (has_expiration && has_tags)
+            stmts.push_back(&EXPIRE_TAG_STMT);
         if constexpr (has_tags)
         {
             stmts.push_back(&EVICT_TAG_PATH_STMT);
@@ -362,7 +367,6 @@ class _Store : private Policies..., private _ForkAware
             PRAGMA temp_store=MEMORY;
             PRAGMA mmap_size=268435456;
             PRAGMA analysis_limit=1000;
-            PRAGMA busy_timeout=600000;
             PRAGMA recursive_triggers=ON;
         )";
 
@@ -373,7 +377,7 @@ class _Store : private Policies..., private _ForkAware
         {
             try
             {
-                _db.open(this->cache_path / db_fname, init_stmts);
+                _db.open(this->cache_path / db_fname, init_stmts, _busy_timeout_ms);
                 _compile_statements();
                 _migrate_schema();
                 _seed_access_seq();
@@ -548,10 +552,9 @@ class _Store : private Policies..., private _ForkAware
                     std::vector<Entry> to_evict;
                     while (stmt && current_size > target && sqlite3_step(stmt) == SQLITE_ROW)
                     {
-                        auto k = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
                         auto p = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
                         auto sz = static_cast<std::size_t>(sqlite3_column_int64(stmt, 2));
-                        to_evict.push_back({ k ? k : "", p ? p : "" });
+                        to_evict.push_back({ sql_column_string(stmt, 0), p ? p : "" });
                         current_size -= std::min(current_size, sz);
                     }
                     if (stmt) sqlite3_finalize(stmt);
@@ -568,7 +571,7 @@ class _Store : private Policies..., private _ForkAware
                         bool gone = false;
                         if (stmt)
                         {
-                            sqlite3_bind_text(stmt, 1, key.c_str(), -1, SQLITE_TRANSIENT);
+                            sqlite3_bind_text(stmt, 1, key.data(), static_cast<int>(key.size()), SQLITE_TRANSIENT);
                             gone = sqlite3_step(stmt) == SQLITE_DONE && sqlite3_changes(bg_db) > 0;
                             sqlite3_reset(stmt);
                         }
@@ -727,8 +730,8 @@ public:
             }
             while (sqlite3_step(stmt) == SQLITE_ROW)
             {
-                auto v = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
-                _keys.emplace_back(v ? v : "");
+                if (const auto* v = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0)))
+                    _keys.emplace_back(v, static_cast<std::size_t>(sqlite3_column_bytes(stmt, 0)));
             }
             sqlite3_finalize(stmt);
         }
@@ -1049,12 +1052,13 @@ public:
     static constexpr std::string_view db_fname = "sciqlop-cache.db";
 
     explicit _Store(const std::filesystem::path& cache_path = ".cache/",
-                    size_t max_size = 0)
+                    size_t max_size = 0, int busy_timeout_ms = 600'000)
             : cache_path(cache_path)
             , max_size(max_size)
             , storage(std::make_unique<Storage>(cache_path))
             , _owner_pid(_sq_getpid())
     {
+        _busy_timeout_ms = busy_timeout_ms;
         _init_db();
         _checkpoint_thread = std::thread(&_Store::_checkpoint_loop, this);
         // Register last, once fully built, so a concurrent fork's handlers only
@@ -1382,6 +1386,18 @@ public:
         return _touch(key, std::nullopt);
     }
 
+    using ExpireAndTag = std::tuple<std::optional<double>, std::optional<std::string>>;
+
+    // Absolute expiration (epoch seconds) and tag of a live entry; nullopt if
+    // the key is missing or expired. Backs diskcache's get(expire_time=, tag=).
+    inline std::optional<ExpireAndTag> expire_and_tag(const std::string& key)
+        requires (has_expiration && has_tags)
+    {
+        auto db = this->db();
+        return db->template exec<std::optional<double>, std::optional<std::string>>(
+            EXPIRE_TAG_STMT, key);
+    }
+
     inline void expire()
         requires (has_expiration)
     {
@@ -1645,8 +1661,7 @@ public:
                     ++count;
                     if (fix)
                     {
-                        auto key = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
-                        to_fix.emplace_back(key);
+                        to_fix.push_back(sql_column_string(stmt, 0));
                     }
                 }
             }
@@ -1688,8 +1703,7 @@ public:
                     ++count;
                     if (fix)
                     {
-                        auto key = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
-                        to_fix.push_back({ key, file_size });
+                        to_fix.push_back({ sql_column_string(stmt, 0), file_size });
                     }
                 }
             }

@@ -44,8 +44,9 @@ Any picklable Python object works out of the box.
 
 ```python
 cache["key"] = value        # set
-value = cache["key"]        # get (None if missing)
-del cache["key"]            # delete
+value = cache["key"]        # get, raises KeyError if missing
+value = cache.get("key")    # get, None if missing
+del cache["key"]            # delete, raises KeyError if missing
 "key" in cache              # exists
 for key in cache: ...       # iterate keys
 len(cache)                  # entry count
@@ -187,6 +188,82 @@ from pysciqlop_cache.migrate import migrate
 result = migrate("/old/cache", "/new/cache", drop=True)
 print(result)  # {"migrated": 1234, "skipped": 0, "errors": 0, "elapsed_secs": 1.5}
 ```
+
+## diskcache compatibility
+
+### Keys
+
+Any hashable key works, not just strings — `int`, `float`, `bytes`, `tuple`,
+`frozenset`, `bool`, ... `str` keys are stored verbatim; other types go
+through an internal typed encoding, transparently decoded back by `keys()`
+and iteration. `bool` keys store as `int` (`True` and `1` are the same key),
+like diskcache. A `str` key starting with `"\x00"` is reserved.
+
+```python
+cache[("sensor", "temp")] = 21.3
+cache[42] = "answer"
+```
+
+### retry=
+
+`retry=` is accepted on every method (`set`, `get`, `add`, `delete`, `pop`,
+`incr`, `decr`, `touch`, `expire`, `evict`, `clear`, `check`, `transact`, ...)
+and ignored: the C++ core already blocks up to `timeout` on a busy database,
+so there's no fail-silently-and-retry mode to opt into.
+
+### get() / pop() with metadata
+
+```python
+cache.get("k", expire_time=True)              # (value, expire_time)
+cache.get("k", tag=True)                      # (value, tag)
+cache.get("k", expire_time=True, tag=True)    # (value, expire_time, tag)
+cache.pop("k", tag=True)                      # same tuple shapes as get()
+```
+
+`read=True` (diskcache's file-handle mode) raises `NotImplementedError`.
+`set()` returns `True`, like diskcache.
+
+### Constructors
+
+```python
+Cache(directory="/tmp/c", size_limit=1_000_000_000, timeout=30)
+FanoutCache(directory="/tmp/c", shards=8, size_limit=1_000_000_000, timeout=30)
+Index("/tmp/i", {"a": 1}, b=2)             # seed from mappings/items, like diskcache
+```
+
+`directory` / `size_limit` / `shards` / `timeout` are diskcache-style aliases
+for `cache_path` / `max_size` / `shard_count`; `timeout` is the SQLite busy
+timeout in seconds (default 600). diskcache's tuning kwargs (`statistics`,
+`tag_index`, `eviction_policy`, `cull_limit`, `sqlite_*`, `disk_*`) are
+accepted and ignored. `disk=` is rejected — use `serializer=` instead.
+
+### Index / FanoutIndex as a MutableMapping
+
+`Index` and `FanoutIndex` implement `collections.abc.MutableMapping`:
+`items()`, `values()`, `update()`, `setdefault()`, `popitem()`, `peekitem()`
+all work. `peekitem()` / `popitem()` iterate in key order, not insertion
+order (diskcache uses insertion order).
+
+### KeyError semantics
+
+```python
+cache["missing"]        # raises KeyError
+del cache["missing"]    # raises KeyError
+index.pop("missing")    # raises KeyError, unless a default is given
+cache.pop("missing")    # returns None, like diskcache (no default needed)
+```
+
+### Timeout
+
+`pysciqlop_cache.Timeout` (a `RuntimeError` subclass) is raised when the
+database stays locked longer than `timeout`.
+
+**Still differs from diskcache:** `FanoutCache.transact()` still requires a
+key; `evict()` is the size-policy cull and `evict_tag(tag)` is diskcache's
+`evict(tag)`; `stats()` returns a dict; `Cache()` with no directory uses
+`./.cache/` rather than a temp dir; the default size limit is unbounded
+(diskcache defaults to 1 GiB); no `Deque`, `RLock`, throttle, barrier,
+`push`/`pull`/`peek`, or `read=True` file handles.
 
 ## C++ API
 

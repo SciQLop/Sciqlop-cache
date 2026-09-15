@@ -229,6 +229,45 @@ SCENARIO("Testing sciqlop_cache more advanced operations", "[cache]")
             REQUIRE_FALSE(cache.get("key1").has_value());
         }
 
+        WHEN("we use keys containing NUL bytes")
+        {
+            const std::string k1("\0i42", 4);
+            const std::string k2("\0i43", 4);
+            cache.set(k1, original_value1);
+            cache.set(k2, original_value2);
+            REQUIRE(cache.get(k1).has_value());
+            REQUIRE(cache.get(k1)->to_vector() == original_value1);
+            REQUIRE(cache.get(k2)->to_vector() == original_value2);
+            REQUIRE_FALSE(cache.get(std::string("")).has_value());
+            auto keys = cache.keys();
+            REQUIRE(std::find(keys.begin(), keys.end(), k1) != keys.end());
+            REQUIRE(std::find(keys.begin(), keys.end(), k2) != keys.end());
+            REQUIRE(cache.del(k1));
+            REQUIRE_FALSE(cache.get(k1).has_value());
+            REQUIRE(cache.get(k2).has_value());
+        }
+
+        WHEN("we read the expiration and tag of an entry")
+        {
+            cache.set("key1", original_value1, 3600s, "tagged");
+            cache.set("key2", original_value1);
+            auto now = std::chrono::duration_cast<std::chrono::seconds>(
+                           std::chrono::system_clock::now().time_since_epoch())
+                           .count();
+            auto meta = cache.expire_and_tag("key1");
+            REQUIRE(meta.has_value());
+            REQUIRE(std::get<0>(*meta).has_value());
+            REQUIRE(*std::get<0>(*meta) == Catch::Approx(static_cast<double>(now) + 3600).margin(2));
+            REQUIRE(std::get<1>(*meta) == std::optional<std::string> { "tagged" });
+            auto bare = cache.expire_and_tag("key2");
+            REQUIRE(bare.has_value());
+            REQUIRE_FALSE(std::get<0>(*bare).has_value());
+            REQUIRE_FALSE(std::get<1>(*bare).has_value());
+            REQUIRE_FALSE(cache.expire_and_tag("missing").has_value());
+            cache.set("key3", original_value1, 0s);
+            REQUIRE_FALSE(cache.expire_and_tag("key3").has_value());
+        }
+
         WHEN("we test add")
         {
             cache.clear();
@@ -1062,6 +1101,35 @@ SCENARIO("Buffer is safe to inspect after being moved from", "[buffer]")
                 REQUIRE_FALSE(static_cast<bool>(buf));
                 REQUIRE(buf.size() == 0);
                 REQUIRE(buf.data() == nullptr);
+            }
+        }
+    }
+}
+
+SCENARIO("A locked database raises busy_error after the configured busy timeout", "[cache][timeout]")
+{
+    AutoCleanDirectory db_path { "TestBusyTimeout" };
+    std::vector<char> v(10, 'a');
+
+    GIVEN("a cache with a 50 ms busy timeout and a foreign exclusive lock on its database")
+    {
+        Cache cache(db_path.path(), 0, 50);
+        sqlite3* raw = nullptr;
+        REQUIRE(sqlite3_open((db_path.path() / Cache::db_fname).string().c_str(), &raw) == SQLITE_OK);
+        REQUIRE(sqlite3_exec(raw, "BEGIN EXCLUSIVE;", nullptr, nullptr, nullptr) == SQLITE_OK);
+
+        WHEN("we write while the lock is held")
+        {
+            auto t0 = std::chrono::steady_clock::now();
+            REQUIRE_THROWS_AS(cache.set("key", v), busy_error);
+            REQUIRE(std::chrono::steady_clock::now() - t0 < 5s);
+            sqlite3_exec(raw, "ROLLBACK;", nullptr, nullptr, nullptr);
+            sqlite3_close(raw);
+
+            THEN("the cache works again once the lock is released")
+            {
+                cache.set("key", v);
+                REQUIRE(cache.get("key").has_value());
             }
         }
     }

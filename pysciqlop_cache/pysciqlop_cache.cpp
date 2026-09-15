@@ -5,6 +5,7 @@
 #include <nanobind/stl/chrono.h>
 #include <nanobind/stl/optional.h>
 #include <nanobind/stl/string.h>
+#include <nanobind/stl/tuple.h>
 #include <nanobind/stl/vector.h>
 
 #include <fmt/ranges.h>
@@ -195,9 +196,14 @@ NB_MODULE(_pysciqlop_cache, m)
         .def("rollback", &Index::TransactionGuard::rollback,
              nb::call_guard<nb::gil_scoped_release>());
 
+    nb::exception<busy_error>(m, "Timeout", PyExc_RuntimeError);
+
     nb::class_<Cache>(m, "Cache")
-        .def(nb::init<const std::string&, size_t>(), "cache_path"_a = ".cache/",
-             "max_size"_a = 0)
+        .def(
+            "__init__",
+            [](Cache* self, const std::string& cache_path, size_t max_size, double timeout)
+            { new (self) Cache(cache_path, max_size, static_cast<int>(timeout * 1000.0)); },
+            "cache_path"_a = ".cache/", "max_size"_a = 0, "timeout"_a = 600.0)
         .def("count", &Cache::count, nb::call_guard<nb::gil_scoped_release>())
         .def("__len__", &Cache::count, nb::call_guard<nb::gil_scoped_release>())
         .def("set", _set_item_impl<Cache>, nb::arg("key"), nb::arg("value"),
@@ -220,6 +226,8 @@ NB_MODULE(_pysciqlop_cache, m)
         .def("pop", &Cache::pop, nb::arg("key"),
              nb::call_guard<nb::gil_scoped_release>())
         .def("touch", _touch_impl<Cache>, nb::arg("key"), nb::arg("expire") = nb::none())
+        .def("expire_and_tag", &Cache::expire_and_tag, nb::arg("key"),
+             nb::call_guard<nb::gil_scoped_release>())
         .def("expire", &Cache::expire)
         .def("evict", &Cache::evict)
         .def("evict_tag", &Cache::evict_tag, nb::arg("tag"))
@@ -282,8 +290,16 @@ NB_MODULE(_pysciqlop_cache, m)
              nb::call_guard<nb::gil_scoped_release>());
 
     nb::class_<FanoutCache>(m, "FanoutCache")
-        .def(nb::init<const std::string&, std::size_t, std::size_t>(),
-             "cache_path"_a = ".cache/", "shard_count"_a = 8, "max_size"_a = 0)
+        .def(
+            "__init__",
+            [](FanoutCache* self, const std::string& cache_path, std::size_t shard_count,
+               std::size_t max_size, double timeout)
+            {
+                new (self) FanoutCache(cache_path, shard_count, max_size,
+                                       static_cast<int>(timeout * 1000.0));
+            },
+            "cache_path"_a = ".cache/", "shard_count"_a = 8, "max_size"_a = 0,
+            "timeout"_a = 600.0)
         .def("count", &FanoutCache::count, nb::call_guard<nb::gil_scoped_release>())
         .def("__len__", &FanoutCache::count, nb::call_guard<nb::gil_scoped_release>())
         .def("set", _set_item_impl<FanoutCache>, nb::arg("key"), nb::arg("value"),
@@ -306,6 +322,8 @@ NB_MODULE(_pysciqlop_cache, m)
         .def("pop", &FanoutCache::pop, nb::arg("key"),
              nb::call_guard<nb::gil_scoped_release>())
         .def("touch", _touch_impl<FanoutCache>, nb::arg("key"), nb::arg("expire") = nb::none())
+        .def("expire_and_tag", &FanoutCache::expire_and_tag, nb::arg("key"),
+             nb::call_guard<nb::gil_scoped_release>())
         .def("expire", &FanoutCache::expire)
         .def("evict", &FanoutCache::evict)
         .def("evict_tag", &FanoutCache::evict_tag, nb::arg("tag"))

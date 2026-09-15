@@ -35,14 +35,15 @@ public:
 
     explicit FanoutStore(const std::filesystem::path& path,
                          std::size_t shard_count = 8,
-                         std::size_t max_size = 0)
+                         std::size_t max_size = 0,
+                         int busy_timeout_ms = 600'000)
     {
         _shards.reserve(shard_count);
         for (std::size_t i = 0; i < shard_count; ++i)
         {
             auto shard_path = path / fmt::format("{:02d}", i);
             std::filesystem::create_directories(shard_path);
-            _shards.push_back(std::make_unique<StoreType>(shard_path, max_size));
+            _shards.push_back(std::make_unique<StoreType>(shard_path, max_size, busy_timeout_ms));
         }
     }
 
@@ -260,6 +261,12 @@ public:
         requires requires(StoreType& s, const std::string& k) { s.touch(k); }
     {
         return _shard(key).touch(key);
+    }
+
+    inline auto expire_and_tag(const std::string& key)
+        requires requires(StoreType& s, const std::string& k) { s.expire_and_tag(k); }
+    {
+        return _shard(key).expire_and_tag(key);
     }
 
     inline void expire()

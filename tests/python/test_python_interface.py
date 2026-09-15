@@ -231,7 +231,9 @@ class TestCache(unittest.TestCase):
         self.assertEqual(self.cache["dictkey"], "dictval")
 
     def test_getitem_missing(self):
-        self.assertIsNone(self.cache["missing"])
+        with self.assertRaises(KeyError):
+            self.cache["missing"]
+        self.assertIsNone(self.cache.get("missing"))
 
     def test_delitem(self):
         self.cache.set("delme", 42)
@@ -456,7 +458,8 @@ class TestIndex(unittest.TestCase):
         self.assertIsNone(self.index.get("k"))
 
     def test_pop_missing(self):
-        self.assertIsNone(self.index.pop("nope"))
+        with self.assertRaises(KeyError):
+            self.index.pop("nope")
         self.assertEqual(self.index.pop("nope", "fallback"), "fallback")
 
     def test_keys_count(self):

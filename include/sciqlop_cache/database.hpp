@@ -41,9 +41,24 @@ void sql_bind(const auto& stmt, int col, Bytes auto&& value)
                       SQLITE_STATIC);
 }
 
+// Keys may contain NUL bytes (the Python layer encodes non-str keys behind a
+// leading NUL), so text is always bound and read with an explicit length.
 void sql_bind(const auto& stmt, int col, const std::string& value)
 {
-    sqlite3_bind_text(stmt, col, value.c_str(), -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, col, value.data(), static_cast<int>(value.size()), SQLITE_STATIC);
+}
+
+template <std::size_t N>
+void sql_bind(const auto& stmt, int col, const char (&value)[N])
+{
+    sqlite3_bind_text(stmt, col, value, static_cast<int>(N - 1), SQLITE_STATIC);
+}
+
+inline std::string sql_column_string(sqlite3_stmt* stmt, int col)
+{
+    const auto* v = reinterpret_cast<const char*>(sqlite3_column_text(stmt, col));
+    return v ? std::string(v, static_cast<std::size_t>(sqlite3_column_bytes(stmt, col)))
+             : std::string {};
 }
 
 void sql_bind(const auto& stmt, int col, const std::size_t value)
@@ -62,7 +77,7 @@ void sql_bind(const auto& stmt, int col, const std::optional<double>& value)
 void sql_bind(const auto& stmt, int col, const std::optional<std::string>& value)
 {
     if (value)
-        sqlite3_bind_text(stmt, col, value->c_str(), -1, SQLITE_STATIC);
+        sqlite3_bind_text(stmt, col, value->data(), static_cast<int>(value->size()), SQLITE_STATIC);
     else
         sqlite3_bind_null(stmt, col);
 }
@@ -73,13 +88,28 @@ void sql_bind_all(const auto& stm, auto&&... values)
     ((sql_bind(stm, i++, std::forward<decltype(values)>(values))), ...);
 }
 
+struct busy_error : std::runtime_error
+{
+    using std::runtime_error::runtime_error;
+};
+
+[[noreturn]] inline void throw_sqlite_error(int rc, const std::string& msg)
+{
+    const int primary = rc & 0xff;
+    if (primary == SQLITE_BUSY || primary == SQLITE_LOCKED)
+        throw busy_error(msg);
+    throw std::runtime_error(msg);
+}
+
 template <typename rtype>
 auto sql_get(const auto& stmt, int col)
 {
     PROFILE_HERE_N(std::source_location::current().function_name());
     static_assert(cpp_utils::types::detectors::is_any_of_v<rtype, std::vector<char>, std::string,
                                                            std::filesystem::path, bool, std::size_t,
-                                                           std::vector<std::string>>
+                                                           std::vector<std::string>,
+                                                           std::optional<double>,
+                                                           std::optional<std::string>>
                       || TimePoint<rtype>,
                   "Unsupported return type for sql_get");
 
@@ -99,11 +129,7 @@ auto sql_get(const auto& stmt, int col)
     }
     else if constexpr (std::is_same_v<rtype, std::string>)
     {
-        const char* v = reinterpret_cast<const char*>(sqlite3_column_text(stmt, col));
-        if (v)
-            return std::string(v);
-        else
-            return std::string {};
+        return sql_column_string(stmt, col);
     }
     else if constexpr (std::is_same_v<rtype, std::filesystem::path>)
     {
@@ -118,6 +144,17 @@ auto sql_get(const auto& stmt, int col)
         double v = sqlite3_column_double(stmt, col);
         return epoch_to_time_point(v);
     }
+    else if constexpr (std::is_same_v<rtype, std::optional<double>>)
+    {
+        if (sqlite3_column_type(stmt, col) == SQLITE_NULL)
+            return std::optional<double> {};
+        return std::optional<double> { sqlite3_column_double(stmt, col) };
+    }
+    else if constexpr (std::is_same_v<rtype, std::optional<std::string>>)
+    {
+        const char* v = reinterpret_cast<const char*>(sqlite3_column_text(stmt, col));
+        return v ? std::optional<std::string> { v } : std::optional<std::string> {};
+    }
     else if constexpr (std::is_same_v<rtype, bool>)
     {
         return true;
@@ -131,9 +168,8 @@ auto sql_get(const auto& stmt, int col)
         std::vector<std::string> result;
         do
         {
-            const char* v = reinterpret_cast<const char*>(sqlite3_column_text(stmt, col));
-            if (v)
-                result.emplace_back(v);
+            if (const auto* v = reinterpret_cast<const char*>(sqlite3_column_text(stmt, col)))
+                result.emplace_back(v, static_cast<std::size_t>(sqlite3_column_bytes(stmt, col)));
         } while (sqlite3_step(stmt) == SQLITE_ROW);
         return result;
     }
@@ -257,14 +293,15 @@ public:
             char* errMsg = nullptr;
             auto begin = exclusive ? _begin_exclusive_sql : _begin_sql;
 
-                if (sqlite3_exec(db, begin, nullptr, nullptr, &errMsg) != SQLITE_OK)
+                int rc = sqlite3_exec(db, begin, nullptr, nullptr, &errMsg);
+                if (rc != SQLITE_OK)
                 {
                     auto msg = std::string("Failed to begin transaction: ")
                         + (errMsg ? errMsg : "unknown error");
                     if (errMsg)
                         sqlite3_free(errMsg);
                     db = nullptr;
-                    throw std::runtime_error(msg);
+                    throw_sqlite_error(rc, msg);
                 }
         }
     }
@@ -333,13 +370,14 @@ public:
         if (db && !committed)
         {
             char* errMsg = nullptr;
-            if (sqlite3_exec(db, "COMMIT;", nullptr, nullptr, &errMsg) != SQLITE_OK)
+            int rc = sqlite3_exec(db, "COMMIT;", nullptr, nullptr, &errMsg);
+            if (rc != SQLITE_OK)
             {
                 auto msg = std::string("Failed to commit transaction: ")
                     + (errMsg ? errMsg : "unknown error");
                 if (errMsg)
                     sqlite3_free(errMsg);
-                throw std::runtime_error(msg);
+                throw_sqlite_error(rc, msg);
             }
             committed = true;
             return true;
@@ -370,9 +408,10 @@ public:
 
     ~Database() { close(); }
 
-    inline bool open(const std::filesystem::path& db_path, const auto init_sql)
+    inline bool open(const std::filesystem::path& db_path, const auto init_sql,
+                     int busy_timeout_ms = 600'000)
     {
-        open(db_path);
+        open(db_path, busy_timeout_ms);
         for (const auto& sql : init_sql)
             (void)exec(sql);
         BEGIN_STMT.compile(db.get());
@@ -380,7 +419,7 @@ public:
         return true;
     }
 
-    inline bool open(const std::filesystem::path& db_path)
+    inline bool open(const std::filesystem::path& db_path, int busy_timeout_ms = 600'000)
     {
         PROFILE_HERE;
         sqlite3* tmp_db = nullptr;
@@ -392,7 +431,7 @@ public:
 
         if (tmp_db && check == SQLITE_OK)
         {
-            if (sqlite3_busy_timeout(tmp_db, 600'000) != SQLITE_OK)
+            if (sqlite3_busy_timeout(tmp_db, busy_timeout_ms) != SQLITE_OK)
             {
                 auto msg = std::string("Failed to set busy timeout: ")
                     + sqlite3_errmsg(tmp_db);
@@ -465,7 +504,7 @@ public:
                 + " while executing: " + sql;
             if (errMsg)
                 sqlite3_free(errMsg);
-            throw std::runtime_error(msg);
+            throw_sqlite_error(rc, msg);
         }
         return true;
     }
@@ -523,7 +562,7 @@ public:
                 auto* dbh = sqlite3_db_handle(stmt.get());
                 if (dbh) msg += std::string(": ") + sqlite3_errmsg(dbh);
             }
-            throw std::runtime_error(msg);
+            throw_sqlite_error(rc, msg);
         }
     }
 
