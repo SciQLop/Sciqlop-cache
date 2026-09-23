@@ -33,7 +33,8 @@ meson test -C build sciqlop-cache:basic
 #                     sciqlop-cache:test_serializers,
 #                     sciqlop-cache:test_python_multiprocess,
 #                     sciqlop-cache:test_perf_vs_diskcache,
-#                     sciqlop-cache:test_concurrency_bugs
+#                     sciqlop-cache:test_concurrency_bugs,
+#                     sciqlop-cache:test_free_threading
 #   Python (with_torture_tests=true):
 #                     sciqlop-cache:test_torture, sciqlop-cache:test_hypothesis
 
@@ -79,6 +80,8 @@ All vendored in `subprojects/`: SQLite amalgamation, fmt, nanobind, Catch2, stdu
 - **Policy-based Store** — `_Store<Storage, Policies...>` composes features at compile time. `Cache` has expiration, LRU eviction, tags, and stats. `Index` is a bare key-value store with no overhead.
 - **FanoutStore** — `FanoutStore<StoreType>` shards keys across N independent stores (default 8) for write concurrency. `max_size` is per shard. `transact(key)` scoped to one shard. No cross-shard transactions.
 - Per-instance `Database` + `std::recursive_mutex` for thread safety
+- **Every binding that can take the store mutex must release the GIL** (`nb::call_guard<nb::gil_scoped_release>()`, or a scoped `nb::gil_scoped_release` inside a lambda that needs the GIL for its Python args/return). A thread inside `transact()` or iterating holds `_mtx` and needs the GIL to run Python code; a binding that blocks on `_mtx` with the GIL held freezes the interpreter. Only GIL builds can deadlock. Guarded by `BindingsReleaseGilWhileWaiting` in `tests/python/test_concurrency_bugs.py` — add new store methods to its `OPS` table.
+- **Free-threaded Python (3.13t+)** — nanobind declares `Py_MOD_GIL_NOT_USED` automatically when built against a `Py_GIL_DISABLED` interpreter, so the module runs GIL-free. `tests/python/test_free_threading.py` asserts the GIL stays off after import and runs a shared-store thread torture (`FT_TORTURE_DURATION`, default 3 s). It is always-on so CI's 3.14t wheel job exercises it.
 - WAL mode + 600s busy_timeout for multi-process safety
 - **`_NestedTxn` (private RAII helper in `_Store`)** — every internal write path (`_set_impl`, `del`, `pop`, `incr`, `evict_tag`) wraps in a `BEGIN EXCLUSIVE` only at the outermost level (depth-counted via `_txn_depth`). Inner levels are no-ops. Both for cross-process atomicity (read-modify-write inside one txn) and to compose cleanly inside a user `transact()`.
 - **`TransactionGuard` is reentrant on the same thread** (depth-counted same as `_NestedTxn`). Nested `with cache.transact():` is supported; outer rollback discards inner work (no real SAVEPOINTs — same semantics as diskcache).

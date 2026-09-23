@@ -197,6 +197,12 @@ if not get_option('disable_python_wrapper')
         is_parallel : false,
         timeout : 120,
     )
+    test('test_free_threading', python3,
+        args:files('tests/python/test_free_threading.py'),
+        env : {'PYTHONPATH': meson.current_build_dir()},
+        is_parallel : false,
+        timeout : 120,
+    )
     test('test_fork_safety', python3,
         args:files('tests/python/test_fork_safety.py'),
         env : {'PYTHONPATH': meson.current_build_dir()},
