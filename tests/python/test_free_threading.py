@@ -158,6 +158,7 @@ class SharedStoreTorture(unittest.TestCase):
                     _assert_value_intact(key, store.get(key))
             self.assertEqual(len(store), len(list(store.keys())))
             self.assertTrue(store.check().ok)
+            store.close()  # Windows can't remove the temp dir while the DB is open
 
     def test_cache(self):
         self._run_for_store(Cache)
