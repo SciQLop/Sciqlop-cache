@@ -209,6 +209,94 @@ class KeyCursorBlocks(unittest.TestCase):
             f"stdout={res.stdout!r} stderr={res.stderr!r}")
 
 
+_GIL_RELEASE_WORKER = '''
+import sys, tempfile, threading, time
+from pysciqlop_cache import Cache, Index, FanoutCache, FanoutIndex
+
+OPS = {
+    "iter": lambda s: list(s),
+    "iterkeys": lambda s: list(s.iterkeys()),
+    "keys": lambda s: s.keys(),
+    "len": len,
+    "contains": lambda s: "k" in s,
+    "incr": lambda s: s.incr("n"),
+    "decr": lambda s: s.decr("n"),
+    "touch": lambda s: s.touch("k"),
+    "expire": lambda s: s.expire(),
+    "evict": lambda s: s.evict(),
+    "evict_tag": lambda s: s.evict_tag("t"),
+    "check": lambda s: s.check(),
+    "get_meta": lambda s: s.get_meta("m"),
+    "set_meta": lambda s: s.set_meta("m", "1"),
+    "size": lambda s: s.size(),
+    "volume": lambda s: s.volume(),
+    "stats": lambda s: s.stats(),
+    "reset_stats": lambda s: s.reset_stats(),
+    "items": lambda s: list(s.items()),
+    "peekitem": lambda s: s.peekitem(),
+    "clear": lambda s: s.clear(),
+}
+
+def transact(s):
+    return s.transact("k") if isinstance(s, (FanoutCache, FanoutIndex)) else s.transact()
+
+def probe(store, name, op):
+    """Hold the store mutex from Python while `op` runs on another thread.
+
+    If `op` blocks on the mutex without releasing the GIL, the holder can
+    never wake from its sleep to release the mutex: a hard hang.
+    """
+    held = threading.Event()
+    def holder():
+        with transact(store):
+            held.set()
+            time.sleep(0.05)
+    t = threading.Thread(target=holder)
+    t.start()
+    held.wait()
+    op(store)
+    t.join()
+    print(f"{type(store).__name__}.{name}:ok", flush=True)
+
+for cls in (Cache, Index, FanoutCache, FanoutIndex):
+    store = cls(tempfile.mkdtemp())
+    for name, op in OPS.items():
+        store.set("k", b"v")
+        try:
+            op(store)
+        except AttributeError:
+            continue  # method not on this store type
+        probe(store, name, op)
+print("all:done", flush=True)
+'''
+
+
+class BindingsReleaseGilWhileWaiting(unittest.TestCase):
+    """Every binding that takes the store mutex must release the GIL first.
+
+    Same deadlock as KeyCursorBlocks, generalised: a thread inside transact()
+    (or iterating) holds the mutex and needs the GIL; a binding that blocks on
+    the mutex with the GIL held freezes the whole interpreter. Only GIL builds
+    can deadlock — free-threaded builds have no GIL to hold.
+    """
+
+    def test_no_binding_holds_gil_while_blocking(self):
+        env = os.environ.copy()
+        env["PYTHONPATH"] = (
+            os.path.join(os.path.dirname(__file__), "..", "..", "build")
+            + os.pathsep + env.get("PYTHONPATH", ""))
+        try:
+            res = subprocess.run(
+                [sys.executable, "-c", _GIL_RELEASE_WORKER],
+                capture_output=True, text=True, timeout=60.0, env=env)
+        except subprocess.TimeoutExpired as e:
+            done = (e.stdout or b"").decode(errors="replace").split()
+            self.fail(f"deadlock: hung right after {done[-1:] or 'start'}; "
+                      "the next op blocks on the store mutex with the GIL held")
+        self.assertIn("all:done", res.stdout,
+            f"stdout={res.stdout!r} stderr={res.stderr!r}")
+
+
 class NestedTransactSupported(unittest.TestCase):
     """T1-D: cache.transact() should be reentrant on the same thread.
 
@@ -553,9 +641,8 @@ class OrphanedFilesOnConcurrentSet(unittest.TestCase):
 
 class FanoutIncrAtomic(unittest.TestCase):
     """FanoutCache.incr wraps in transact(): the SQLite EXCLUSIVE lock should
-    prevent lost updates across processes. Multi-thread is GIL-deadlock-prone
-    (same root cause as KeyCursor), so this test only covers multi-process —
-    the only safe way to use FanoutCache.incr today."""
+    prevent lost updates across processes. Multi-thread incr is covered by
+    test_free_threading.SharedStoreTorture."""
 
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
