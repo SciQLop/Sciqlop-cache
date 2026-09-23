@@ -526,7 +526,7 @@ class _Store : private Policies..., private _ForkAware
             // BEGIN EXCLUSIVE) must not orphan the row by removing its file.
             if (rc == SQLITE_OK)
                 for (auto& f : files)
-                    storage->remove(f);
+                    _remove_file(bg_db, f);
         }
 
         if constexpr (has_eviction)
@@ -576,7 +576,7 @@ class _Store : private Policies..., private _ForkAware
                             sqlite3_reset(stmt);
                         }
                         if (gone && !path.empty())
-                            storage->remove(path);
+                            _remove_file(bg_db, path);
                     }
                     if (stmt) sqlite3_finalize(stmt);
                 }
@@ -868,6 +868,28 @@ private:
                  path_str);
     }
 
+    // Unlink a value's file. If that fails while the file is still there
+    // (Windows refuses to delete a file that a live Buffer maps), queue it in
+    // trash so the background drain retries later instead of orphaning it.
+    // `conn` is whichever connection the caller holds (writer or bg).
+    // simplify: a SQLITE_BUSY on the bg connection drops the retry; check(fix)
+    // then reports and removes the orphan.
+    void _remove_file(sqlite3* conn, const std::filesystem::path& p)
+    {
+        if (storage->remove(p) || !storage->file_exists(p))
+            return;
+        sqlite3_stmt* stmt = nullptr;
+        if (sqlite3_prepare_v2(conn,
+                "INSERT OR REPLACE INTO trash (path, ts) VALUES (?, unixepoch('now'));",
+                -1, &stmt, nullptr) == SQLITE_OK)
+        {
+            auto path_str = p.string();
+            sqlite3_bind_text(stmt, 1, path_str.c_str(), -1, SQLITE_TRANSIENT);
+            sqlite3_step(stmt);
+        }
+        sqlite3_finalize(stmt);
+    }
+
     // Unlink trashed files once their grace period has passed. Runs on the
     // background connection without _mtx. DELETE-first: several processes'
     // background threads can race on the same row; only the one whose
@@ -902,7 +924,7 @@ private:
                 sqlite3_reset(stmt);
             }
             if (won)
-                storage->remove(p);
+                _remove_file(bg_db, p);
         }
         if (stmt) sqlite3_finalize(stmt);
     }
@@ -984,7 +1006,7 @@ private:
             txn.rollback();
             // The new file was never visible to any reader (its row never
             // committed), so an inline remove is safe here.
-            storage->remove(*new_filepath);
+            _remove_file(db->get(), *new_filepath);
             throw;
         }
         return true;
@@ -1026,7 +1048,7 @@ private:
         }
         if (sqlite3_changes(db->get()) == 0)
         {
-            storage->remove(*file_path);
+            _remove_file(db->get(), *file_path);
             return false;
         }
         return true;
@@ -1348,7 +1370,7 @@ public:
         }
         txn.commit();
         if (old_entry && !std::get<0>(*old_entry).empty())
-            storage->remove(std::get<0>(*old_entry));
+            _remove_file(db->get(), std::get<0>(*old_entry));
         return true;
     }
 
@@ -1406,8 +1428,8 @@ public:
             auto binded = EXPIRE_STMT.bind_all();
             while (auto file_path = db->template step<std::filesystem::path>(binded))
             {
-                if (!file_path->empty() && !storage->remove(*file_path))
-                    std::cerr << "Failed to delete file: " << *file_path << std::endl;
+                if (!file_path->empty())
+                    _remove_file(db->get(), *file_path);
             }
         }
         db->exec(EVICT_EXPIRED_STMT);
@@ -1449,7 +1471,7 @@ public:
         {
             db->exec(DELETE_STMT, entry.key);
             if (!entry.path.empty())
-                storage->remove(entry.path);
+                _remove_file(db->get(), entry.path);
         }
 
         return to_evict.size();
@@ -1481,7 +1503,7 @@ public:
         txn.commit();
 
         for (auto& f : files)
-            storage->remove(f);
+            _remove_file(db->get(), f);
         return evicted;
     }
 

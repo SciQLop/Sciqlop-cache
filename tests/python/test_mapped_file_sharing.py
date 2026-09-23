@@ -37,6 +37,28 @@ class DeleteWhileMapped(unittest.TestCase):
             c.close()
 
 
+@unittest.skipIf(os.name == "nt" or os.geteuid() == 0, "needs POSIX directory permissions, non-root")
+class FailedUnlinkIsRetried(unittest.TestCase):
+    """Portable stand-in for the Windows case: a read-only directory makes unlink fail."""
+
+    def test_file_is_queued_then_removed_once_deletable(self):
+        with TemporaryDirectory() as tmp:
+            c = RawCache(tmp)
+            c.set("big", BIG)
+            (path,) = value_files(tmp)
+            os.chmod(os.path.dirname(path), 0o555)
+            try:
+                c.delete("big")
+                self.assertTrue(c.check().ok, "failed unlink orphaned the file")
+            finally:
+                os.chmod(os.path.dirname(path), 0o755)
+            deadline = time.monotonic() + 15
+            while value_files(tmp) and time.monotonic() < deadline:
+                time.sleep(0.5)
+            self.assertEqual(value_files(tmp), [], "queued file never retried")
+            c.close()
+
+
 class ConcurrentMappedReaders(unittest.TestCase):
     def test_second_store_reads_while_first_holds_buffer(self):
         with TemporaryDirectory() as tmp:

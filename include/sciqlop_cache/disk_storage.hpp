@@ -257,22 +257,13 @@ public:
             std::lock_guard lk { _cache_mutex };
             _cache_evict_locked(file_path.string());
         }
-        try
-        {
-            if (std::filesystem::exists(file_path))
-            {
-                if (recursive && std::filesystem::is_directory(file_path))
-                    return std::filesystem::remove_all(file_path) > 0;
-                else
-                    return std::filesystem::remove(file_path);
-            }
-            return false;
-        }
-        catch (const std::exception& e)
-        {
-            std::cerr << "Error deleting file: " << e.what() << std::endl;
-            return false;
-        }
+        // Failure is reported through the return value, not logged: on Windows
+        // a file mapped by a live Buffer can't be deleted, which is expected
+        // and handled by the caller (_Store::_remove_file retries via trash).
+        std::error_code ec;
+        if (recursive && std::filesystem::is_directory(file_path, ec))
+            return std::filesystem::remove_all(file_path, ec) > 0 && !ec;
+        return std::filesystem::remove(file_path, ec) && !ec;
     }
 
     [[nodiscard]] inline std::optional<Buffer> load(const std::filesystem::path& stored)
