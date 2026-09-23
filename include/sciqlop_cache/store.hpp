@@ -1492,6 +1492,8 @@ public:
             if (!entry.is_regular_file(ec) || _is_db_file(entry.path()))
                 continue;
             auto stored = std::filesystem::relative(entry.path(), storage->path(), ec).string();
+            if (ec || stored.empty())
+                continue;
             db->exec("INSERT OR REPLACE INTO trash (path, ts) VALUES (?, unixepoch('now'));",
                      stored);
         }

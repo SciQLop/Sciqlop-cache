@@ -216,7 +216,8 @@ NB_MODULE(_pysciqlop_cache, m)
         .def("__getitem__", &Cache::get, nb::arg("key"),
              nb::call_guard<nb::gil_scoped_release>())
         .def("keys", &Cache::keys, nb::call_guard<nb::gil_scoped_release>())
-        .def("iterkeys", &Cache::iterkeys, nb::call_guard<nb::gil_scoped_release>())
+        .def("iterkeys", &Cache::iterkeys, nb::keep_alive<0, 1>(),
+             nb::call_guard<nb::gil_scoped_release>())
         .def("exists", &Cache::exists, nb::arg("key"),
              nb::call_guard<nb::gil_scoped_release>())
         .def("add", _add_item_impl<Cache>, nb::arg("key"), nb::arg("value"),
@@ -270,7 +271,8 @@ NB_MODULE(_pysciqlop_cache, m)
         .def("__getitem__", &Index::get, nb::arg("key"),
              nb::call_guard<nb::gil_scoped_release>())
         .def("keys", &Index::keys, nb::call_guard<nb::gil_scoped_release>())
-        .def("iterkeys", &Index::iterkeys, nb::call_guard<nb::gil_scoped_release>())
+        .def("iterkeys", &Index::iterkeys, nb::keep_alive<0, 1>(),
+             nb::call_guard<nb::gil_scoped_release>())
         .def("exists", &Index::exists, nb::arg("key"),
              nb::call_guard<nb::gil_scoped_release>())
         .def("add", _simple_add_item<Index>, nb::arg("key"), nb::arg("value"))
@@ -319,7 +321,8 @@ NB_MODULE(_pysciqlop_cache, m)
         .def("__getitem__", &FanoutCache::get, nb::arg("key"),
              nb::call_guard<nb::gil_scoped_release>())
         .def("keys", &FanoutCache::keys, nb::call_guard<nb::gil_scoped_release>())
-        .def("iterkeys", &FanoutCache::iterkeys, nb::call_guard<nb::gil_scoped_release>())
+        .def("iterkeys", &FanoutCache::iterkeys, nb::keep_alive<0, 1>(),
+             nb::call_guard<nb::gil_scoped_release>())
         .def("exists", &FanoutCache::exists, nb::arg("key"),
              nb::call_guard<nb::gil_scoped_release>())
         .def("add", _add_item_impl<FanoutCache>, nb::arg("key"), nb::arg("value"),
@@ -375,7 +378,8 @@ NB_MODULE(_pysciqlop_cache, m)
         .def("__getitem__", &FanoutIndex::get, nb::arg("key"),
              nb::call_guard<nb::gil_scoped_release>())
         .def("keys", &FanoutIndex::keys, nb::call_guard<nb::gil_scoped_release>())
-        .def("iterkeys", &FanoutIndex::iterkeys, nb::call_guard<nb::gil_scoped_release>())
+        .def("iterkeys", &FanoutIndex::iterkeys, nb::keep_alive<0, 1>(),
+             nb::call_guard<nb::gil_scoped_release>())
         .def("exists", &FanoutIndex::exists, nb::arg("key"),
              nb::call_guard<nb::gil_scoped_release>())
         .def("add", _simple_add_item<FanoutIndex>, nb::arg("key"), nb::arg("value"))
