@@ -8,7 +8,9 @@ pymod = import('python')
 python3 = pymod.find_installation('python3')
 
 if meson.get_compiler('cpp').get_id() == 'msvc'
-    pysciqlop_cache_cpp_args = ['/bigobj']
+    # NOMINMAX: nanobind's nb_combined.cpp pulls <windows.h> into the same TU
+    # as std::max() on free-threaded builds (NB_FREE_THREADED, nanobind >= 2.13).
+    pysciqlop_cache_cpp_args = ['/bigobj', '/DNOMINMAX']
 else
     pysciqlop_cache_cpp_args = []
 endif
