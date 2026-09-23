@@ -175,7 +175,6 @@ class _Store : private Policies..., private _ForkAware
     CompiledStatement GET_STMT {
         std::string("SELECT value, path FROM cache WHERE key = ?") + _where_valid() + ";"
     };
-    CompiledStatement GET_PATH_SIZE_STMT { "SELECT path, size FROM cache WHERE key = ?;" };
     CompiledStatement REPLACE_VALUE_STMT {
         std::string("REPLACE INTO cache (key, value, size") + _insert_extra_cols()
         + ", path) VALUES (?, ?, ?" + _insert_extra_placeholders() + ", NULL);"
@@ -227,8 +226,6 @@ class _Store : private Policies..., private _ForkAware
     [[no_unique_address]] std::conditional_t<has_expiration && has_tags, CompiledStatement, NoStmt>
         EXPIRE_TAG_STMT { std::string("SELECT expire, tag FROM cache WHERE key = ?") + _where_valid() + ";" };
     [[no_unique_address]] std::conditional_t<has_expiration, CompiledStatement, NoStmt>
-        EXPIRE_STMT { "SELECT path, size FROM cache WHERE expire IS NOT NULL AND expire <= unixepoch('now');" };
-    [[no_unique_address]] std::conditional_t<has_expiration, CompiledStatement, NoStmt>
         EVICT_EXPIRED_STMT { "DELETE FROM cache WHERE expire IS NOT NULL AND expire <= unixepoch('now');" };
 
     [[no_unique_address]] std::conditional_t<has_eviction, CompiledStatement, NoStmt>
@@ -241,15 +238,12 @@ class _Store : private Policies..., private _ForkAware
         EVICT_LRU_STMT { "SELECT key, path, size FROM cache ORDER BY last_use ASC;" };
 
     [[no_unique_address]] std::conditional_t<has_tags, CompiledStatement, NoStmt>
-        EVICT_TAG_PATH_STMT { "SELECT path FROM cache WHERE tag = ?;" };
-    [[no_unique_address]] std::conditional_t<has_tags, CompiledStatement, NoStmt>
         EVICT_TAG_STMT { "DELETE FROM cache WHERE tag = ?;" };
 
     auto _all_statements()
     {
         std::vector<CompiledStatement*> stmts = {
             &KEYS_STMT, &EXISTS_STMT, &GET_STMT,
-            &GET_PATH_SIZE_STMT,
             &REPLACE_VALUE_STMT, &REPLACE_PATH_STMT,
             &INSERT_VALUE_STMT, &INSERT_PATH_STMT, &DELETE_STMT,
             &SET_META_STMT, &GET_META_STMT, &META_SIZE_STMT, &META_COUNT_STMT,
@@ -259,7 +253,6 @@ class _Store : private Policies..., private _ForkAware
         if constexpr (has_expiration)
         {
             stmts.push_back(&TOUCH_STMT);
-            stmts.push_back(&EXPIRE_STMT);
             stmts.push_back(&EVICT_EXPIRED_STMT);
         }
         if constexpr (has_eviction)
@@ -270,10 +263,7 @@ class _Store : private Policies..., private _ForkAware
         if constexpr (has_expiration && has_tags)
             stmts.push_back(&EXPIRE_TAG_STMT);
         if constexpr (has_tags)
-        {
-            stmts.push_back(&EVICT_TAG_PATH_STMT);
             stmts.push_back(&EVICT_TAG_STMT);
-        }
         return stmts;
     }
 
@@ -308,13 +298,14 @@ class _Store : private Policies..., private _ForkAware
             + ") WITHOUT ROWID;"
             + " CREATE TABLE IF NOT EXISTS meta ("
               "key TEXT PRIMARY KEY, value);"
-              // Files displaced by a row change (REPLACE of a file-backed
-              // value, incr() rewriting one to a blob) are never unlinked
-              // inline: a reader in another process may already hold the old
-              // path between its "SELECT path" and open() (see
-              // docs/known-issues/pool-reuse-fork-safety-gap.md). They are
-              // queued here in the same transaction as the row change and
-              // unlinked by the background thread after a grace period.
+              // A value file is never unlinked inline. The cache_trash_*
+              // triggers below queue it here in the same transaction as the
+              // row change, and the background thread unlinks it after a
+              // grace period. That one mechanism covers:
+              // - a reader in another process still between "SELECT path" and
+              //   open() (docs/known-issues/pool-reuse-fork-safety-gap.md);
+              // - a delete inside a user transact() that later rolls back;
+              // - Windows refusing to delete a file a live Buffer maps.
               " CREATE TABLE IF NOT EXISTS trash ("
               "path TEXT PRIMARY KEY NOT NULL,"
               "ts INT NOT NULL) WITHOUT ROWID;"
@@ -348,6 +339,14 @@ class _Store : private Policies..., private _ForkAware
               "     - (CASE WHEN OLD.path IS NOT NULL THEN OLD.size ELSE 0 END)"
               "     + (CASE WHEN NEW.path IS NOT NULL THEN NEW.size ELSE 0 END)"
               "   WHERE key = 'file_size'; END;"
+              // DELETE also covers REPLACE (recursive_triggers=ON fires it as
+              // DELETE+INSERT); UPDATE covers incr() rewriting a file to a blob.
+              " CREATE TRIGGER IF NOT EXISTS cache_trash_delete AFTER DELETE ON cache"
+              "   WHEN OLD.path IS NOT NULL AND OLD.path <> '' BEGIN"
+              "   INSERT OR REPLACE INTO trash (path, ts) VALUES (OLD.path, unixepoch('now')); END;"
+              " CREATE TRIGGER IF NOT EXISTS cache_trash_update AFTER UPDATE OF path ON cache"
+              "   WHEN OLD.path IS NOT NULL AND OLD.path <> '' AND OLD.path IS NOT NEW.path BEGIN"
+              "   INSERT OR REPLACE INTO trash (path, ts) VALUES (OLD.path, unixepoch('now')); END;"
             + _extra_schema_indexes();
     }
 
@@ -504,30 +503,13 @@ class _Store : private Policies..., private _ForkAware
 
     void _bg_evict([[maybe_unused]] sqlite3* bg_db)
     {
+        // Files of deleted rows are queued in trash by the cache_trash_delete
+        // trigger, atomically with the DELETE: a DELETE that loses to the
+        // writer's BEGIN EXCLUSIVE simply changes nothing.
         if constexpr (has_expiration)
-        {
-            sqlite3_stmt* stmt = nullptr;
-            sqlite3_prepare_v2(bg_db,
-                "SELECT path FROM cache WHERE expire IS NOT NULL AND expire <= unixepoch('now');",
-                -1, &stmt, nullptr);
-            std::vector<std::filesystem::path> files;
-            while (stmt && sqlite3_step(stmt) == SQLITE_ROW)
-            {
-                auto p = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
-                if (p && p[0])
-                    files.emplace_back(p);
-            }
-            if (stmt) sqlite3_finalize(stmt);
-            auto rc = sqlite3_exec(bg_db,
+            sqlite3_exec(bg_db,
                 "DELETE FROM cache WHERE expire IS NOT NULL AND expire <= unixepoch('now');",
                 nullptr, nullptr, nullptr);
-            // Only unlink files whose rows are confirmed deleted — a DELETE
-            // that failed (e.g. SQLITE_BUSY against the writer's own
-            // BEGIN EXCLUSIVE) must not orphan the row by removing its file.
-            if (rc == SQLITE_OK)
-                for (auto& f : files)
-                    _remove_file(bg_db, f);
-        }
 
         if constexpr (has_eviction)
         {
@@ -546,37 +528,26 @@ class _Store : private Policies..., private _ForkAware
                 {
                     auto target = max_size * 9 / 10;
                     sqlite3_stmt* stmt = nullptr;
-                    sqlite3_prepare_v2(bg_db, "SELECT key, path, size FROM cache ORDER BY last_use ASC;",
+                    sqlite3_prepare_v2(bg_db, "SELECT key, size FROM cache ORDER BY last_use ASC;",
                                        -1, &stmt, nullptr);
-                    struct Entry { std::string key; std::filesystem::path path; };
-                    std::vector<Entry> to_evict;
+                    std::vector<std::string> to_evict;
                     while (stmt && current_size > target && sqlite3_step(stmt) == SQLITE_ROW)
                     {
-                        auto p = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
-                        auto sz = static_cast<std::size_t>(sqlite3_column_int64(stmt, 2));
-                        to_evict.push_back({ sql_column_string(stmt, 0), p ? p : "" });
+                        auto sz = static_cast<std::size_t>(sqlite3_column_int64(stmt, 1));
+                        to_evict.push_back(sql_column_string(stmt, 0));
                         current_size -= std::min(current_size, sz);
                     }
                     if (stmt) sqlite3_finalize(stmt);
 
                     stmt = nullptr;
                     sqlite3_prepare_v2(bg_db, "DELETE FROM cache WHERE key = ?;", -1, &stmt, nullptr);
-                    for (auto& [key, path] : to_evict)
+                    for (auto& key : to_evict)
                     {
-                        // Only unlink a key's file once its row is confirmed
-                        // deleted — a DELETE that lost the busy-timeout race
-                        // against the writer's own BEGIN EXCLUSIVE leaves the
-                        // row untouched, and removing the file anyway would
-                        // orphan it.
-                        bool gone = false;
-                        if (stmt)
-                        {
-                            sqlite3_bind_text(stmt, 1, key.data(), static_cast<int>(key.size()), SQLITE_TRANSIENT);
-                            gone = sqlite3_step(stmt) == SQLITE_DONE && sqlite3_changes(bg_db) > 0;
-                            sqlite3_reset(stmt);
-                        }
-                        if (gone && !path.empty())
-                            _remove_file(bg_db, path);
+                        if (!stmt)
+                            break;
+                        sqlite3_bind_text(stmt, 1, key.data(), static_cast<int>(key.size()), SQLITE_TRANSIENT);
+                        sqlite3_step(stmt);
+                        sqlite3_reset(stmt);
                     }
                     if (stmt) sqlite3_finalize(stmt);
                 }
@@ -857,76 +828,55 @@ private:
     // >10^5 margin while keeping displaced files from lingering on disk.
     static constexpr int _trash_grace_secs = 5;
 
-    // Queue a displaced file for deferred deletion. Must be called inside
-    // the transaction that displaces it, so the row change and the trash
-    // entry commit (or roll back) atomically — this also closes the old
-    // crash window where a commit-then-crash-before-unlink orphaned the file.
-    void _trash_file(DbGuard& db, const std::filesystem::path& p)
+    static std::vector<std::string> _due_trash(sqlite3* conn, int limit)
     {
-        auto path_str = p.string();
-        db->exec("INSERT OR REPLACE INTO trash (path, ts) VALUES (?, unixepoch('now'));",
-                 path_str);
-    }
-
-    // Unlink a value's file. If that fails while the file is still there
-    // (Windows refuses to delete a file that a live Buffer maps), queue it in
-    // trash so the background drain retries later instead of orphaning it.
-    // `conn` is whichever connection the caller holds (writer or bg).
-    // simplify: a SQLITE_BUSY on the bg connection drops the retry; check(fix)
-    // then reports and removes the orphan.
-    void _remove_file(sqlite3* conn, const std::filesystem::path& p)
-    {
-        if (storage->remove(p) || !storage->file_exists(p))
-            return;
+        static const std::string sql
+            = "SELECT path FROM trash WHERE ts <= unixepoch('now') - "
+            + std::to_string(_trash_grace_secs) + " LIMIT ?;";
+        std::vector<std::string> paths;
         sqlite3_stmt* stmt = nullptr;
-        if (sqlite3_prepare_v2(conn,
-                "INSERT OR REPLACE INTO trash (path, ts) VALUES (?, unixepoch('now'));",
-                -1, &stmt, nullptr) == SQLITE_OK)
+        if (sqlite3_prepare_v2(conn, sql.c_str(), -1, &stmt, nullptr) == SQLITE_OK)
         {
-            auto path_str = p.string();
-            sqlite3_bind_text(stmt, 1, path_str.c_str(), -1, SQLITE_TRANSIENT);
-            sqlite3_step(stmt);
+            sqlite3_bind_int(stmt, 1, limit);
+            while (sqlite3_step(stmt) == SQLITE_ROW)
+                paths.push_back(sql_column_string(stmt, 0));
         }
         sqlite3_finalize(stmt);
+        return paths;
     }
 
     // Unlink trashed files once their grace period has passed. Runs on the
-    // background connection without _mtx. DELETE-first: several processes'
-    // background threads can race on the same row; only the one whose
-    // DELETE reports a change unlinks the file.
+    // background connection without _mtx, inside BEGIN IMMEDIATE: only one
+    // process drains at a time, and a trash row is dropped only once its file
+    // is really gone. A file that can't be removed yet (Windows: a live
+    // Buffer maps it) gets a fresh timestamp and is retried after another
+    // grace period. A busy DB skips the tick; nothing is lost.
+    // simplify: at most 512 files per tick bounds how long the write lock is
+    // held; a huge backlog (clear() of a big cache) drains over several ticks.
     void _drain_trash(sqlite3* bg_db)
     {
-        static const std::string select_sql
-            = "SELECT path FROM trash WHERE ts <= unixepoch('now') - "
-            + std::to_string(_trash_grace_secs) + ";";
-        sqlite3_stmt* stmt = nullptr;
-        sqlite3_prepare_v2(bg_db, select_sql.c_str(), -1, &stmt, nullptr);
-        std::vector<std::string> paths;
-        while (stmt && sqlite3_step(stmt) == SQLITE_ROW)
-        {
-            auto p = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
-            if (p && p[0])
-                paths.emplace_back(p);
-        }
-        if (stmt) sqlite3_finalize(stmt);
-        if (paths.empty())
+        constexpr int batch = 512;
+        if (_due_trash(bg_db, 1).empty())
             return;
-
-        stmt = nullptr;
-        sqlite3_prepare_v2(bg_db, "DELETE FROM trash WHERE path = ?;", -1, &stmt, nullptr);
-        for (auto& p : paths)
+        if (sqlite3_exec(bg_db, "BEGIN IMMEDIATE;", nullptr, nullptr, nullptr) != SQLITE_OK)
+            return;
+        sqlite3_stmt* drop = nullptr;
+        sqlite3_stmt* retry = nullptr;
+        sqlite3_prepare_v2(bg_db, "DELETE FROM trash WHERE path = ?;", -1, &drop, nullptr);
+        sqlite3_prepare_v2(bg_db, "UPDATE trash SET ts = unixepoch('now') WHERE path = ?;", -1,
+                           &retry, nullptr);
+        for (const auto& p : _due_trash(bg_db, batch))
         {
-            bool won = false;
-            if (stmt)
-            {
-                sqlite3_bind_text(stmt, 1, p.c_str(), -1, SQLITE_TRANSIENT);
-                won = sqlite3_step(stmt) == SQLITE_DONE && sqlite3_changes(bg_db) > 0;
-                sqlite3_reset(stmt);
-            }
-            if (won)
-                _remove_file(bg_db, p);
+            auto* stmt = (storage->remove(p) || !storage->file_exists(p)) ? drop : retry;
+            if (!stmt)
+                continue;
+            sqlite3_bind_text(stmt, 1, p.data(), static_cast<int>(p.size()), SQLITE_TRANSIENT);
+            sqlite3_step(stmt);
+            sqlite3_reset(stmt);
         }
-        if (stmt) sqlite3_finalize(stmt);
+        sqlite3_finalize(drop);
+        sqlite3_finalize(retry);
+        sqlite3_exec(bg_db, "COMMIT;", nullptr, nullptr, nullptr);
     }
 
     // --- set/add implementation ---
@@ -946,28 +896,17 @@ private:
 
         auto new_size = std::size(value);
 
-        // BEGIN EXCLUSIVE here covers BOTH branches: the SELECT of the old
-        // entry and the REPLACE must see the same DB state. Without it a
-        // concurrent process can swap the entry between our SELECT and our
-        // REPLACE — we'd then `storage->remove(old_filepath_we_read)` while
-        // the file actually attached to the row now is the *other* process's
-        // path, which we leak. (See test_no_orphans_after_concurrent_mixed_size_set.)
+        // A displaced file (old row was file-backed) is queued in trash by the
+        // cache_trash_delete trigger, atomically with the REPLACE. BEGIN
+        // EXCLUSIVE still matters: it is where a locked DB surfaces as Timeout,
+        // and the collision-heal check below is check-then-overwrite.
         _NestedTxn txn(*this);
-
-        // Single query to get old path and size (saves a round-trip vs separate queries)
-        auto old_entry = db->template exec<std::filesystem::path, std::size_t>(
-            GET_PATH_SIZE_STMT, key);
-        std::filesystem::path old_filepath;
-        if (old_entry)
-            old_filepath = std::get<0>(*old_entry);
 
         if (new_size <= _file_size_threshold)
         {
             auto binded = REPLACE_VALUE_STMT.bind_all();
             _bind_core_and_policies(binded.get(), key, value, new_size, abs_exp, seq, tag);
             sqlite3_step(binded.get());
-            if (!old_filepath.empty())
-                _trash_file(db, old_filepath);
             txn.commit();
             return true;
         }
@@ -997,8 +936,6 @@ private:
         }
         try
         {
-            if (!old_filepath.empty())
-                _trash_file(db, old_filepath);
             txn.commit();
         }
         catch (const std::runtime_error&)
@@ -1006,7 +943,7 @@ private:
             txn.rollback();
             // The new file was never visible to any reader (its row never
             // committed), so an inline remove is safe here.
-            _remove_file(db->get(), *new_filepath);
+            storage->remove(*new_filepath);
             throw;
         }
         return true;
@@ -1048,7 +985,7 @@ private:
         }
         if (sqlite3_changes(db->get()) == 0)
         {
-            _remove_file(db->get(), *file_path);
+            storage->remove(*file_path); // never referenced by any row
             return false;
         }
         return true;
@@ -1350,27 +1287,17 @@ public:
 
     inline bool del(const std::string& key)
     {
-        // BEGIN EXCLUSIVE so the SELECT-of-old-entry and the DELETE see the
-        // same row. Without it, a concurrent set() between our SELECT and our
-        // DELETE leaves us removing the wrong file (the freshly-written one
-        // instead of the one we actually displaced).
+        // The row's file is queued in trash by the cache_trash_delete trigger,
+        // in this transaction: an enclosing transact() that rolls back keeps
+        // both the row and its file.
         auto db = this->db();
         _NestedTxn txn(*this);
-        auto old_entry = db->template exec<std::filesystem::path, std::size_t>(
-            GET_PATH_SIZE_STMT, key);
-        if (!db->exec(DELETE_STMT, key))
-        {
-            txn.rollback();
-            return false;
-        }
-        if (sqlite3_changes(db->get()) == 0)
+        if (!db->exec(DELETE_STMT, key) || sqlite3_changes(db->get()) == 0)
         {
             txn.rollback();
             return false;
         }
         txn.commit();
-        if (old_entry && !std::get<0>(*old_entry).empty())
-            _remove_file(db->get(), std::get<0>(*old_entry));
         return true;
     }
 
@@ -1423,16 +1350,7 @@ public:
     inline void expire()
         requires (has_expiration)
     {
-        auto db = this->db();
-        {
-            auto binded = EXPIRE_STMT.bind_all();
-            while (auto file_path = db->template step<std::filesystem::path>(binded))
-            {
-                if (!file_path->empty())
-                    _remove_file(db->get(), *file_path);
-            }
-        }
-        db->exec(EVICT_EXPIRED_STMT);
+        this->db()->exec(EVICT_EXPIRED_STMT); // files queued by cache_trash_delete
     }
 
     // --- Eviction-specific ---
@@ -1468,11 +1386,7 @@ public:
         }
 
         for (auto& entry : to_evict)
-        {
-            db->exec(DELETE_STMT, entry.key);
-            if (!entry.path.empty())
-                _remove_file(db->get(), entry.path);
-        }
+            db->exec(DELETE_STMT, entry.key); // file queued by cache_trash_delete
 
         return to_evict.size();
     }
@@ -1482,28 +1396,13 @@ public:
     inline std::size_t evict_tag(const std::string& tag)
         requires (has_tags)
     {
-        // Wrap the whole op in BEGIN EXCLUSIVE so the SELECT-paths and DELETE
-        // see the same DB snapshot. The per-row DELETE triggers keep meta
-        // 'size'/'count' correct as part of the same transaction, including
-        // for rows written by other processes.
+        // The per-row DELETE triggers keep meta 'size'/'count' correct and
+        // queue each file in trash, all in this one statement's transaction.
         auto db = this->db();
         _NestedTxn txn(*this);
-
-        std::vector<std::filesystem::path> files;
-        {
-            auto binded = EVICT_TAG_PATH_STMT.bind_all(tag);
-            while (auto r = db->template step<std::filesystem::path>(binded))
-            {
-                if (!r->empty())
-                    files.push_back(std::move(*r));
-            }
-        }
         db->exec(EVICT_TAG_STMT, tag);
         auto evicted = static_cast<std::size_t>(sqlite3_changes(db->get()));
         txn.commit();
-
-        for (auto& f : files)
-            _remove_file(db->get(), f);
         return evicted;
     }
 
@@ -1521,14 +1420,8 @@ public:
                 std::memcpy(&current, blob->data(), sizeof(int64_t));
         }
 
-        // A file-backed row is rewritten to a blob below (path = NULL);
-        // its file is displaced and must go through the trash like any
-        // REPLACE-displaced file (it used to be silently leaked).
-        std::filesystem::path old_filepath;
-        if (auto old_entry = db->template exec<std::filesystem::path, std::size_t>(
-                GET_PATH_SIZE_STMT, key))
-            old_filepath = std::get<0>(*old_entry);
-
+        // A file-backed row is rewritten to a blob below (path = NULL); the
+        // cache_trash_update trigger queues its displaced file in trash.
         int64_t new_value = current + delta;
         std::size_t seq = 0;
         if constexpr (has_eviction)
@@ -1554,9 +1447,6 @@ public:
                                     std::optional<double> {}, seq, std::optional<std::string> {});
             sqlite3_step(binded.get());
         }
-        if (!old_filepath.empty())
-            _trash_file(db, old_filepath);
-
         txn.commit();
         return new_value;
     }
@@ -1580,14 +1470,30 @@ public:
         // leave files behind. Linux-side this is also a small leak: stale
         // shared_ptr<MemoryMappedFile> entries pointing at deleted inodes.
         storage->clear_mmap_cache();
-        if (std::filesystem::exists(cache_path) && std::filesystem::is_directory(cache_path))
+        std::error_code ec;
+        for (const auto& entry : std::filesystem::directory_iterator(cache_path, ec))
+            if (!_is_db_file(entry.path()))
+                std::filesystem::remove_all(entry.path(), ec);
+        _queue_leftover_files(db);
+    }
+
+    [[nodiscard]] bool _is_db_file(const std::filesystem::path& p) const
+    {
+        return p.filename().string().starts_with(std::string(db_fname));
+    }
+
+    // Files clear() could not remove (Windows: mapped by a live Buffer) go to
+    // trash, so the background drain retries them instead of orphaning them.
+    void _queue_leftover_files(DbGuard& db)
+    {
+        std::error_code ec;
+        for (const auto& entry : std::filesystem::recursive_directory_iterator(cache_path, ec))
         {
-            for (const auto& entry : std::filesystem::directory_iterator(cache_path))
-            {
-                auto fname = entry.path().filename().string();
-                if (fname != db_fname && !fname.starts_with(std::string(db_fname)))
-                    std::filesystem::remove_all(entry);
-            }
+            if (!entry.is_regular_file(ec) || _is_db_file(entry.path()))
+                continue;
+            auto stored = std::filesystem::relative(entry.path(), storage->path(), ec).string();
+            db->exec("INSERT OR REPLACE INTO trash (path, ts) VALUES (?, unixepoch('now'));",
+                     stored);
         }
     }
 
