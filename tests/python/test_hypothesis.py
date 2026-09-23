@@ -93,7 +93,7 @@ class StoreStateMachine(RuleBasedStateMachine):
 
     @rule(key=keys)
     def pop_item(self, key):
-        result = self.store.pop(key)
+        result = self.store.pop(key, None)  # Index.pop raises KeyError without a default
         expected = self.oracle.pop(key, None)
         if expected is not None:
             assert result is not None, f"pop({key!r}) returned None, expected data"
