@@ -18,7 +18,7 @@ import tempfile
 import time
 import unittest
 
-from pysciqlop_cache import Cache
+from pysciqlop_cache import Cache, FanoutCache, Index
 
 BIG_A = b"A" * 100_000
 BIG_B = b"B" * 100_000
@@ -160,6 +160,76 @@ class ReplaceDeferredDeletion(unittest.TestCase):
             misses = pool.apply(_hammer_reader, ((self.tmp, stop_at),))
             writers.get(timeout=60)
         self.assertEqual(misses, 0, f"{misses} spurious misses on a live key")
+
+
+class _Abort(Exception):
+    pass
+
+
+class RollbackKeepsFile(unittest.TestCase):
+    """A delete inside a rolled-back transact() must not destroy the value.
+
+    Delete paths used to unlink the file right after their inner (no-op)
+    commit, so the outer rollback restored a row pointing at a missing file.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _assert_survives_rollback(self, op, store=None):
+        cache = Cache(self.tmp) if store is None else store
+        cache.set("K", BIG_A, tag="t") if isinstance(cache, Cache) else cache.set("K", BIG_A)
+        with self.assertRaises(_Abort):
+            with (cache.transact("K") if isinstance(cache, FanoutCache) else cache.transact()):
+                op(cache)
+                raise _Abort
+        self.assertEqual(cache.get("K"), BIG_A, "value lost after rollback")
+        self.assertTrue(cache.check().ok)
+
+    def test_delete(self):
+        self._assert_survives_rollback(lambda c: c.delete("K"))
+
+    def test_pop(self):
+        self._assert_survives_rollback(lambda c: c.pop("K"))
+
+    def test_evict_tag(self):
+        self._assert_survives_rollback(lambda c: c.evict_tag("t"))
+
+    def test_index_delete(self):
+        self._assert_survives_rollback(lambda c: c.delete("K"), Index(self.tmp))
+
+    def test_fanout_delete(self):
+        self._assert_survives_rollback(lambda c: c.delete("K"), FanoutCache(self.tmp, shard_count=2))
+
+
+@unittest.skipIf(os.name == "nt" or os.geteuid() == 0, "needs POSIX directory permissions, non-root")
+class ClearWithUndeletableFile(unittest.TestCase):
+    """clear() must not raise when a file can't be removed yet (Windows: mapped
+    by a live Buffer; here: read-only directory), and must retry it later."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_clear_queues_what_it_cannot_remove(self):
+        cache = Cache(self.tmp)
+        cache.set("K", BIG_A)
+        (path,) = _data_files(self.tmp)
+        locked_dir = os.path.dirname(path)
+        os.chmod(locked_dir, 0o555)
+        try:
+            cache.clear()
+            self.assertEqual(len(cache), 0)
+            self.assertTrue(cache.check().ok, "clear() left an untracked file behind")
+        finally:
+            os.chmod(locked_dir, 0o755)
+        self.assertTrue(_wait_until(lambda: not _data_files(self.tmp), GRACE_DEADLINE),
+                        "file clear() couldn't remove was never retried")
 
 
 if __name__ == "__main__":
