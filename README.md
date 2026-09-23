@@ -294,6 +294,38 @@ FanoutCache fc(".fc/", /*shard_count=*/8, /*max_size=*/0);
 
 ## Performance
 
+These benchmarks compare sciqlop-cache with [diskcache](https://github.com/grantjenks/python-diskcache).
+Each library runs **with its default settings**, so the gaps you see come from the implementations.
+
+**Held identical for both libraries:**
+
+- Same machine, same Python interpreter, same benchmark process.
+- Same storage: a RAM filesystem (`tmpfs`), so disk speed doesn't hide the library's own cost.
+- Same keys, same random values, same number of operations. Both are driven through their
+  public Python API (`Cache.set` / `Cache.get` / `Cache.transact`).
+- Both use SQLite in WAL mode with `synchronous=NORMAL`.
+
+**Left at each library's default (these are the differences being measured):**
+
+| | sciqlop-cache | diskcache |
+|---|---|---|
+| Engine | C++ core, nanobind bindings | pure Python on `sqlite3` |
+| Values stored as files above | 8 KB | 32 KB |
+| Value serialization | pickle | raw `bytes` kept as-is |
+| Size limit / eviction | unlimited, LRU when a limit is set | 1 GiB, least-recently-stored |
+
+**Environment of the charts below:**
+
+| | |
+|---|---|
+| CPU | AMD Ryzen 7 5800X 8-Core Processor |
+| RAM | 63 GiB |
+| OS / kernel | Fedora Linux 44 (Toolbx container) / 7.2.5-200.fc44.x86_64 |
+| Storage | `tmpfs` (RAM) |
+| Python | 3.14.7 (GIL build) |
+| sciqlop-cache | v0.2.0-3-g4ebde02, release build, bundled SQLite 3.53.4 |
+| diskcache | 5.6.3, Python's SQLite 3.53.1 |
+
 ### Latency scaling (100 to 1M entries, 256-byte values)
 
 ![Scaling benchmark](benchmark/scaling_chart.png)
@@ -313,16 +345,24 @@ Amortized per-op latency drops significantly with larger batches, especially for
 <details>
 <summary>Reproduce the benchmarks</summary>
 
-```bash
-# Scaling benchmarks
-PYTHONPATH=build python benchmark/scaling.py --max-entries 1000000 --backend both > results.csv
-python benchmark/plot_scaling.py results.csv -o benchmark/scaling_chart.png
+Use a release build (`meson setup build --buildtype=release`) and a RAM filesystem.
+`TMPDIR` decides where both libraries put their cache directories.
 
-PYTHONPATH=build python benchmark/scaling.py --max-entries 1000000 --raw --backend both > raw.csv
-python benchmark/plot_scaling.py raw.csv --violin -o benchmark/scaling_violin.png
+```bash
+export TMPDIR=/dev/shm PYTHONPATH=build
+
+# Record the environment table above
+python benchmark/env.py
+
+# Scaling benchmarks
+python benchmark/scaling.py --max-entries 1000000 --backend both > benchmark/scaling_results.csv
+python benchmark/plot_scaling.py benchmark/scaling_results.csv -o benchmark/scaling_chart.png
+
+python benchmark/scaling.py --max-entries 1000000 --raw --backend both > benchmark/scaling_raw.csv
+python benchmark/plot_scaling.py benchmark/scaling_raw.csv --violin -o benchmark/scaling_violin.png
 
 # Value-size and batch benchmarks
-PYTHONPATH=build python benchmark/bench_valuesize.py > benchmark/valuesize_results.csv
+python benchmark/bench_valuesize.py > benchmark/valuesize_results.csv
 python benchmark/plot_valuesize.py benchmark/valuesize_results.csv -o benchmark
 ```
 
