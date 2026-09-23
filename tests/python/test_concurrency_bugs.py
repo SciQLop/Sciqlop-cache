@@ -297,6 +297,39 @@ class BindingsReleaseGilWhileWaiting(unittest.TestCase):
             f"stdout={res.stdout!r} stderr={res.stderr!r}")
 
 
+_CURSOR_OUTLIVES_STORE_WORKER = '''
+import gc, sys, tempfile
+from pysciqlop_cache import _pysciqlop_cache as raw
+store = getattr(raw, sys.argv[1])(tempfile.mkdtemp())
+for i in range(200):
+    store.set(f"k{i}", b"v" * 10)
+cursor = store.iterkeys()
+next(cursor)
+del store
+gc.collect()
+print(sum(1 for _ in cursor) + 1, flush=True)
+'''
+
+
+class CursorOutlivesStore(unittest.TestCase):
+    """A key cursor must keep its store alive: dropping the store while
+    iterating used to leave the cursor on freed shards (FanoutStore segfaulted)
+    or on a closed SQLite handle (Cache/Index)."""
+
+    def test_cursor_keeps_store_alive(self):
+        env = os.environ.copy()
+        env["PYTHONPATH"] = (
+            os.path.join(os.path.dirname(__file__), "..", "..", "build")
+            + os.pathsep + env.get("PYTHONPATH", ""))
+        for cls in ("Cache", "Index", "FanoutCache", "FanoutIndex"):
+            with self.subTest(cls=cls):
+                res = subprocess.run(
+                    [sys.executable, "-c", _CURSOR_OUTLIVES_STORE_WORKER, cls],
+                    capture_output=True, text=True, timeout=60, env=env)
+                self.assertEqual(res.returncode, 0, f"crashed: {res.stderr[-500:]}")
+                self.assertEqual(res.stdout.strip(), "200")
+
+
 class NestedTransactSupported(unittest.TestCase):
     """T1-D: cache.transact() should be reentrant on the same thread.
 
