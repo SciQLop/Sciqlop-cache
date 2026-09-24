@@ -198,6 +198,23 @@ NB_MODULE(_pysciqlop_cache, m)
 
     nb::exception<busy_error>(m, "Timeout", PyExc_RuntimeError);
 
+    // nanobind maps std::system_error to RuntimeError; OSError(errno, msg)
+    // keeps the errno and lets Python pick the subclass (PermissionError...).
+    nb::register_exception_translator(
+        [](const std::exception_ptr& p, void*)
+        {
+            try
+            {
+                std::rethrow_exception(p);
+            }
+            catch (const std::system_error& e)
+            {
+                PyObject* args = Py_BuildValue("(is)", e.code().value(), e.what());
+                PyErr_SetObject(PyExc_OSError, args);
+                Py_XDECREF(args);
+            }
+        });
+
     nb::class_<Cache>(m, "Cache")
         .def(
             "__init__",
