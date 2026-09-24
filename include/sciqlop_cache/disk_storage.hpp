@@ -14,6 +14,7 @@
 #include <random>
 #include <sqlite3.h>
 #include <string>
+#include <system_error>
 #include <unordered_map>
 #include <uuid.h>
 #include "sciqlop_cache/utils/concepts.hpp"
@@ -96,98 +97,85 @@ class DiskStorage
         _mmap_cache[key] = { std::move(mmf), _lru_order.begin() };
     }
 
-    [[nodiscard]] inline bool _write(const std::filesystem::path& file_path,
-                                    const Bytes auto & value)
+    [[noreturn]] static void _throw_write_error(int err, const std::filesystem::path& file_path)
     {
-        try
+        throw std::system_error(err ? err : EIO, std::generic_category(),
+                                "Failed to write file " + file_path.string());
+    }
+
+    inline void _write(const std::filesystem::path& file_path, const Bytes auto& value)
+    {
+        errno = 0;
+        std::ofstream ofs(file_path, std::ios::binary);
+        if (ofs)
         {
-            std::filesystem::path parent_dir = file_path.parent_path();
-            if (!std::filesystem::exists(parent_dir))
-            {
-                std::filesystem::create_directories(parent_dir);
-            }
-            std::ofstream ofs(file_path, std::ios::binary);
-            if (!ofs)
-                return false;
             ofs.write(value.data(), value.size());
             // close() runs the final flush; without it the destructor flushes
             // AFTER good() is evaluated, so a failed last flush (ENOSPC,
             // quota) silently produced a truncated file under a committed row.
             ofs.close();
-            return ofs.good();
         }
-        catch (const std::exception& e)
-        {
-            throw std::runtime_error(
-                std::string("Failed to write file: ") + e.what());
-        }
+        if (!ofs.good())
+            _throw_write_error(errno, file_path);
     }
 
-    enum class ExclWriteResult { Ok, Exists, Error };
-
-    // Exclusive-create variant of _write: fails with Exists instead of
+    // Exclusive-create variant of _write: returns false instead of
     // truncating when the file is already there, so a duplicate blob name can
     // never silently overwrite another value's file. Uses raw fds because
     // std::ofstream has no portable create-exclusive mode pre-C++23.
-    [[nodiscard]] inline ExclWriteResult _write_exclusive(
+    [[nodiscard]] inline bool _write_exclusive(
         const std::filesystem::path& file_path, const Bytes auto& value)
     {
-        try
+        std::filesystem::create_directories(file_path.parent_path());
+#ifdef _WIN32
+        int fd = ::_open(file_path.string().c_str(),
+                         _O_WRONLY | _O_CREAT | _O_EXCL | _O_BINARY,
+                         _S_IREAD | _S_IWRITE);
+#else
+        int fd = ::open(file_path.c_str(), O_WRONLY | O_CREAT | O_EXCL, 0644);
+#endif
+        if (fd < 0)
         {
-            std::filesystem::path parent_dir = file_path.parent_path();
-            if (!std::filesystem::exists(parent_dir))
-            {
-                std::filesystem::create_directories(parent_dir);
-            }
-#ifdef _WIN32
-            int fd = ::_open(file_path.string().c_str(),
-                             _O_WRONLY | _O_CREAT | _O_EXCL | _O_BINARY,
-                             _S_IREAD | _S_IWRITE);
-#else
-            int fd = ::open(file_path.c_str(), O_WRONLY | O_CREAT | O_EXCL, 0644);
-#endif
-            if (fd < 0)
-                return errno == EEXIST ? ExclWriteResult::Exists : ExclWriteResult::Error;
-            const char* p = value.data();
-            std::size_t left = value.size();
-            bool ok = true;
-            while (left > 0)
-            {
-#ifdef _WIN32
-                auto n = ::_write(fd, p,
-                    static_cast<unsigned int>(std::min(left, std::size_t { 1u << 30 })));
-#else
-                auto n = ::write(fd, p, left);
-                // A signal interrupting write() is spurious, not a failure.
-                if (n < 0 && errno == EINTR)
-                    continue;
-#endif
-                if (n <= 0)
-                {
-                    ok = false;
-                    break;
-                }
-                p += n;
-                left -= static_cast<std::size_t>(n);
-            }
-#ifdef _WIN32
-            ok = (::_close(fd) == 0) && ok;
-#else
-            ok = (::close(fd) == 0) && ok;
-#endif
-            if (!ok)
-            {
-                // Don't leave a truncated blob behind (ENOSPC, quota, ...).
-                std::filesystem::remove(file_path);
-                return ExclWriteResult::Error;
-            }
-            return ExclWriteResult::Ok;
+            if (errno == EEXIST)
+                return false;
+            _throw_write_error(errno, file_path);
         }
-        catch (const std::exception& e)
+        const char* p = value.data();
+        std::size_t left = value.size();
+        int err = 0;
+        while (left > 0)
         {
-            throw std::runtime_error(
-                std::string("Failed to write file: ") + e.what());
+#ifdef _WIN32
+            auto n = ::_write(fd, p,
+                static_cast<unsigned int>(std::min(left, std::size_t { 1u << 30 })));
+#else
+            auto n = ::write(fd, p, left);
+            // A signal interrupting write() is spurious, not a failure.
+            if (n < 0 && errno == EINTR)
+                continue;
+#endif
+            if (n <= 0)
+            {
+                err = n < 0 ? errno : EIO;
+                break;
+            }
+            p += n;
+            left -= static_cast<std::size_t>(n);
         }
+#ifdef _WIN32
+        if (::_close(fd) != 0 && !err)
+#else
+        if (::close(fd) != 0 && !err)
+#endif
+            err = errno;
+        if (err)
+        {
+            // Don't leave a truncated blob behind (ENOSPC, quota, ...).
+            std::error_code ignored;
+            std::filesystem::remove(file_path, ignored);
+            _throw_write_error(err, file_path);
+        }
+        return true;
     }
 
 public:
@@ -318,8 +306,10 @@ public:
     // collision) a fresh name is generated and retried; if no (orphaned
     // leftover file) it is overwritten in place and reused. The default
     // callback behaves as "always referenced" (always regenerate), keeping
-    // DiskStorage usable standalone, DB-agnostic.
-    [[nodiscard]] inline std::optional<std::filesystem::path> store(
+    // DiskStorage usable standalone, DB-agnostic. A write failure throws
+    // std::system_error with the real errno (issue #16: returning "no path"
+    // dropped it, and callers turned that into a silent data loss).
+    [[nodiscard]] inline std::filesystem::path store(
         const Bytes auto& value,
         std::function<bool(const std::filesystem::path&)> is_referenced = {})
     {
@@ -328,21 +318,13 @@ public:
             auto filename = generate_random_filename();
             auto rel_path = std::filesystem::path(filename.substr(0, 2))
                 / filename.substr(2, 2) / filename;
-            switch (_write_exclusive(_path / rel_path, value))
-            {
-                case ExclWriteResult::Ok:
-                    return rel_path;
-                case ExclWriteResult::Error:
-                    return {};
-                case ExclWriteResult::Exists:
-                    break;
-            }
+            if (_write_exclusive(_path / rel_path, value))
+                return rel_path;
             if (!is_referenced || is_referenced(rel_path))
                 continue; // genuine collision: regenerate a fresh name
-            if (_write(_path / rel_path, value)) // orphaned leftover: reuse it
-                return rel_path;
-            return {};
+            _write(_path / rel_path, value); // orphaned leftover: reuse it
+            return rel_path;
         }
-        return {};
+        throw std::runtime_error("Failed to find a free blob file name in " + _path.string());
     }
 };

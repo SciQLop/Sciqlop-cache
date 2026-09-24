@@ -881,6 +881,15 @@ private:
 
     // --- set/add implementation ---
 
+    // A write whose step fails must not be followed by a successful commit:
+    // SQLite may undo just that statement and keep the transaction open, so
+    // the caller would report success for a value that was never stored.
+    inline void _step_write(const BindedCompiledStatement& binded)
+    {
+        if (!db()->step(binded))
+            throw std::runtime_error("SQLite write rejected by a constraint");
+    }
+
     inline bool _set_impl(const std::string& key, const Bytes auto& value,
                            [[maybe_unused]] std::optional<double> expires_secs,
                            [[maybe_unused]] std::optional<std::string> tag = std::nullopt)
@@ -906,7 +915,7 @@ private:
         {
             auto binded = REPLACE_VALUE_STMT.bind_all();
             _bind_core_and_policies(binded.get(), key, value, new_size, abs_exp, seq, tag);
-            sqlite3_step(binded.get());
+            _step_write(binded);
             txn.commit();
             return true;
         }
@@ -922,20 +931,13 @@ private:
                 std::string(IS_PATH_REFERENCED_SQL), path, path).has_value();
         };
         auto new_filepath = storage->store(value, is_referenced);
-        if (!new_filepath)
+        try
         {
-            txn.rollback();
-            return false;
-        }
-        {
-            auto path_str = new_filepath->string();
+            auto path_str = new_filepath.string();
             auto binded = REPLACE_PATH_STMT.bind_all();
             _bind_core_and_policies(binded.get(), key, path_str, new_size,
                                     abs_exp, seq, tag);
-            sqlite3_step(binded.get());
-        }
-        try
-        {
+            _step_write(binded);
             txn.commit();
         }
         catch (const std::runtime_error&)
@@ -943,7 +945,7 @@ private:
             txn.rollback();
             // The new file was never visible to any reader (its row never
             // committed), so an inline remove is safe here.
-            storage->remove(*new_filepath);
+            storage->remove(new_filepath);
             throw;
         }
         return true;
@@ -968,24 +970,29 @@ private:
         {
             auto binded = INSERT_VALUE_STMT.bind_all();
             _bind_core_and_policies(binded.get(), key, value, new_size, abs_exp, seq, tag);
-            sqlite3_step(binded.get());
+            _step_write(binded);
             return sqlite3_changes(db->get()) > 0;
         }
 
         auto file_path = storage->store(value);
-        if (!file_path)
-            return false;
-
+        bool inserted = false;
+        try
         {
-            auto path_str = file_path->string();
+            auto path_str = file_path.string();
             auto binded = INSERT_PATH_STMT.bind_all();
             _bind_core_and_policies(binded.get(), key, path_str, new_size,
                                     abs_exp, seq, tag);
-            sqlite3_step(binded.get());
+            _step_write(binded);
+            inserted = sqlite3_changes(db->get()) > 0;
         }
-        if (sqlite3_changes(db->get()) == 0)
+        catch (const std::runtime_error&)
         {
-            storage->remove(*file_path); // never referenced by any row
+            storage->remove(file_path); // never referenced by any row
+            throw;
+        }
+        if (!inserted)
+        {
+            storage->remove(file_path); // never referenced by any row
             return false;
         }
         return true;
@@ -1438,14 +1445,14 @@ public:
             sql_bind(binded.get(), i++, sizeof(int64_t));
             if constexpr (has_eviction) sql_bind(binded.get(), i++, seq);
             sql_bind(binded.get(), i++, key);
-            sqlite3_step(binded.get());
+            _step_write(binded);
         }
         if (sqlite3_changes(db->get()) == 0)
         {
             auto binded = REPLACE_VALUE_STMT.bind_all();
             _bind_core_and_policies(binded.get(), key, data, sizeof(int64_t),
                                     std::optional<double> {}, seq, std::optional<std::string> {});
-            sqlite3_step(binded.get());
+            _step_write(binded);
         }
         txn.commit();
         return new_value;

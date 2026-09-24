@@ -54,16 +54,15 @@ SCENARIO("Testing file I/O with Bytes concept", "[bytes][fileio]")
             auto write_success = disk_storage.store(test_data);
             // store() returns a path relative to the storage root so the
             // cache directory stays relocatable; resolve it for filesystem ops.
-            test_file = disk_storage.abs_path(*write_success);
+            test_file = disk_storage.abs_path(write_success);
 
             THEN("The stored path is relative to the storage root")
             {
-                REQUIRE(write_success->is_relative());
+                REQUIRE(write_success.is_relative());
             }
 
             THEN("The file should exist")
             {
-                REQUIRE(bool(write_success) == true);
                 REQUIRE(std::filesystem::exists(test_file) == true);
             }
 
