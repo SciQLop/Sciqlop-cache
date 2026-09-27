@@ -59,6 +59,16 @@ class SetWriteFailure(unittest.TestCase):
                 store = cls(os.path.join(self.tmp, cls.__name__))
                 self._assert_raises_and_stores_nothing(store, lambda s: s.add("k", VALUE))
 
+    def test_chunked_set_and_add_raise(self):
+        chunks = [b"h" * (LIMIT // 2), memoryview(VALUE)]  # fails inside the 2nd chunk
+        for cls in (Cache, FanoutCache, Index, FanoutIndex):
+            raw = cls.__mro__[1]
+            for name, op in (("set", raw.set), ("add", raw.add)):
+                with self.subTest(cls=cls.__name__, op=name):
+                    store = cls(os.path.join(self.tmp, cls.__name__ + name))
+                    self._assert_raises_and_stores_nothing(store, lambda s: op(s, "k", chunks))
+                    self.assertEqual(store.check().orphaned_files, 0)
+
     def test_store_still_usable_after_failure(self):
         cache = Cache(os.path.join(self.tmp, "c"))
         with _FileSizeLimit():

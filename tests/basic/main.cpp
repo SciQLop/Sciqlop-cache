@@ -1133,3 +1133,32 @@ SCENARIO("A locked database raises busy_error after the configured busy timeout"
         }
     }
 }
+
+TEMPLATE_TEST_CASE("set()/add() of ByteChunks store the concatenated chunks",
+                   "[chunks]", Cache, Index)
+{
+    AutoCleanDirectory db_path { "ByteChunks" };
+    TestType store(db_path.path());
+    auto make = [](std::size_t n, char c) { return std::vector<char>(n, c); };
+
+    for (std::size_t part_size : { std::size_t { 3 }, std::size_t { 40000 } })
+    {
+        auto a = make(part_size, 'a'), b = make(0, 'x'), c = make(part_size + 1, 'c');
+        ByteChunks chunks { { std::span<const char>(a), std::span<const char>(b),
+                              std::span<const char>(c) } };
+        std::vector<char> expected(a);
+        expected.insert(expected.end(), c.begin(), c.end());
+        REQUIRE(std::size(chunks) == expected.size());
+
+        auto key = "k" + std::to_string(part_size);
+        REQUIRE(store.set(key, chunks));
+        auto got = store.get(key);
+        REQUIRE(got);
+        REQUIRE(got->to_vector() == expected);
+
+        REQUIRE(store.add(key + "-added", chunks));
+        REQUIRE_FALSE(store.add(key + "-added", chunks));
+        REQUIRE(store.get(key + "-added")->to_vector() == expected);
+    }
+    REQUIRE(store.check().ok);
+}

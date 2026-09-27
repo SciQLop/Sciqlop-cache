@@ -26,7 +26,9 @@
 #include <process.h>
 inline int _ds_pid() { return _getpid(); }
 #else
+#include <climits>
 #include <fcntl.h>
+#include <sys/uio.h>
 #include <unistd.h>
 inline pid_t _ds_pid() { return getpid(); }
 #endif
@@ -103,13 +105,14 @@ class DiskStorage
                                 "Failed to write file " + file_path.string());
     }
 
-    inline void _write(const std::filesystem::path& file_path, const Bytes auto& value)
+    inline void _write(const std::filesystem::path& file_path, const Payload auto& value)
     {
         errno = 0;
         std::ofstream ofs(file_path, std::ios::binary);
         if (ofs)
         {
-            ofs.write(value.data(), value.size());
+            for (const auto& chunk : chunks_of(value))
+                ofs.write(chunk.data(), static_cast<std::streamsize>(chunk.size()));
             // close() runs the final flush; without it the destructor flushes
             // AFTER good() is evaluated, so a failed last flush (ENOSPC,
             // quota) silently produced a truncated file under a committed row.
@@ -119,12 +122,79 @@ class DiskStorage
             _throw_write_error(errno, file_path);
     }
 
+    // Returns 0 or the errno of the failed write.
+    [[nodiscard]] static int _write_fd(int fd, std::span<const char> chunk)
+    {
+        const char* p = chunk.data();
+        std::size_t left = chunk.size();
+        while (left > 0)
+        {
+#ifdef _WIN32
+            auto n = ::_write(fd, p,
+                static_cast<unsigned int>(std::min(left, std::size_t { 1u << 30 })));
+#else
+            auto n = ::write(fd, p, left);
+            // A signal interrupting write() is spurious, not a failure.
+            if (n < 0 && errno == EINTR)
+                continue;
+#endif
+            if (n <= 0)
+                return n < 0 ? errno : EIO;
+            p += n;
+            left -= static_cast<std::size_t>(n);
+        }
+        return 0;
+    }
+
+#ifdef _WIN32
+    // simplify: one _write per chunk. Windows has no buffered writev
+    // (WriteFileGather needs unbuffered, page-aligned I/O); values have a few
+    // chunks at most, so this is a couple of extra syscalls.
+    [[nodiscard]] static int _write_chunks(int fd, std::span<const std::span<const char>> chunks)
+    {
+        for (const auto& chunk : chunks)
+            if (int err = _write_fd(fd, chunk))
+                return err;
+        return 0;
+    }
+#else
+    // One writev instead of a write per chunk: on btrfs every extra append
+    // to a new file costs ~15 us, as much as writing 64 KB.
+    [[nodiscard]] static int _write_chunks(int fd, std::span<const std::span<const char>> chunks)
+    {
+        std::vector<iovec> iov;
+        for (const auto& chunk : chunks)
+            if (!chunk.empty())
+                iov.push_back({ const_cast<char*>(chunk.data()), chunk.size() });
+        std::size_t next = 0;
+        while (next < iov.size())
+        {
+            auto count = static_cast<int>(std::min<std::size_t>(iov.size() - next, IOV_MAX));
+            auto n = ::writev(fd, iov.data() + next, count);
+            if (n < 0 && errno == EINTR)
+                continue;
+            if (n <= 0)
+                return n < 0 ? errno : EIO;
+            for (auto left = static_cast<std::size_t>(n); left > 0;)
+            {
+                auto step = std::min(left, iov[next].iov_len);
+                iov[next].iov_base = static_cast<char*>(iov[next].iov_base) + step;
+                iov[next].iov_len -= step;
+                left -= step;
+                if (iov[next].iov_len == 0)
+                    ++next;
+            }
+        }
+        return 0;
+    }
+#endif
+
     // Exclusive-create variant of _write: returns false instead of
     // truncating when the file is already there, so a duplicate blob name can
     // never silently overwrite another value's file. Uses raw fds because
     // std::ofstream has no portable create-exclusive mode pre-C++23.
     [[nodiscard]] inline bool _write_exclusive(
-        const std::filesystem::path& file_path, const Bytes auto& value)
+        const std::filesystem::path& file_path, const Payload auto& value)
     {
         std::filesystem::create_directories(file_path.parent_path());
 #ifdef _WIN32
@@ -140,28 +210,7 @@ class DiskStorage
                 return false;
             _throw_write_error(errno, file_path);
         }
-        const char* p = value.data();
-        std::size_t left = value.size();
-        int err = 0;
-        while (left > 0)
-        {
-#ifdef _WIN32
-            auto n = ::_write(fd, p,
-                static_cast<unsigned int>(std::min(left, std::size_t { 1u << 30 })));
-#else
-            auto n = ::write(fd, p, left);
-            // A signal interrupting write() is spurious, not a failure.
-            if (n < 0 && errno == EINTR)
-                continue;
-#endif
-            if (n <= 0)
-            {
-                err = n < 0 ? errno : EIO;
-                break;
-            }
-            p += n;
-            left -= static_cast<std::size_t>(n);
-        }
+        int err = _write_chunks(fd, chunks_of(value));
 #ifdef _WIN32
         if (::_close(fd) != 0 && !err)
 #else
@@ -310,7 +359,7 @@ public:
     // std::system_error with the real errno (issue #16: returning "no path"
     // dropped it, and callers turned that into a silent data loss).
     [[nodiscard]] inline std::filesystem::path store(
-        const Bytes auto& value,
+        const Payload auto& value,
         std::function<bool(const std::filesystem::path&)> is_referenced = {})
     {
         for (int attempt = 0; attempt < 16; ++attempt)

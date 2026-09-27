@@ -65,24 +65,24 @@ public:
 
     // --- set() overloads ---
 
-    inline bool set(const std::string& key, const Bytes auto& value)
+    inline bool set(const std::string& key, const Payload auto& value)
     {
         return _shard(key).set(key, value);
     }
 
-    inline bool set(const std::string& key, const Bytes auto& value, DurationConcept auto expire)
+    inline bool set(const std::string& key, const Payload auto& value, DurationConcept auto expire)
         requires requires(StoreType& s, const std::string& k, const decltype(value)& v, decltype(expire) e) { s.set(k, v, e); }
     {
         return _shard(key).set(key, value, expire);
     }
 
-    inline bool set(const std::string& key, const Bytes auto& value, const std::string& tag)
+    inline bool set(const std::string& key, const Payload auto& value, const std::string& tag)
         requires requires(StoreType& s, const std::string& k, const decltype(value)& v, const std::string& t) { s.set(k, v, t); }
     {
         return _shard(key).set(key, value, tag);
     }
 
-    inline bool set(const std::string& key, const Bytes auto& value,
+    inline bool set(const std::string& key, const Payload auto& value,
                     DurationConcept auto expire, const std::string& tag)
         requires requires(StoreType& s, const std::string& k, const decltype(value)& v, decltype(expire) e, const std::string& t) { s.set(k, v, e, t); }
     {
@@ -91,24 +91,24 @@ public:
 
     // --- add() overloads ---
 
-    inline bool add(const std::string& key, const Bytes auto& value)
+    inline bool add(const std::string& key, const Payload auto& value)
     {
         return _shard(key).add(key, value);
     }
 
-    inline bool add(const std::string& key, const Bytes auto& value, DurationConcept auto expire)
+    inline bool add(const std::string& key, const Payload auto& value, DurationConcept auto expire)
         requires requires(StoreType& s, const std::string& k, const decltype(value)& v, decltype(expire) e) { s.add(k, v, e); }
     {
         return _shard(key).add(key, value, expire);
     }
 
-    inline bool add(const std::string& key, const Bytes auto& value, const std::string& tag)
+    inline bool add(const std::string& key, const Payload auto& value, const std::string& tag)
         requires requires(StoreType& s, const std::string& k, const decltype(value)& v, const std::string& t) { s.add(k, v, t); }
     {
         return _shard(key).add(key, value, tag);
     }
 
-    inline bool add(const std::string& key, const Bytes auto& value,
+    inline bool add(const std::string& key, const Payload auto& value,
                     DurationConcept auto expire, const std::string& tag)
         requires requires(StoreType& s, const std::string& k, const decltype(value)& v, decltype(expire) e, const std::string& t) { s.add(k, v, e, t); }
     {

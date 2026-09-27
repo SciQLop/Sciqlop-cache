@@ -235,6 +235,9 @@ OPS = {
     "items": lambda s: list(s.items()),
     "peekitem": lambda s: s.peekitem(),
     "clear": lambda s: s.clear(),
+    # The C++ base binding directly: the chunked value path (pickle-oob).
+    "set_chunks": lambda s: type(s).__mro__[1].set(s, "c", [b"h", b"b" * 20000]),
+    "add_chunks": lambda s: type(s).__mro__[1].add(s, "c2", (b"h", memoryview(b"b" * 20000))),
 }
 
 def transact(s):

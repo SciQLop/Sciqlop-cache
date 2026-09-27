@@ -890,10 +890,14 @@ private:
             throw std::runtime_error("SQLite write rejected by a constraint");
     }
 
-    inline bool _set_impl(const std::string& key, const Bytes auto& value,
+    inline bool _set_impl(const std::string& key, const Payload auto& value,
                            [[maybe_unused]] std::optional<double> expires_secs,
                            [[maybe_unused]] std::optional<std::string> tag = std::nullopt)
     {
+        // A blob is bound as one contiguous SQLite value.
+        if constexpr (!Bytes<decltype(value)>)
+            if (std::size(value) <= _file_size_threshold)
+                return _set_impl(key, value.flatten(), expires_secs, tag);
         auto db = this->db();
         std::size_t seq = 0;
         if constexpr (has_eviction)
@@ -911,13 +915,16 @@ private:
         // and the collision-heal check below is check-then-overwrite.
         _NestedTxn txn(*this);
 
-        if (new_size <= _file_size_threshold)
+        if constexpr (Bytes<decltype(value)>)
         {
-            auto binded = REPLACE_VALUE_STMT.bind_all();
-            _bind_core_and_policies(binded.get(), key, value, new_size, abs_exp, seq, tag);
-            _step_write(binded);
-            txn.commit();
-            return true;
+            if (new_size <= _file_size_threshold)
+            {
+                auto binded = REPLACE_VALUE_STMT.bind_all();
+                _bind_core_and_policies(binded.get(), key, value, new_size, abs_exp, seq, tag);
+                _step_write(binded);
+                txn.commit();
+                return true;
+            }
         }
 
         // Tells DiskStorage's collision-healing path whether an existing blob
@@ -951,10 +958,14 @@ private:
         return true;
     }
 
-    inline bool _add_impl(const std::string& key, const Bytes auto& value,
+    inline bool _add_impl(const std::string& key, const Payload auto& value,
                            [[maybe_unused]] std::optional<double> expires_secs,
                            [[maybe_unused]] std::optional<std::string> tag = std::nullopt)
     {
+        // A blob is bound as one contiguous SQLite value.
+        if constexpr (!Bytes<decltype(value)>)
+            if (std::size(value) <= _file_size_threshold)
+                return _add_impl(key, value.flatten(), expires_secs, tag);
         auto db = this->db();
         std::size_t seq = 0;
         if constexpr (has_eviction)
@@ -966,12 +977,15 @@ private:
 
         auto new_size = std::size(value);
 
-        if (new_size <= _file_size_threshold)
+        if constexpr (Bytes<decltype(value)>)
         {
-            auto binded = INSERT_VALUE_STMT.bind_all();
-            _bind_core_and_policies(binded.get(), key, value, new_size, abs_exp, seq, tag);
-            _step_write(binded);
-            return sqlite3_changes(db->get()) > 0;
+            if (new_size <= _file_size_threshold)
+            {
+                auto binded = INSERT_VALUE_STMT.bind_all();
+                _bind_core_and_policies(binded.get(), key, value, new_size, abs_exp, seq, tag);
+                _step_write(binded);
+                return sqlite3_changes(db->get()) > 0;
+            }
         }
 
         auto file_path = storage->store(value);
@@ -1149,12 +1163,12 @@ public:
 
     // --- set() overloads ---
 
-    inline bool set(const std::string& key, const Bytes auto& value)
+    inline bool set(const std::string& key, const Payload auto& value)
     {
         return _set_impl(key, value, std::optional<double> {});
     }
 
-    inline bool set(const std::string& key, const Bytes auto& value, DurationConcept auto expire)
+    inline bool set(const std::string& key, const Payload auto& value, DurationConcept auto expire)
         requires (has_expiration)
     {
         return _set_impl(key, value,
@@ -1162,13 +1176,13 @@ public:
                 std::chrono::duration_cast<std::chrono::seconds>(expire).count()) });
     }
 
-    inline bool set(const std::string& key, const Bytes auto& value, const std::string& tag)
+    inline bool set(const std::string& key, const Payload auto& value, const std::string& tag)
         requires (has_tags)
     {
         return _set_impl(key, value, std::optional<double> {}, std::optional<std::string> { tag });
     }
 
-    inline bool set(const std::string& key, const Bytes auto& value, DurationConcept auto expire,
+    inline bool set(const std::string& key, const Payload auto& value, DurationConcept auto expire,
                     const std::string& tag)
         requires (has_expiration && has_tags)
     {
@@ -1261,12 +1275,12 @@ public:
 
     // --- add() overloads ---
 
-    inline bool add(const std::string& key, const Bytes auto& value)
+    inline bool add(const std::string& key, const Payload auto& value)
     {
         return _add_impl(key, value, std::optional<double> {});
     }
 
-    inline bool add(const std::string& key, const Bytes auto& value, DurationConcept auto expire)
+    inline bool add(const std::string& key, const Payload auto& value, DurationConcept auto expire)
         requires (has_expiration)
     {
         return _add_impl(key, value,
@@ -1274,13 +1288,13 @@ public:
                 std::chrono::duration_cast<std::chrono::seconds>(expire).count()) });
     }
 
-    inline bool add(const std::string& key, const Bytes auto& value, const std::string& tag)
+    inline bool add(const std::string& key, const Payload auto& value, const std::string& tag)
         requires (has_tags)
     {
         return _add_impl(key, value, std::optional<double> {}, std::optional<std::string> { tag });
     }
 
-    inline bool add(const std::string& key, const Bytes auto& value, DurationConcept auto expire,
+    inline bool add(const std::string& key, const Payload auto& value, DurationConcept auto expire,
                     const std::string& tag)
         requires (has_expiration && has_tags)
     {

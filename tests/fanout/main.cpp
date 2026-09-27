@@ -320,3 +320,18 @@ SCENARIO("FanoutIndex basic CRUD", "[fanout][index]")
         }
     }
 }
+
+SCENARIO("FanoutCache stores ByteChunks as their concatenation", "[fanout][chunks]")
+{
+    AutoCleanDirectory db_path { "FanoutChunks" };
+    FanoutCache fc(db_path.path(), 4);
+    std::vector<char> head(10, 'h'), body(20000, 'b');
+    ByteChunks chunks { { std::span<const char>(head), std::span<const char>(body) } };
+    std::vector<char> expected(head);
+    expected.insert(expected.end(), body.begin(), body.end());
+
+    REQUIRE(fc.set("k", chunks, std::string("tag")));
+    REQUIRE(fc.get("k")->to_vector() == expected);
+    REQUIRE(fc.add("k2", chunks, 60s));
+    REQUIRE(fc.get("k2")->to_vector() == expected);
+}
