@@ -165,8 +165,33 @@ from pysciqlop_cache import Cache, MsgspecSerializer
 cache = Cache("/tmp/my-cache", serializer=MsgspecSerializer())
 ```
 
+For large numpy arrays (for example speasy variables), `PickleOOBSerializer`
+stores the array buffers next to the pickle instead of inside it (protocol 5
+out-of-band buffers). On `get`, numpy copies them with the GIL released, so
+threads loading big values at the same time no longer queue on the GIL:
+
+```python
+from pysciqlop_cache import Cache, PickleOOBSerializer
+
+cache = Cache("/tmp/my-cache", serializer=PickleOOBSerializer())
+```
+
+One day of MMS FGM (33 MB: float32 values and a datetime64 time axis),
+measured with `benchmark/pickle_oob_gil.py`:
+
+| | `pickle` | `pickle-oob` |
+|---|---|---|
+| `set` | 21.7 ms | 7.0 ms |
+| `get` | 2.2 ms | 2.1 ms |
+| GIL held during `get` | 1.0 ms | 0 ms |
+| 8 days, 4 threads | 41–60 ms | 25 ms |
+
+Arrays under 64 KiB and values without arrays are written as plain pickle.
+
 The serializer choice is recorded in the cache itself: reopening a cache with a
-different serializer raises instead of silently misreading your data.
+different serializer raises instead of silently misreading your data. The one
+exception is `pickle` → `pickle-oob`: it reads plain pickle entries too, so an
+existing pickle cache can switch in place. The reverse still raises.
 
 ## Migrating from diskcache
 

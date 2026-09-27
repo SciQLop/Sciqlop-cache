@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import io
 import pickle
+import struct
+import sys
 from typing import Any, Protocol, runtime_checkable
 
-__all__ = ["Serializer", "PickleSerializer", "MsgspecSerializer"]
+__all__ = ["Serializer", "PickleSerializer", "MsgspecSerializer", "PickleOOBSerializer"]
 
 
 @runtime_checkable
@@ -116,10 +119,85 @@ class MsgspecSerializer:
         return msgspec.msgpack.decode(data, ext_hook=_ext_hook)
 
 
-_SERIALIZERS: dict[str, type[PickleSerializer | MsgspecSerializer]] = {
+def _datetime_from_int64(ints: Any, dtype: Any) -> Any:
+    return ints.view(dtype)
+
+
+class _OOBPickler(pickle.Pickler):
+    # numpy only exports plain numeric dtypes as PickleBuffer; datetime64 and
+    # timedelta64 would silently fall back in-band (a full copy under the GIL).
+    def reducer_override(self, obj: Any) -> Any:
+        np = sys.modules.get("numpy")
+        if np is not None and type(obj) is np.ndarray and obj.dtype.kind in "mM":
+            return _datetime_from_int64, (obj.view("i8"), obj.dtype)
+        return NotImplemented
+
+
+class PickleOOBSerializer:
+    """Pickle protocol 5 with the array buffers stored out-of-band.
+
+    Layout: MAGIC | u32 count | u64 header size | count x u64 buffer size |
+    header pickle | buffers. On load each buffer is copied by numpy, which
+    releases the GIL, instead of by pickle, which holds it. Values without
+    buffers are written as plain pickle, and plain pickle entries still load,
+    so a "pickle" cache can switch to this serializer in place.
+    Same trust model as PickleSerializer: only load caches you wrote.
+    See https://peps.python.org/pep-0574/
+    """
+
+    name = "pickle-oob"
+    MAGIC = b"\x00SQCOOB1"
+    # Below this a buffer stays in-band: copying it holds the GIL for less than
+    # ~10 us, and the per-buffer bookkeeping would cost more than it saves.
+    MIN_OOB_BUFFER = 64 * 1024
+
+    def dumps(self, value: Any) -> bytes:
+        buffers: list[pickle.PickleBuffer] = []
+
+        def keep_in_band(buffer: pickle.PickleBuffer) -> bool:
+            if buffer.raw().nbytes < self.MIN_OOB_BUFFER:
+                return True
+            buffers.append(buffer)
+            return False
+
+        out = io.BytesIO()
+        _OOBPickler(out, protocol=5, buffer_callback=keep_in_band).dump(value)
+        header = out.getvalue()
+        if not buffers:
+            return header
+        raws = [b.raw() for b in buffers]
+        sizes = struct.pack(f"<{len(raws)}Q", *(r.nbytes for r in raws))
+        return b"".join([self.MAGIC, struct.pack("<IQ", len(raws), len(header)), sizes, header, *raws])
+
+    def loads(self, data: bytes | memoryview) -> Any:
+        if data[0] != self.MAGIC[0]:
+            return pickle.loads(data)
+        view = memoryview(data)
+        if view[: len(self.MAGIC)] != self.MAGIC:
+            raise pickle.UnpicklingError("unknown pickle-oob header")
+        import numpy as np
+
+        count, header_size = struct.unpack_from("<IQ", view, len(self.MAGIC))
+        sizes_at = len(self.MAGIC) + 12
+        sizes = struct.unpack_from(f"<{count}Q", view, sizes_at)
+        header_at = sizes_at + 8 * count
+        offset = header_at + header_size
+        buffers = []
+        for size in sizes:
+            buffers.append(np.frombuffer(view, np.uint8, size, offset).copy())
+            offset += size
+        return pickle.loads(view[header_at : header_at + header_size], buffers=buffers)
+
+
+_SERIALIZERS: dict[str, type[PickleSerializer | MsgspecSerializer | PickleOOBSerializer]] = {
     "pickle": PickleSerializer,
     "msgspec": MsgspecSerializer,
+    "pickle-oob": PickleOOBSerializer,
 }
+
+# stored -> requested switches allowed on an existing cache: the requested
+# serializer must read every entry the stored one wrote.
+SERIALIZER_UPGRADES = frozenset({("pickle", "pickle-oob")})
 
 
 def get_serializer_by_name(name: str) -> Serializer:
