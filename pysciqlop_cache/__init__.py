@@ -9,7 +9,9 @@ from datetime import timedelta
 from typing import Any, AnyStr, Optional, Union
 
 from .serializers import (
+    SERIALIZER_UPGRADES,
     MsgspecSerializer,
+    PickleOOBSerializer,
     PickleSerializer,
     Serializer,
     get_serializer_by_name,
@@ -30,7 +32,7 @@ _IGNORED_SETTINGS = frozenset({
 
 __all__ = [
     "Cache", "Index", "FanoutCache", "FanoutIndex", "Lock", "Serializer",
-    "PickleSerializer", "MsgspecSerializer", "Timeout",
+    "PickleSerializer", "PickleOOBSerializer", "MsgspecSerializer", "Timeout",
 ]
 
 # pickle here only encodes/decodes keys this same process wrote to its own local
@@ -193,6 +195,7 @@ class Cache(_Cache):
             to_str=lambda s: s.name,
             from_str=get_serializer_by_name,
             mismatch_ok=False,
+            upgrades=SERIALIZER_UPGRADES,
         )
         effective_max_size = self._resolve_meta(
             _META_MAX_SIZE, max_size if max_size is not _SENTINEL else None,
@@ -204,10 +207,11 @@ class Cache(_Cache):
         if effective_max_size != 0:
             super().set_max_cache_size(effective_max_size)
 
-    def _resolve_meta(self, key, explicit, *, default, to_str, from_str, mismatch_ok):
+    def _resolve_meta(self, key, explicit, *, default, to_str, from_str, mismatch_ok, upgrades=frozenset()):
         stored = super().get_meta(key)
         if explicit is not None:
-            if stored is not None and to_str(explicit) != stored and not mismatch_ok:
+            requested = to_str(explicit)
+            if stored not in (None, requested) and not mismatch_ok and (stored, requested) not in upgrades:
                 raise ValueError(
                     f"Cache metadata {key!r} is {stored!r}, "
                     f"but {to_str(explicit)!r} was requested."
@@ -524,7 +528,7 @@ class Index(_Index):
         self._keys_encoded = False
         stored = super().get_meta(_META_SERIALIZER)
         if serializer is not None:
-            if stored is not None and serializer.name != stored:
+            if stored not in (None, serializer.name) and (stored, serializer.name) not in SERIALIZER_UPGRADES:
                 raise ValueError(
                     f"Index metadata {_META_SERIALIZER!r} is {stored!r}, "
                     f"but {serializer.name!r} was requested."
