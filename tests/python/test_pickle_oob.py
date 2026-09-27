@@ -1,13 +1,17 @@
 import gc
+import multiprocessing
+import os
 import pickle
 import shutil
 import struct
 import tempfile
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
 
 from pysciqlop_cache import Cache, Index, PickleOOBSerializer, PickleSerializer
+from pysciqlop_cache._pysciqlop_cache import BLOSC2_AVAILABLE
 
 
 class FakeSpeasyVariable:
@@ -67,7 +71,7 @@ class TestFormat(unittest.TestCase):
         self.assertTrue(result["f_order"].flags.f_contiguous)
 
     def test_unknown_buffer_codec_raises(self):
-        data = bytearray(self.ser.dumps(fgm_like_day()))
+        data = bytearray(PickleOOBSerializer(compress=False).dumps(fgm_like_day()))
         first_codec = len(PickleOOBSerializer.MAGIC) + 12
         self.assertEqual(data[first_codec], 0)
         data[first_codec] = 7
@@ -95,10 +99,16 @@ class TestFormat(unittest.TestCase):
             self.ser.loads(data[: len(data) // 2])
 
     def test_dumps_chunks_concatenate_to_dumps(self):
+        # Uncompressed: multithreaded blosc2 lays blocks out in completion
+        # order, so two compressions of the same data differ byte-wise.
+        ser = PickleOOBSerializer(compress=False)
         for value in [42, fgm_like_day(100), fgm_like_day()]:
-            chunks = self.ser.dumps_chunks(value)
+            chunks = ser.dumps_chunks(value)
             joined = chunks if isinstance(chunks, bytes) else b"".join(chunks)
-            self.assertEqual(joined, self.ser.dumps(value))
+            self.assertEqual(joined, ser.dumps(value))
+        var = fgm_like_day()
+        joined = b"".join(self.ser.dumps_chunks(var))
+        np.testing.assert_array_equal(self.ser.loads(joined).time, var.time)
 
     def test_dumps_chunks_does_not_copy_arrays(self):
         var = fgm_like_day()
@@ -109,6 +119,109 @@ class TestFormat(unittest.TestCase):
         var = fgm_like_day(100)
         result = self.ser.loads(PickleSerializer().dumps(var))
         np.testing.assert_array_equal(result.values, var.values)
+
+
+def buffer_codecs(data):
+    count, _ = struct.unpack_from("<IQ", data, 8)
+    return [struct.unpack_from("<BQQ", data, 20 + 17 * i)[0] for i in range(count)]
+
+
+@unittest.skipUnless(BLOSC2_AVAILABLE, "built without blosc2")
+class TestBlosc2(unittest.TestCase):
+    def setUp(self):
+        self.ser = PickleOOBSerializer()
+
+    def test_compressible_buffers_use_blosc2_and_roundtrip(self):
+        var = fgm_like_day()
+        data = self.ser.dumps(var)
+        self.assertEqual(sorted(buffer_codecs(data)), [0, 1], "time axis blosc2, noisy values raw")
+        self.assertLess(len(data), var.values.nbytes + var.time.nbytes // 4)
+        result = self.ser.loads(data)
+        np.testing.assert_array_equal(result.time, var.time)
+        np.testing.assert_array_equal(result.values, var.values)
+        result.time[0] = np.datetime64("2000-01-01", "ns")  # writable
+
+    def test_compress_false_keeps_every_buffer_raw(self):
+        data = PickleOOBSerializer(compress=False).dumps(fgm_like_day())
+        self.assertEqual(buffer_codecs(data), [0, 0])
+
+    def test_small_oob_buffers_are_not_compressed(self):
+        data = self.ser.dumps({"t": np.arange(20_000, dtype=np.int64)})  # 160 KB
+        self.assertEqual(buffer_codecs(data), [0])
+
+    def test_min_ratio_is_respected(self):
+        data = PickleOOBSerializer(min_ratio=1000.0).dumps(fgm_like_day())
+        self.assertEqual(buffer_codecs(data), [0, 0])
+
+    def test_corrupt_blosc2_buffer_raises(self):
+        data = self.ser.dumps({"t": np.arange(1_000_000, dtype=np.int64)})
+        self.assertEqual(buffer_codecs(data), [1])
+        stored_at = len(data) - struct.unpack_from("<BQQ", data, 20)[1]
+        huge_raw_size = data[:29] + struct.pack("<Q", 1 << 45) + data[37:]
+        for corrupt in (data[:-10], data[:stored_at] + b"\xff" * 16 + data[stored_at + 16 :], huge_raw_size):
+            with self.subTest(size=len(corrupt)), self.assertRaises(pickle.UnpicklingError):
+                self.ser.loads(corrupt)
+
+    def test_itemsizes_and_layouts_roundtrip(self):
+        arrays = {
+            "u8": np.arange(300_000, dtype=np.uint8),
+            "i16": np.arange(300_000, dtype=np.int16),
+            "c128": np.zeros(40_000, dtype=np.complex128),
+            "f_order": np.asfortranarray(np.zeros((500, 400), dtype=np.float32)),
+            "record": np.zeros(20_000, dtype=[("a", "f8"), ("b", "i4"), ("c", "S20")]),
+        }
+        result = self.ser.loads(self.ser.dumps(arrays))
+        for name, arr in arrays.items():
+            with self.subTest(name):
+                self.assertEqual(result[name].dtype, arr.dtype)
+                np.testing.assert_array_equal(result[name], arr)
+
+
+def _os_thread_count():
+    return len(os.listdir("/proc/self/task")) if os.path.isdir("/proc/self/task") else None
+
+
+def _roundtrip_in_child(queue):
+    ser = PickleOOBSerializer()
+    var = fgm_like_day()
+    result = ser.loads(ser.dumps(var))
+    # Counted before queue.put(), which starts the queue's feeder thread.
+    queue.put((bool(np.array_equal(result.time, var.time)), _os_thread_count()))
+
+
+@unittest.skipUnless(BLOSC2_AVAILABLE, "built without blosc2")
+class TestBlosc2Runtime(unittest.TestCase):
+    def test_threads_compress_and_decode_concurrently(self):
+        ser = PickleOOBSerializer()
+        values = [{"t": np.arange(i, i + 500_000, dtype=np.int64)} for i in range(16)]
+
+        def roundtrip(value):
+            data = ser.dumps(value)
+            return buffer_codecs(data) == [1] and np.array_equal(ser.loads(data)["t"], value["t"])
+
+        with ThreadPoolExecutor(16) as pool:
+            self.assertTrue(all(pool.map(roundtrip, values * 4)))
+
+    @unittest.skipUnless(hasattr(os, "fork"), "needs fork")
+    def test_forked_child_can_compress_after_parent_did(self):
+        ser = PickleOOBSerializer()
+        ser.loads(ser.dumps(fgm_like_day()))  # parent starts the worker pool
+        ctx = multiprocessing.get_context("fork")
+        queue = ctx.Queue()
+        child = ctx.Process(target=_roundtrip_in_child, args=(queue,))
+        child.start()
+        child.join(timeout=60)
+        if child.is_alive():
+            child.kill()
+            self.fail("forked child hung in blosc2")
+        self.assertEqual(child.exitcode, 0)
+        ok, threads = queue.get(timeout=5)
+        self.assertTrue(ok)
+        if threads is not None and (os.cpu_count() or 1) > 1:
+            # The parent's workers don't exist in the child: it must start its
+            # own pool instead of running every job on the calling thread
+            # (or blocking on a mutex a dead worker held at fork time).
+            self.assertGreater(threads, 1)
 
 
 class TestInCache(unittest.TestCase):

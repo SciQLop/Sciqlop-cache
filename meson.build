@@ -66,6 +66,8 @@ sciqlop_cache_headers = files(
 )
 
 pysciqlop_cache_headers = files(
+    'pysciqlop_cache/buffer_codecs.hpp',
+    'pysciqlop_cache/blosc2_runtime.hpp',
 )
 
 sciqlop_cache_extra_files = files(

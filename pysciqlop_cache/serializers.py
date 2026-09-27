@@ -6,7 +6,7 @@ import struct
 import sys
 from typing import Any, Protocol, runtime_checkable
 
-from ._pysciqlop_cache import decode_buffers
+from ._pysciqlop_cache import compress_buffer, decode_buffers
 
 __all__ = ["Serializer", "PickleSerializer", "MsgspecSerializer", "PickleOOBSerializer"]
 
@@ -136,6 +136,7 @@ class _OOBPickler(pickle.Pickler):
 
 
 _CODEC_RAW = 0  # codec ids are persisted: never reuse one, only add
+_CODEC_BLOSC2 = 1
 _PREAMBLE = struct.Struct("<IQ")  # buffer count, header size
 _ENTRY = struct.Struct("<BQQ")  # codec, stored size, raw size
 
@@ -144,9 +145,11 @@ class PickleOOBSerializer:
     """Pickle protocol 5 with the array buffers stored out-of-band.
 
     Layout: MAGIC | u32 count | u64 header size | count x (u8 codec, u64 stored
-    size, u64 raw size) | header pickle | buffers. The per-buffer codec lets a
-    later version compress some buffers (e.g. blosc2 on time axes) without a
-    format change; today every buffer is raw. Writes hand the header and the
+    size, u64 raw size) | header pickle | buffers. With `compress` (default),
+    each buffer is tried with blosc2 (lz4 + shuffle, all cores) and kept
+    compressed only if that makes it `min_ratio` times smaller: time axes
+    shrink ~15x, noisy float values stay raw after a cheap sample test. Reads
+    decode any buffer whatever `compress` is set to. Writes hand the header and the
     array buffers to the store as separate chunks, and loads fill fresh numpy
     arrays in C++, both with the GIL released; plain pickle copies the arrays
     inside _pickle, with the GIL held. Values without buffers are written as
@@ -161,6 +164,21 @@ class PickleOOBSerializer:
     # Below this a buffer stays in-band: copying it holds the GIL for less than
     # ~10 us, and the per-buffer bookkeeping would cost more than it saves.
     MIN_OOB_BUFFER = 64 * 1024
+    # Smaller buffers are not worth trying to compress: a failed attempt
+    # costs ~9 us, 5 % of storing 64 KiB, and saves little disk anyway.
+    MIN_COMPRESS_BUFFER = 256 * 1024
+
+    def __init__(self, compress: bool = True, min_ratio: float = 2.0):
+        self.compress = compress
+        self.min_ratio = min_ratio
+
+    def _stored(self, buffer: pickle.PickleBuffer) -> tuple[int, Any, int]:
+        raw = buffer.raw()
+        if self.compress and raw.nbytes >= self.MIN_COMPRESS_BUFFER:
+            compressed = compress_buffer(raw, memoryview(buffer).itemsize, self.min_ratio)
+            if compressed is not None:
+                return _CODEC_BLOSC2, compressed, raw.nbytes
+        return _CODEC_RAW, raw, raw.nbytes
 
     def dumps_chunks(self, value: Any) -> bytes | list[Any]:
         """bytes, or a list of buffers whose concatenation is dumps(value)."""
@@ -177,10 +195,10 @@ class PickleOOBSerializer:
         header = out.getvalue()
         if not buffers:
             return header
-        raws = [b.raw() for b in buffers]
-        entries = b"".join(_ENTRY.pack(_CODEC_RAW, r.nbytes, r.nbytes) for r in raws)
-        prefix = b"".join([self.MAGIC, _PREAMBLE.pack(len(raws), len(header)), entries, header])
-        return [prefix, *raws]
+        stored = [self._stored(b) for b in buffers]
+        entries = b"".join(_ENTRY.pack(codec, len(memoryview(data)), size) for codec, data, size in stored)
+        prefix = b"".join([self.MAGIC, _PREAMBLE.pack(len(stored), len(header)), entries, header])
+        return [prefix, *(data for _, data, _ in stored)]
 
     def dumps(self, value: Any) -> bytes:
         chunks = self.dumps_chunks(value)
@@ -195,7 +213,7 @@ class PickleOOBSerializer:
         try:
             header, buffers = self._decode(view)
         except (ValueError, struct.error) as e:
-            raise pickle.UnpicklingError(f"corrupt pickle-oob value: {e}") from e
+            raise pickle.UnpicklingError(f"cannot load pickle-oob value: {e}") from e
         return pickle.loads(header, buffers=buffers)
 
     def _decode(self, view: memoryview) -> tuple[memoryview, list[Any]]:
