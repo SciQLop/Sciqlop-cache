@@ -199,18 +199,24 @@ class PickleOOBSerializer:
         return pickle.loads(header, buffers=buffers)
 
     def _decode(self, view: memoryview) -> tuple[memoryview, list[Any]]:
-        import numpy as np
-
         count, header_size = _PREAMBLE.unpack_from(view, len(self.MAGIC))
         entries_at = len(self.MAGIC) + _PREAMBLE.size
         header_at = entries_at + count * _ENTRY.size
         offset = header_at + header_size
+        if offset > len(view):
+            raise ValueError("pickle-oob header runs past the stored value")
+        header = view[header_at:offset]
         jobs = []
         for codec, stored_size, raw_size in _ENTRY.iter_unpack(view[entries_at:header_at]):
-            jobs.append((codec, offset, stored_size, np.empty(raw_size, np.uint8)))
+            jobs.append((codec, offset, stored_size, raw_size))
             offset += stored_size
-        decode_buffers(view, jobs)
-        return view[header_at : header_at + header_size], [job[3] for job in jobs]
+        return header, decode_buffers(view, jobs, _empty_bytes)
+
+
+def _empty_bytes(size: int) -> Any:
+    import numpy as np
+
+    return np.empty(size, np.uint8)
 
 
 _SERIALIZERS: dict[str, type[PickleSerializer | MsgspecSerializer | PickleOOBSerializer]] = {
