@@ -8,6 +8,7 @@ Usage: python benchmark/pickle_oob_gil.py [cache_dir]   (default ~/.cache/sciqlo
 Run it on a real disk, not a quota-limited tmpfs.
 """
 
+import inspect
 import shutil
 import statistics
 import sys
@@ -87,23 +88,26 @@ def measure(cache, pool):
     return serial, starved, threaded
 
 
-def report(name, sets, serial, starved, threaded):
+def report(name, sets, serial, starved, threaded, volume):
     ms = lambda xs: statistics.median(xs) * 1e3
     print(f"{name:>11} | set/day {ms(sets):6.1f} ms | get/day {ms(serial) / DAYS:6.2f} ms"
           f" | GIL starved/day {ms(starved) / DAYS:6.2f} ms"
-          f" | {THREADS} threads, {DAYS} days {ms(threaded):7.1f} ms")
+          f" | {THREADS} threads, {DAYS} days {ms(threaded):7.1f} ms"
+          f" | {volume / DAYS / 2**20:5.1f} MiB/day")
 
 
 def main():
     root = Path(sys.argv[1] if len(sys.argv) > 1 else Path.home() / ".cache/sciqlop-oob-bench")
-    serializers = [PickleSerializer(), PickleOOBSerializer()]
+    serializers = {"pickle": PickleSerializer(), "pickle-oob": PickleOOBSerializer()}
+    if "compress" in inspect.signature(PickleOOBSerializer).parameters:
+        serializers["oob-raw"] = PickleOOBSerializer(compress=False)
     with ThreadPoolExecutor(THREADS) as pool:
-        for ser in serializers:
-            path = root / ser.name
+        for label, ser in serializers.items():
+            path = root / label
             shutil.rmtree(path, ignore_errors=True)
             cache = Cache(str(path), serializer=ser)
             sets = fill(cache)
-            report(ser.name, sets, *measure(cache, pool))
+            report(label, sets, *measure(cache, pool), cache.volume())
             del cache
             shutil.rmtree(path, ignore_errors=True)
 

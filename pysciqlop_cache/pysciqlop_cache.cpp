@@ -1,4 +1,5 @@
 #include "sciqlop_cache/sciqlop_cache.hpp"
+#include "buffer_codecs.hpp"
 
 #include <nanobind/nanobind.h>
 #include <nanobind/ndarray.h>
@@ -83,12 +84,6 @@ public:
     }
 };
 
-// Codec ids are persisted in pickle-oob values: never reuse one, only add.
-enum class BufferCodec : int
-{
-    raw = 0,
-};
-
 struct DecodeJob
 {
     BufferCodec codec;
@@ -103,28 +98,10 @@ static DecodeJob _checked_decode_job(std::span<const char> src, nb::handle job)
         = nb::cast<std::tuple<int, std::size_t, std::size_t, std::size_t>>(job);
     if (offset > src.size() || stored_size > src.size() - offset)
         throw nb::value_error("pickle-oob buffer lies outside the stored value");
-    auto stored = src.subspan(offset, stored_size);
-    switch (static_cast<BufferCodec>(codec))
-    {
-        case BufferCodec::raw:
-            if (stored_size != raw_size)
-                throw nb::value_error("pickle-oob raw buffer size mismatch");
-            return { BufferCodec::raw, stored, raw_size };
-    }
-    throw nb::value_error(
-        fmt::format("pickle-oob buffer codec {} is not supported by this pysciqlop_cache version",
-                    codec)
-            .c_str());
-}
-
-static void _decode(const DecodeJob& job)
-{
-    switch (job.codec)
-    {
-        case BufferCodec::raw:
-            std::memcpy(job.dst.data(), job.stored.data(), job.stored.size());
-            break;
-    }
+    DecodeJob checked { static_cast<BufferCodec>(codec), src.subspan(offset, stored_size), raw_size };
+    if (auto error = check_stored_buffer(checked.codec, checked.stored, raw_size))
+        throw nb::value_error(fmt::format("pickle-oob buffer codec {}: {}", codec, *error).c_str());
+    return checked;
 }
 
 // Decodes each (codec, offset, stored_size, raw_size) job of `src` (pickle-oob
@@ -148,12 +125,38 @@ static nb::list decode_buffers(nb::handle src_obj, nb::sequence jobs, nb::callab
             throw nb::value_error("alloc() returned a buffer of the wrong size");
         buffers.append(dst);
     }
+    std::optional<std::string> error;
     {
         nb::gil_scoped_release release;
         for (const auto& job : checked)
-            _decode(job);
+            if ((error = decode_buffer(job.codec, job.stored, job.dst)))
+                break;
     }
+    if (error)
+        throw nb::value_error(("pickle-oob buffer: " + *error).c_str());
     return buffers;
+}
+
+// Returns the blosc2-compressed bytes of `src` as a Buffer, or None when
+// blosc2 is not built in or compressing would not make `src` at least
+// `min_ratio` times smaller. Runs with the GIL released.
+static nb::object compress_buffer([[maybe_unused]] nb::handle src_obj,
+                                  [[maybe_unused]] int typesize, double min_ratio)
+{
+    if (!(min_ratio > 0.0))
+        throw nb::value_error("min_ratio must be > 0");
+#ifdef SCIQLOP_CACHE_WITH_BLOSC2
+    PyBufferViews views;
+    auto src = views.acquire(src_obj, PyBUF_ANY_CONTIGUOUS);
+    std::optional<std::vector<char>> compressed;
+    {
+        nb::gil_scoped_release release;
+        compressed = blosc2_compress(src, typesize, min_ratio);
+    }
+    if (compressed)
+        return nb::cast(Buffer(std::move(*compressed)));
+#endif
+    return nb::none();
 }
 
 template <typename T>
@@ -276,8 +279,14 @@ NB_MODULE(_pysciqlop_cache, m)
 
     )pbdoc";
 
+#ifdef SCIQLOP_CACHE_WITH_BLOSC2
+    blosc2_runtime::install();
+#endif
+    m.attr("BLOSC2_AVAILABLE") = blosc2_available;
     m.def("decode_buffers", &decode_buffers, "src"_a, "jobs"_a, "alloc"_a,
           "Decode each (codec, offset, stored_size, raw_size) job of src into alloc(raw_size).");
+    m.def("compress_buffer", &compress_buffer, "src"_a, "typesize"_a, "min_ratio"_a,
+          "blosc2 (lz4 + shuffle) bytes of src as a Buffer, or None if not worth it.");
 
     bind_key_cursor<Cache::KeyCursor>(m, "CacheKeyCursor");
     bind_key_cursor<Index::KeyCursor>(m, "IndexKeyCursor");

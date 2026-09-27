@@ -182,12 +182,18 @@ measured with `benchmark/pickle_oob_gil.py`:
 
 | | `pickle` | `pickle-oob` |
 |---|---|---|
-| `set` | 21.0 ms | 3.9 ms |
+| `set` | 22.1 ms | 3.6 ms |
 | GIL held during `set` | 15.6 ms | 0 ms |
-| `get` | 2.2 ms | 2.1 ms |
+| `get` | 2.0 ms | 1.6 ms |
 | GIL held during `get` | 1.0 ms | 0 ms |
-| 8 days, 4 threads | 41–60 ms | 25 ms |
+| 8 days, 4 threads | 45–55 ms | 23 ms |
+| Disk per day | 31.6 MiB | 22.4 MiB |
 
+Arrays of 256 KiB or more are also compressed with the bundled
+[blosc2](https://www.blosc.org/) (lz4 + shuffle, on all cores) when that
+makes them at least `min_ratio` (default 2) times smaller. Time axes shrink
+about 15x; noisy float values stay raw after a ~6 µs sample test.
+`PickleOOBSerializer(compress=False)` turns this off; reads decode either way.
 Arrays under 64 KiB and values without arrays are written as plain pickle.
 
 The serializer choice is recorded in the cache itself: reopening a cache with a

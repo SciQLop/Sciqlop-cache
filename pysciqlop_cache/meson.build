@@ -15,9 +15,15 @@ else
     pysciqlop_cache_cpp_args = []
 endif
 
+if get_option('with_blosc2')
+    blosc2_dep = dependency('blosc2')
+    pysciqlop_cache_cpp_args += ['-DSCIQLOP_CACHE_WITH_BLOSC2']
+else
+    blosc2_dep = declare_dependency()
+endif
 
 _pysciqlop_cache = python3.extension_module('_pysciqlop_cache', 'pysciqlop_cache.cpp',
-                         dependencies: [sciqlop_cache_dep, fmt_dep, nanobind_dep,python3.dependency()],
+                         dependencies: [sciqlop_cache_dep, fmt_dep, nanobind_dep, blosc2_dep, python3.dependency()],
                          link_args: link_args,
                          cpp_args: pysciqlop_cache_cpp_args,
                          subdir: 'pysciqlop_cache',
