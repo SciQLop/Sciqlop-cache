@@ -10,6 +10,10 @@
 
 #include <fmt/ranges.h>
 
+#include <cstring>
+#include <span>
+#include <tuple>
+
 using namespace std::chrono_literals;
 
 namespace nb = nanobind;
@@ -18,43 +22,162 @@ using namespace nb::literals;
 using OptDuration = std::optional<std::chrono::system_clock::duration>;
 using OptString = std::optional<std::string>;
 
-// Extract the byte span from nb::bytes (must run with GIL held: PyBytes API),
-// then release the GIL during the C++ store call so concurrent Python threads
-// can run. Without this, set/add hold the GIL while blocking on _mtx, which
-// deadlocks any other thread trying to call into the cache.
-
-template <typename T>
-inline void _set_item_impl(T& c, const std::string& key, nb::bytes& buffer,
-                            OptDuration expire = std::nullopt,
-                            OptString tag = std::nullopt)
+// Buffer-protocol views acquired with the GIL held and released together
+// when this goes out of scope (also with the GIL held). What they point to
+// stays valid in between, so it can be read or written with the GIL released.
+class PyBufferViews
 {
-    auto data = std::span<const char>(static_cast<const char*>(buffer.data()), buffer.size());
+    std::vector<Py_buffer> _views;
+
+public:
+    PyBufferViews() = default;
+    PyBufferViews(const PyBufferViews&) = delete;
+    PyBufferViews& operator=(const PyBufferViews&) = delete;
+    ~PyBufferViews()
+    {
+        for (auto& view : _views)
+            PyBuffer_Release(&view);
+    }
+
+    std::span<char> acquire(nb::handle obj, int flags)
+    {
+        Py_buffer view;
+        if (PyObject_GetBuffer(obj.ptr(), &view, flags) != 0)
+            throw nb::python_error();
+        _views.push_back(view);
+        return { static_cast<char*>(view.buf), static_cast<std::size_t>(view.len) };
+    }
+};
+
+// A value is either bytes or a list/tuple of buffer objects (e.g. a pickle
+// header plus out-of-band array buffers), written as their concatenation
+// without joining them first. Built and destroyed with the GIL held; visit()
+// runs with the GIL released, so set/add never hold the GIL while blocking on
+// the store mutex or writing the value.
+class PyPayload
+{
+    PyBufferViews _views;
+    std::optional<std::span<const char>> _bytes;
+    ByteChunks _chunks;
+
+public:
+    explicit PyPayload(nb::handle value)
+    {
+        if (PyBytes_Check(value.ptr()))
+        {
+            _bytes.emplace(PyBytes_AS_STRING(value.ptr()),
+                           static_cast<std::size_t>(PyBytes_GET_SIZE(value.ptr())));
+            return;
+        }
+        if (!PyList_Check(value.ptr()) && !PyTuple_Check(value.ptr()))
+            throw nb::type_error("value must be bytes or a list of buffer objects");
+        for (nb::handle item : nb::borrow<nb::sequence>(value))
+            _chunks.parts.push_back(_views.acquire(item, PyBUF_ANY_CONTIGUOUS));
+    }
+
+    decltype(auto) visit(auto&& fn) const
+    {
+        if (_bytes)
+            return fn(*_bytes);
+        return fn(_chunks);
+    }
+};
+
+// Codec ids are persisted in pickle-oob values: never reuse one, only add.
+enum class BufferCodec : int
+{
+    raw = 0,
+};
+
+struct DecodeJob
+{
+    BufferCodec codec;
+    std::span<const char> stored;
+    std::span<char> dst;
+};
+
+static DecodeJob _checked_decode_job(std::span<const char> src, nb::handle job,
+                                     PyBufferViews& views)
+{
+    auto [codec, offset, stored_size, dst_obj]
+        = nb::cast<std::tuple<int, std::size_t, std::size_t, nb::handle>>(job);
+    if (offset > src.size() || stored_size > src.size() - offset)
+        throw nb::value_error("pickle-oob buffer lies outside the stored value");
+    auto dst = views.acquire(dst_obj, PyBUF_WRITABLE | PyBUF_ANY_CONTIGUOUS);
+    auto stored = src.subspan(offset, stored_size);
+    switch (static_cast<BufferCodec>(codec))
+    {
+        case BufferCodec::raw:
+            if (stored.size() != dst.size())
+                throw nb::value_error("pickle-oob raw buffer size mismatch");
+            return { BufferCodec::raw, stored, dst };
+    }
+    throw nb::value_error(
+        fmt::format("pickle-oob buffer codec {} is not supported by this pysciqlop_cache version",
+                    codec)
+            .c_str());
+}
+
+static void _decode(const DecodeJob& job)
+{
+    switch (job.codec)
+    {
+        case BufferCodec::raw:
+            std::memcpy(job.dst.data(), job.stored.data(), job.stored.size());
+            break;
+    }
+}
+
+// Fills each destination from its slice of `src` (pickle-oob loads). Every
+// job is validated first, with the GIL held, so bad input raises instead of
+// reading or writing out of bounds; the copies then run with the GIL released.
+static void decode_buffers(nb::handle src_obj, nb::sequence jobs)
+{
+    PyBufferViews views;
+    auto src = views.acquire(src_obj, PyBUF_ANY_CONTIGUOUS);
+    std::vector<DecodeJob> checked;
+    for (nb::handle job : jobs)
+        checked.push_back(_checked_decode_job(src, job, views));
     nb::gil_scoped_release release;
-    if (expire && tag)
-        c.set(key, data, *expire, *tag);
-    else if (expire)
-        c.set(key, data, *expire);
-    else if (tag)
-        c.set(key, data, *tag);
-    else
-        c.set(key, data);
+    for (const auto& job : checked)
+        _decode(job);
 }
 
 template <typename T>
-inline bool _add_item_impl(T& c, const std::string& key, nb::bytes& buffer,
+inline void _set_item_impl(T& c, const std::string& key, nb::handle value,
                             OptDuration expire = std::nullopt,
                             OptString tag = std::nullopt)
 {
-    auto data = std::span<const char>(static_cast<const char*>(buffer.data()), buffer.size());
+    PyPayload payload(value);
     nb::gil_scoped_release release;
-    if (expire && tag)
-        return c.add(key, data, *expire, *tag);
-    else if (expire)
-        return c.add(key, data, *expire);
-    else if (tag)
-        return c.add(key, data, *tag);
-    else
+    payload.visit([&](const auto& data) {
+        if (expire && tag)
+            c.set(key, data, *expire, *tag);
+        else if (expire)
+            c.set(key, data, *expire);
+        else if (tag)
+            c.set(key, data, *tag);
+        else
+            c.set(key, data);
+    });
+}
+
+template <typename T>
+inline bool _add_item_impl(T& c, const std::string& key, nb::handle value,
+                            OptDuration expire = std::nullopt,
+                            OptString tag = std::nullopt)
+{
+    PyPayload payload(value);
+    nb::gil_scoped_release release;
+    return payload.visit([&](const auto& data) {
+        if (expire && tag)
+            return c.add(key, data, *expire, *tag);
+        else if (expire)
+            return c.add(key, data, *expire);
+        else if (tag)
+            return c.add(key, data, *tag);
         return c.add(key, data);
+    });
 }
 
 template <typename T>
@@ -67,19 +190,19 @@ inline bool _touch_impl(T& c, const std::string& key, OptDuration expire)
 }
 
 template <typename T>
-inline void _simple_set_item(T& s, const std::string& key, nb::bytes& buffer)
+inline void _simple_set_item(T& s, const std::string& key, nb::handle value)
 {
-    auto data = std::span<const char>(static_cast<const char*>(buffer.data()), buffer.size());
+    PyPayload payload(value);
     nb::gil_scoped_release release;
-    s.set(key, data);
+    payload.visit([&](const auto& data) { s.set(key, data); });
 }
 
 template <typename T>
-inline bool _simple_add_item(T& s, const std::string& key, nb::bytes& buffer)
+inline bool _simple_add_item(T& s, const std::string& key, nb::handle value)
 {
-    auto data = std::span<const char>(static_cast<const char*>(buffer.data()), buffer.size());
+    PyPayload payload(value);
     nb::gil_scoped_release release;
-    return s.add(key, data);
+    return payload.visit([&](const auto& data) { return s.add(key, data); });
 }
 
 template <typename CursorType>
@@ -139,6 +262,9 @@ NB_MODULE(_pysciqlop_cache, m)
         ----------------
 
     )pbdoc";
+
+    m.def("decode_buffers", &decode_buffers, "src"_a, "jobs"_a,
+          "Fill each (codec, offset, stored_size, dst) job's dst from src, GIL released.");
 
     bind_key_cursor<Cache::KeyCursor>(m, "CacheKeyCursor");
     bind_key_cursor<Index::KeyCursor>(m, "IndexKeyCursor");
@@ -226,7 +352,7 @@ NB_MODULE(_pysciqlop_cache, m)
         .def("set", _set_item_impl<Cache>, nb::arg("key"), nb::arg("value"),
              nb::arg("expire") = nb::none(), nb::arg("tag") = nb::none())
         .def(
-            "__setitem__", [](Cache& c, const std::string& key, nb::bytes& buffer)
+            "__setitem__", [](Cache& c, const std::string& key, nb::handle buffer)
             { _set_item_impl(c, key, buffer); }, nb::arg("key"), nb::arg("value"))
         .def("get", &Cache::get, nb::arg("key"),
              nb::call_guard<nb::gil_scoped_release>())
@@ -331,7 +457,7 @@ NB_MODULE(_pysciqlop_cache, m)
         .def("set", _set_item_impl<FanoutCache>, nb::arg("key"), nb::arg("value"),
              nb::arg("expire") = nb::none(), nb::arg("tag") = nb::none())
         .def(
-            "__setitem__", [](FanoutCache& c, const std::string& key, nb::bytes& buffer)
+            "__setitem__", [](FanoutCache& c, const std::string& key, nb::handle buffer)
             { _set_item_impl(c, key, buffer); }, nb::arg("key"), nb::arg("value"))
         .def("get", &FanoutCache::get, nb::arg("key"),
              nb::call_guard<nb::gil_scoped_release>())

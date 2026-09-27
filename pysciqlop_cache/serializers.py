@@ -6,6 +6,8 @@ import struct
 import sys
 from typing import Any, Protocol, runtime_checkable
 
+from ._pysciqlop_cache import decode_buffers
+
 __all__ = ["Serializer", "PickleSerializer", "MsgspecSerializer", "PickleOOBSerializer"]
 
 
@@ -133,27 +135,9 @@ class _OOBPickler(pickle.Pickler):
         return NotImplemented
 
 
-def _copy_raw(stored: memoryview, raw_size: int) -> Any:
-    import numpy as np
-
-    return np.frombuffer(stored, np.uint8).copy()
-
-
-_CODEC_RAW = 0
-# codec id -> (stored bytes, raw size) -> writable buffer. Ids are persisted:
-# never reuse one, only add.
-_BUFFER_DECODERS = {_CODEC_RAW: _copy_raw}
+_CODEC_RAW = 0  # codec ids are persisted: never reuse one, only add
 _PREAMBLE = struct.Struct("<IQ")  # buffer count, header size
 _ENTRY = struct.Struct("<BQQ")  # codec, stored size, raw size
-
-
-def _decode_buffer(codec: int, stored: memoryview, raw_size: int) -> Any:
-    decoder = _BUFFER_DECODERS.get(codec)
-    if decoder is None:
-        raise pickle.UnpicklingError(
-            f"pickle-oob buffer codec {codec} is not supported by this pysciqlop_cache version"
-        )
-    return decoder(stored, raw_size)
 
 
 class PickleOOBSerializer:
@@ -162,10 +146,12 @@ class PickleOOBSerializer:
     Layout: MAGIC | u32 count | u64 header size | count x (u8 codec, u64 stored
     size, u64 raw size) | header pickle | buffers. The per-buffer codec lets a
     later version compress some buffers (e.g. blosc2 on time axes) without a
-    format change; today every buffer is raw. On load each buffer is copied by numpy, which
-    releases the GIL, instead of by pickle, which holds it. Values without
-    buffers are written as plain pickle, and plain pickle entries still load,
-    so a "pickle" cache can switch to this serializer in place.
+    format change; today every buffer is raw. Writes hand the header and the
+    array buffers to the store as separate chunks, and loads fill fresh numpy
+    arrays in C++, both with the GIL released; plain pickle copies the arrays
+    inside _pickle, with the GIL held. Values without buffers are written as
+    plain pickle, and plain pickle entries still load, so a "pickle" cache can
+    switch to this serializer in place.
     Same trust model as PickleSerializer: only load caches you wrote.
     See https://peps.python.org/pep-0574/
     """
@@ -176,7 +162,8 @@ class PickleOOBSerializer:
     # ~10 us, and the per-buffer bookkeeping would cost more than it saves.
     MIN_OOB_BUFFER = 64 * 1024
 
-    def dumps(self, value: Any) -> bytes:
+    def dumps_chunks(self, value: Any) -> bytes | list[Any]:
+        """bytes, or a list of buffers whose concatenation is dumps(value)."""
         buffers: list[pickle.PickleBuffer] = []
 
         def keep_in_band(buffer: pickle.PickleBuffer) -> bool:
@@ -192,7 +179,12 @@ class PickleOOBSerializer:
             return header
         raws = [b.raw() for b in buffers]
         entries = b"".join(_ENTRY.pack(_CODEC_RAW, r.nbytes, r.nbytes) for r in raws)
-        return b"".join([self.MAGIC, _PREAMBLE.pack(len(raws), len(header)), entries, header, *raws])
+        prefix = b"".join([self.MAGIC, _PREAMBLE.pack(len(raws), len(header)), entries, header])
+        return [prefix, *raws]
+
+    def dumps(self, value: Any) -> bytes:
+        chunks = self.dumps_chunks(value)
+        return chunks if isinstance(chunks, bytes) else b"".join(chunks)
 
     def loads(self, data: bytes | memoryview) -> Any:
         if data[0] != self.MAGIC[0]:
@@ -200,15 +192,25 @@ class PickleOOBSerializer:
         view = memoryview(data)
         if view[: len(self.MAGIC)] != self.MAGIC:
             raise pickle.UnpicklingError("unknown pickle-oob header")
+        try:
+            header, buffers = self._decode(view)
+        except (ValueError, struct.error) as e:
+            raise pickle.UnpicklingError(f"corrupt pickle-oob value: {e}") from e
+        return pickle.loads(header, buffers=buffers)
+
+    def _decode(self, view: memoryview) -> tuple[memoryview, list[Any]]:
+        import numpy as np
+
         count, header_size = _PREAMBLE.unpack_from(view, len(self.MAGIC))
         entries_at = len(self.MAGIC) + _PREAMBLE.size
         header_at = entries_at + count * _ENTRY.size
         offset = header_at + header_size
-        buffers = []
+        jobs = []
         for codec, stored_size, raw_size in _ENTRY.iter_unpack(view[entries_at:header_at]):
-            buffers.append(_decode_buffer(codec, view[offset : offset + stored_size], raw_size))
+            jobs.append((codec, offset, stored_size, np.empty(raw_size, np.uint8)))
             offset += stored_size
-        return pickle.loads(view[header_at : header_at + header_size], buffers=buffers)
+        decode_buffers(view, jobs)
+        return view[header_at : header_at + header_size], [job[3] for job in jobs]
 
 
 _SERIALIZERS: dict[str, type[PickleSerializer | MsgspecSerializer | PickleOOBSerializer]] = {

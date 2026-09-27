@@ -17,6 +17,14 @@ from .serializers import (
     get_serializer_by_name,
 )
 
+
+def _encode_value(serializer, value):
+    # A serializer that can hand out separate chunks (pickle-oob) lets the store
+    # write them without joining them first, with the GIL released.
+    dumps_chunks = getattr(serializer, "dumps_chunks", None)
+    return serializer.dumps(value) if dumps_chunks is None else dumps_chunks(value)
+
+
 _MISSING = object()
 _META_SERIALIZER = "serializer"
 _META_MAX_SIZE = "max_size"
@@ -254,7 +262,7 @@ class Cache(_Cache):
             raise NotImplementedError("read=True (file handles) is not supported")
         if type(expire) in (int, float):
             expire = timedelta(seconds=expire)
-        super().set(key, self._serializer.dumps(value), expire=expire, tag=tag)
+        super().set(key, _encode_value(self._serializer, value), expire=expire, tag=tag)
         return True
 
     def get(
@@ -347,7 +355,7 @@ class Cache(_Cache):
         if type(expire) in (int, float):
             expire = timedelta(seconds=expire)
         return super().add(
-            key, self._serializer.dumps(value), expire=expire, tag=tag
+            key, _encode_value(self._serializer, value), expire=expire, tag=tag
         )
 
     def touch(
@@ -551,7 +559,7 @@ class Index(_Index):
     def set(self, key: AnyStr, value: Any, retry: bool = False):
         if type(key) is not str:
             key = _encode_key(self, key)
-        super().set(key, self._serializer.dumps(value))
+        super().set(key, _encode_value(self._serializer, value))
 
     def get(self, key: AnyStr, default=None, retry: bool = False) -> Any:
         if type(key) is not str:
@@ -574,7 +582,7 @@ class Index(_Index):
     def add(self, key: AnyStr, value: Any, retry: bool = False) -> bool:
         if type(key) is not str:
             key = _encode_key(self, key)
-        return super().add(key, self._serializer.dumps(value))
+        return super().add(key, _encode_value(self._serializer, value))
 
     def delete(self, key: AnyStr, retry: bool = False) -> bool:
         if type(key) is not str:
@@ -613,7 +621,7 @@ class Index(_Index):
     def __setitem__(self, key: AnyStr, value: Any):
         if type(key) is not str:
             key = _encode_key(self, key)
-        super().set(key, self._serializer.dumps(value))
+        super().set(key, _encode_value(self._serializer, value))
 
     def __delitem__(self, key: AnyStr):
         if not self.delete(key):
@@ -716,7 +724,7 @@ class FanoutCache(_FanoutCache):
             raise NotImplementedError("read=True (file handles) is not supported")
         if type(expire) in (int, float):
             expire = timedelta(seconds=expire)
-        super().set(key, self._serializer.dumps(value), expire=expire, tag=tag)
+        super().set(key, _encode_value(self._serializer, value), expire=expire, tag=tag)
         return True
 
     def get(
@@ -785,7 +793,7 @@ class FanoutCache(_FanoutCache):
             raise NotImplementedError("read=True (file handles) is not supported")
         if type(expire) in (int, float):
             expire = timedelta(seconds=expire)
-        return super().add(key, self._serializer.dumps(value), expire=expire, tag=tag)
+        return super().add(key, _encode_value(self._serializer, value), expire=expire, tag=tag)
 
     def touch(
         self, key: AnyStr, expire: Optional[Union[timedelta, int, float]] = None, retry: bool = False
@@ -957,7 +965,7 @@ class FanoutIndex(_FanoutIndex):
     def set(self, key: AnyStr, value: Any, retry: bool = False):
         if type(key) is not str:
             key = _encode_key(self, key)
-        super().set(key, self._serializer.dumps(value))
+        super().set(key, _encode_value(self._serializer, value))
 
     def get(self, key: AnyStr, default=None, retry: bool = False) -> Any:
         if type(key) is not str:
@@ -980,7 +988,7 @@ class FanoutIndex(_FanoutIndex):
     def add(self, key: AnyStr, value: Any, retry: bool = False) -> bool:
         if type(key) is not str:
             key = _encode_key(self, key)
-        return super().add(key, self._serializer.dumps(value))
+        return super().add(key, _encode_value(self._serializer, value))
 
     def delete(self, key: AnyStr, retry: bool = False) -> bool:
         if type(key) is not str:
@@ -1019,7 +1027,7 @@ class FanoutIndex(_FanoutIndex):
     def __setitem__(self, key: AnyStr, value: Any):
         if type(key) is not str:
             key = _encode_key(self, key)
-        super().set(key, self._serializer.dumps(value))
+        super().set(key, _encode_value(self._serializer, value))
 
     def __delitem__(self, key: AnyStr):
         if not self.delete(key):

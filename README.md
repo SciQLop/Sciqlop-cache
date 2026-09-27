@@ -167,8 +167,9 @@ cache = Cache("/tmp/my-cache", serializer=MsgspecSerializer())
 
 For large numpy arrays (for example speasy variables), `PickleOOBSerializer`
 stores the array buffers next to the pickle instead of inside it (protocol 5
-out-of-band buffers). On `get`, numpy copies them with the GIL released, so
-threads loading big values at the same time no longer queue on the GIL:
+out-of-band buffers). `set` writes the arrays straight from their memory, and
+`get` copies them into fresh arrays, both with the GIL released, so threads
+reading or writing big values at the same time no longer queue on the GIL:
 
 ```python
 from pysciqlop_cache import Cache, PickleOOBSerializer
@@ -181,7 +182,8 @@ measured with `benchmark/pickle_oob_gil.py`:
 
 | | `pickle` | `pickle-oob` |
 |---|---|---|
-| `set` | 21.7 ms | 7.0 ms |
+| `set` | 21.0 ms | 3.9 ms |
+| GIL held during `set` | 15.6 ms | 0 ms |
 | `get` | 2.2 ms | 2.1 ms |
 | GIL held during `get` | 1.0 ms | 0 ms |
 | 8 days, 4 threads | 41–60 ms | 25 ms |

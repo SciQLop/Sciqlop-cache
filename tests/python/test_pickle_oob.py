@@ -73,6 +73,22 @@ class TestFormat(unittest.TestCase):
         with self.assertRaisesRegex(pickle.UnpicklingError, "codec 7"):
             self.ser.loads(bytes(data))
 
+    def test_truncated_value_raises(self):
+        data = self.ser.dumps(fgm_like_day())
+        with self.assertRaises(pickle.UnpicklingError):
+            self.ser.loads(data[: len(data) // 2])
+
+    def test_dumps_chunks_concatenate_to_dumps(self):
+        for value in [42, fgm_like_day(100), fgm_like_day()]:
+            chunks = self.ser.dumps_chunks(value)
+            joined = chunks if isinstance(chunks, bytes) else b"".join(chunks)
+            self.assertEqual(joined, self.ser.dumps(value))
+
+    def test_dumps_chunks_does_not_copy_arrays(self):
+        var = fgm_like_day()
+        chunks = self.ser.dumps_chunks(var)
+        self.assertTrue(any(np.shares_memory(np.asarray(c), var.values) for c in chunks[1:]))
+
     def test_reads_plain_pickle_entries(self):
         var = fgm_like_day(100)
         result = self.ser.loads(PickleSerializer().dumps(var))
@@ -98,6 +114,16 @@ class TestInCache(unittest.TestCase):
         result.time[0] = np.datetime64("2000-01-01", "ns")
         np.testing.assert_array_equal(result.values[1:], var.values[1:])
         np.testing.assert_array_equal(result.time[1:], var.time[1:])
+
+    def test_raw_binding_rejects_non_buffer_values(self):
+        cache = Cache(self.tmp_dir)
+        raw_set = type(cache).__mro__[1].set
+        with self.assertRaises(TypeError):
+            raw_set(cache, "k", [b"ok", 42])
+        with self.assertRaises(TypeError):
+            raw_set(cache, "k", "not bytes")
+        self.assertIsNone(cache.get("k"))
+        del cache
 
     def test_pickle_cache_upgrades_to_oob_and_keeps_old_entries(self):
         old = Cache(self.tmp_dir)
