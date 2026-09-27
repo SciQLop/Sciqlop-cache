@@ -133,11 +133,36 @@ class _OOBPickler(pickle.Pickler):
         return NotImplemented
 
 
+def _copy_raw(stored: memoryview, raw_size: int) -> Any:
+    import numpy as np
+
+    return np.frombuffer(stored, np.uint8).copy()
+
+
+_CODEC_RAW = 0
+# codec id -> (stored bytes, raw size) -> writable buffer. Ids are persisted:
+# never reuse one, only add.
+_BUFFER_DECODERS = {_CODEC_RAW: _copy_raw}
+_PREAMBLE = struct.Struct("<IQ")  # buffer count, header size
+_ENTRY = struct.Struct("<BQQ")  # codec, stored size, raw size
+
+
+def _decode_buffer(codec: int, stored: memoryview, raw_size: int) -> Any:
+    decoder = _BUFFER_DECODERS.get(codec)
+    if decoder is None:
+        raise pickle.UnpicklingError(
+            f"pickle-oob buffer codec {codec} is not supported by this pysciqlop_cache version"
+        )
+    return decoder(stored, raw_size)
+
+
 class PickleOOBSerializer:
     """Pickle protocol 5 with the array buffers stored out-of-band.
 
-    Layout: MAGIC | u32 count | u64 header size | count x u64 buffer size |
-    header pickle | buffers. On load each buffer is copied by numpy, which
+    Layout: MAGIC | u32 count | u64 header size | count x (u8 codec, u64 stored
+    size, u64 raw size) | header pickle | buffers. The per-buffer codec lets a
+    later version compress some buffers (e.g. blosc2 on time axes) without a
+    format change; today every buffer is raw. On load each buffer is copied by numpy, which
     releases the GIL, instead of by pickle, which holds it. Values without
     buffers are written as plain pickle, and plain pickle entries still load,
     so a "pickle" cache can switch to this serializer in place.
@@ -166,8 +191,8 @@ class PickleOOBSerializer:
         if not buffers:
             return header
         raws = [b.raw() for b in buffers]
-        sizes = struct.pack(f"<{len(raws)}Q", *(r.nbytes for r in raws))
-        return b"".join([self.MAGIC, struct.pack("<IQ", len(raws), len(header)), sizes, header, *raws])
+        entries = b"".join(_ENTRY.pack(_CODEC_RAW, r.nbytes, r.nbytes) for r in raws)
+        return b"".join([self.MAGIC, _PREAMBLE.pack(len(raws), len(header)), entries, header, *raws])
 
     def loads(self, data: bytes | memoryview) -> Any:
         if data[0] != self.MAGIC[0]:
@@ -175,17 +200,14 @@ class PickleOOBSerializer:
         view = memoryview(data)
         if view[: len(self.MAGIC)] != self.MAGIC:
             raise pickle.UnpicklingError("unknown pickle-oob header")
-        import numpy as np
-
-        count, header_size = struct.unpack_from("<IQ", view, len(self.MAGIC))
-        sizes_at = len(self.MAGIC) + 12
-        sizes = struct.unpack_from(f"<{count}Q", view, sizes_at)
-        header_at = sizes_at + 8 * count
+        count, header_size = _PREAMBLE.unpack_from(view, len(self.MAGIC))
+        entries_at = len(self.MAGIC) + _PREAMBLE.size
+        header_at = entries_at + count * _ENTRY.size
         offset = header_at + header_size
         buffers = []
-        for size in sizes:
-            buffers.append(np.frombuffer(view, np.uint8, size, offset).copy())
-            offset += size
+        for codec, stored_size, raw_size in _ENTRY.iter_unpack(view[entries_at:header_at]):
+            buffers.append(_decode_buffer(codec, view[offset : offset + stored_size], raw_size))
+            offset += stored_size
         return pickle.loads(view[header_at : header_at + header_size], buffers=buffers)
 
 

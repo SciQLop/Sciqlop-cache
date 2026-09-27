@@ -1,4 +1,5 @@
 import gc
+import pickle
 import shutil
 import tempfile
 import unittest
@@ -63,6 +64,14 @@ class TestFormat(unittest.TestCase):
                 self.assertEqual(result[name].shape, arr.shape)
                 np.testing.assert_array_equal(result[name], arr)
         self.assertTrue(result["f_order"].flags.f_contiguous)
+
+    def test_unknown_buffer_codec_raises(self):
+        data = bytearray(self.ser.dumps(fgm_like_day()))
+        first_codec = len(PickleOOBSerializer.MAGIC) + 12
+        self.assertEqual(data[first_codec], 0)
+        data[first_codec] = 7
+        with self.assertRaisesRegex(pickle.UnpicklingError, "codec 7"):
+            self.ser.loads(bytes(data))
 
     def test_reads_plain_pickle_entries(self):
         var = fgm_like_day(100)
