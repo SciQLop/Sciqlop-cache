@@ -93,24 +93,23 @@ struct DecodeJob
 {
     BufferCodec codec;
     std::span<const char> stored;
-    std::span<char> dst;
+    std::size_t raw_size;
+    std::span<char> dst = {};
 };
 
-static DecodeJob _checked_decode_job(std::span<const char> src, nb::handle job,
-                                     PyBufferViews& views)
+static DecodeJob _checked_decode_job(std::span<const char> src, nb::handle job)
 {
-    auto [codec, offset, stored_size, dst_obj]
-        = nb::cast<std::tuple<int, std::size_t, std::size_t, nb::handle>>(job);
+    auto [codec, offset, stored_size, raw_size]
+        = nb::cast<std::tuple<int, std::size_t, std::size_t, std::size_t>>(job);
     if (offset > src.size() || stored_size > src.size() - offset)
         throw nb::value_error("pickle-oob buffer lies outside the stored value");
-    auto dst = views.acquire(dst_obj, PyBUF_WRITABLE | PyBUF_ANY_CONTIGUOUS);
     auto stored = src.subspan(offset, stored_size);
     switch (static_cast<BufferCodec>(codec))
     {
         case BufferCodec::raw:
-            if (stored.size() != dst.size())
+            if (stored_size != raw_size)
                 throw nb::value_error("pickle-oob raw buffer size mismatch");
-            return { BufferCodec::raw, stored, dst };
+            return { BufferCodec::raw, stored, raw_size };
     }
     throw nb::value_error(
         fmt::format("pickle-oob buffer codec {} is not supported by this pysciqlop_cache version",
@@ -128,19 +127,33 @@ static void _decode(const DecodeJob& job)
     }
 }
 
-// Fills each destination from its slice of `src` (pickle-oob loads). Every
-// job is validated first, with the GIL held, so bad input raises instead of
-// reading or writing out of bounds; the copies then run with the GIL released.
-static void decode_buffers(nb::handle src_obj, nb::sequence jobs)
+// Decodes each (codec, offset, stored_size, raw_size) job of `src` (pickle-oob
+// loads) into a fresh buffer from `alloc(raw_size)`, and returns them. Every
+// job is validated first, with the GIL held and before anything is
+// allocated, so a corrupt value raises instead of allocating a bogus size or
+// touching memory out of bounds; the copies then run with the GIL released.
+static nb::list decode_buffers(nb::handle src_obj, nb::sequence jobs, nb::callable alloc)
 {
     PyBufferViews views;
     auto src = views.acquire(src_obj, PyBUF_ANY_CONTIGUOUS);
     std::vector<DecodeJob> checked;
     for (nb::handle job : jobs)
-        checked.push_back(_checked_decode_job(src, job, views));
-    nb::gil_scoped_release release;
-    for (const auto& job : checked)
-        _decode(job);
+        checked.push_back(_checked_decode_job(src, job));
+    nb::list buffers;
+    for (auto& job : checked)
+    {
+        nb::object dst = alloc(job.raw_size);
+        job.dst = views.acquire(dst, PyBUF_WRITABLE | PyBUF_ANY_CONTIGUOUS);
+        if (job.dst.size() != job.raw_size)
+            throw nb::value_error("alloc() returned a buffer of the wrong size");
+        buffers.append(dst);
+    }
+    {
+        nb::gil_scoped_release release;
+        for (const auto& job : checked)
+            _decode(job);
+    }
+    return buffers;
 }
 
 template <typename T>
@@ -263,8 +276,8 @@ NB_MODULE(_pysciqlop_cache, m)
 
     )pbdoc";
 
-    m.def("decode_buffers", &decode_buffers, "src"_a, "jobs"_a,
-          "Fill each (codec, offset, stored_size, dst) job's dst from src, GIL released.");
+    m.def("decode_buffers", &decode_buffers, "src"_a, "jobs"_a, "alloc"_a,
+          "Decode each (codec, offset, stored_size, raw_size) job of src into alloc(raw_size).");
 
     bind_key_cursor<Cache::KeyCursor>(m, "CacheKeyCursor");
     bind_key_cursor<Index::KeyCursor>(m, "IndexKeyCursor");

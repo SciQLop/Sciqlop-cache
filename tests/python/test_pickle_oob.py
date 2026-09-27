@@ -1,6 +1,7 @@
 import gc
 import pickle
 import shutil
+import struct
 import tempfile
 import unittest
 
@@ -72,6 +73,21 @@ class TestFormat(unittest.TestCase):
         data[first_codec] = 7
         with self.assertRaisesRegex(pickle.UnpicklingError, "codec 7"):
             self.ser.loads(bytes(data))
+
+    def test_corrupt_sizes_raise_before_allocating(self):
+        data = PickleOOBSerializer().dumps(fgm_like_day())
+        entry = len(PickleOOBSerializer.MAGIC) + 12  # first (codec, stored, raw) entry
+        count_at = len(PickleOOBSerializer.MAGIC)
+        corruptions = {
+            "raw size 32 TiB": (entry + 9, struct.pack("<Q", 1 << 45)),
+            "raw size 2**64-1": (entry + 9, struct.pack("<Q", (1 << 64) - 1)),
+            "stored size past the end": (entry + 1, struct.pack("<Q", 1 << 40)),
+            "buffer count 2**32-1": (count_at, struct.pack("<I", (1 << 32) - 1)),
+        }
+        for name, (at, patch) in corruptions.items():
+            corrupt = data[:at] + patch + data[at + len(patch) :]
+            with self.subTest(name), self.assertRaises(pickle.UnpicklingError):
+                self.ser.loads(corrupt)
 
     def test_truncated_value_raises(self):
         data = self.ser.dumps(fgm_like_day())
