@@ -422,6 +422,42 @@ Amortized per-op latency drops significantly with larger batches, especially for
 
 ![Batch per-op cost](benchmark/batch_per_op_chart.png)
 
+### numpy arrays: diskcache vs pickle vs pickle-oob
+
+Here the values are measurement series: float32 samples (4 per row) plus a
+datetime64 time axis, from 100 KB to 100 MB each. All three store them with
+pickle protocol 5. diskcache and sciqlop-cache's default serializer keep the
+array bytes inside the pickle; `PickleOOBSerializer` stores them next to it,
+compressed when that pays off (see
+[Big numpy arrays](#big-numpy-arrays-pickleoobserializer)).
+
+![numpy array benchmark](benchmark/arrays_chart.png)
+
+What the chart shows:
+
+- **Writes:** pickle-oob is the fastest from 400 KB up, and ~5x faster than
+  diskcache at 100 MB. At 100 KB it is level with the default serializer.
+  The arrays go straight to disk with no copy into a pickle buffer.
+- **Reads, one thread:** below 1 MB both sciqlop-cache serializers are ~10x
+  faster than diskcache, because values are read from memory-mapped files.
+  Between 1 and 10 MB, pickle-oob is a little slower than the default
+  serializer: decompressing the time axis costs more than copying it from the
+  page cache. From 25 MB it is the fastest, 3.3x at 100 MB.
+  `PickleOOBSerializer(compress=False)` skips the decompression and reads at
+  about the default serializer's speed, while keeping the multithreaded gains.
+- **Reads, many threads:** this is the point of pickle-oob. The array bytes
+  are copied without holding the GIL, so throughput keeps growing with the
+  thread count: 11 GB/s at 16 threads, against 7.4 GB/s for diskcache (its
+  file reads release the GIL) and 4.6 GB/s for the default serializer (it
+  copies with the GIL held).
+- **Writes, many threads:** writes are serialized by SQLite, so none of them
+  scale. pickle-oob sustains 3.5 GB/s, 2.5x to 3.5x diskcache.
+- **Disk:** noisy float values don't compress, but the time axis does. From
+  1.6 MB up, each value takes ~29 % less space with pickle-oob. Smaller
+  values have time axes under the 256 KiB compression threshold.
+
+This run was on a lightly loaded machine (load average 3–4), not an idle one.
+
 <details>
 <summary>Reproduce the benchmarks</summary>
 
@@ -444,6 +480,10 @@ python benchmark/plot_scaling.py benchmark/scaling_raw.csv --violin -o benchmark
 # Value-size and batch benchmarks
 python benchmark/bench_valuesize.py > benchmark/valuesize_results.csv
 python benchmark/plot_valuesize.py benchmark/valuesize_results.csv -o benchmark
+
+# numpy array benchmark (needs numpy)
+python benchmark/bench_arrays.py > benchmark/arrays_results.csv
+python benchmark/plot_arrays.py benchmark/arrays_results.csv -o benchmark/arrays_chart.png
 ```
 
 </details>
