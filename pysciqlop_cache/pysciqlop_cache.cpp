@@ -263,6 +263,27 @@ static int Buffer_getbuffer(PyObject* exporter, Py_buffer* view, int flags)
                               (Py_ssize_t) b->size(), 1, flags);
 }
 
+// Docstrings of the methods only implemented here (the Python classes
+// document the ones they override).
+namespace doc
+{
+static constexpr const char* count = "Number of entries (O(1): a counter kept in the database).";
+static constexpr const char* size = "Total size of the stored values, in bytes.";
+static constexpr const char* volume = "Bytes used on disk: the database plus the value files.";
+static constexpr const char* evict_tag = "Remove every entry stored with ``tag``. Returns how many were removed.";
+static constexpr const char* expire_and_tag = "The (expire_time, tag) of ``key``, or None if it is missing.";
+static constexpr const char* get_meta = "A value from the store's own metadata table (not a cache entry), or None.";
+static constexpr const char* set_meta = "Store a string in the store's own metadata table (not a cache entry).";
+static constexpr const char* set_max_cache_size = "Set the LRU size limit in bytes (0 = unlimited). For a FanoutCache\nthe limit applies to each shard.";
+static constexpr const char* reset_stats = "Reset the hit and miss counters to zero.";
+static constexpr const char* shard_count = "Number of shards.";
+static constexpr const char* path = "The directory of the store.";
+static constexpr const char* stats = "Hit and miss counters, as ``{\"hits\": ..., \"misses\": ...}``.";
+static constexpr const char* exists = "True if ``key`` is stored (and, for a Cache, not expired).";
+static constexpr const char* clear = "Remove every entry.";
+static constexpr const char* check = "Verify the store: SQLite integrity, dangling rows, orphaned files, sizes\nand counters. With ``fix=True``, also repair what it can.";
+} // namespace doc
+
 static constexpr const char* close_doc
     = "Close the cache's SQLite connection and stop its background thread.\n\n"
       "Not required: this already happens automatically when the object is\n"
@@ -369,7 +390,7 @@ NB_MODULE(_pysciqlop_cache, m)
             [](Cache* self, const std::string& cache_path, size_t max_size, double timeout)
             { new (self) Cache(cache_path, max_size, static_cast<int>(timeout * 1000.0)); },
             "cache_path"_a = ".cache/", "max_size"_a = 0, "timeout"_a = 600.0)
-        .def("count", &Cache::count, nb::call_guard<nb::gil_scoped_release>())
+        .def("count", &Cache::count, doc::count, nb::call_guard<nb::gil_scoped_release>())
         .def("__len__", &Cache::count, nb::call_guard<nb::gil_scoped_release>())
         .def("set", _set_item_impl<Cache>, nb::arg("key"), nb::arg("value"),
              nb::arg("expire") = nb::none(), nb::arg("tag") = nb::none())
@@ -383,7 +404,7 @@ NB_MODULE(_pysciqlop_cache, m)
         .def("keys", &Cache::keys, nb::call_guard<nb::gil_scoped_release>())
         .def("iterkeys", &Cache::iterkeys, nb::keep_alive<0, 1>(),
              nb::call_guard<nb::gil_scoped_release>())
-        .def("exists", &Cache::exists, nb::arg("key"),
+        .def("exists", &Cache::exists, doc::exists, nb::arg("key"),
              nb::call_guard<nb::gil_scoped_release>())
         .def("add", _add_item_impl<Cache>, nb::arg("key"), nb::arg("value"),
              nb::arg("expire") = nb::none(), nb::arg("tag") = nb::none())
@@ -392,42 +413,42 @@ NB_MODULE(_pysciqlop_cache, m)
         .def("pop", &Cache::pop, nb::arg("key"),
              nb::call_guard<nb::gil_scoped_release>())
         .def("touch", _touch_impl<Cache>, nb::arg("key"), nb::arg("expire") = nb::none())
-        .def("expire_and_tag", &Cache::expire_and_tag, nb::arg("key"),
+        .def("expire_and_tag", &Cache::expire_and_tag, doc::expire_and_tag, nb::arg("key"),
              nb::call_guard<nb::gil_scoped_release>())
         .def("expire", &Cache::expire, nb::call_guard<nb::gil_scoped_release>())
         .def("evict", &Cache::evict, nb::call_guard<nb::gil_scoped_release>())
-        .def("evict_tag", &Cache::evict_tag, nb::arg("tag"), nb::call_guard<nb::gil_scoped_release>())
+        .def("evict_tag", &Cache::evict_tag, doc::evict_tag, nb::arg("tag"), nb::call_guard<nb::gil_scoped_release>())
         .def("incr", &Cache::incr, nb::arg("key"), nb::arg("delta") = 1,
              nb::arg("default_value") = 0,
              nb::call_guard<nb::gil_scoped_release>())
         .def("decr", &Cache::decr, nb::arg("key"), nb::arg("delta") = 1,
              nb::arg("default_value") = 0,
              nb::call_guard<nb::gil_scoped_release>())
-        .def("clear", &Cache::clear, nb::call_guard<nb::gil_scoped_release>())
-        .def("check", &Cache::check, nb::arg("fix") = false, nb::call_guard<nb::gil_scoped_release>())
-        .def("set_meta", &Cache::set_meta, nb::arg("key"), nb::arg("value"),
+        .def("clear", &Cache::clear, doc::clear, nb::call_guard<nb::gil_scoped_release>())
+        .def("check", &Cache::check, doc::check, nb::arg("fix") = false, nb::call_guard<nb::gil_scoped_release>())
+        .def("set_meta", &Cache::set_meta, doc::set_meta, nb::arg("key"), nb::arg("value"),
              nb::call_guard<nb::gil_scoped_release>())
-        .def("get_meta", &Cache::get_meta, nb::arg("key"), nb::call_guard<nb::gil_scoped_release>())
-        .def("size", &Cache::size, nb::call_guard<nb::gil_scoped_release>())
-        .def("volume", &Cache::volume, nb::call_guard<nb::gil_scoped_release>())
-        .def("set_max_cache_size", &Cache::set_max_cache_size, nb::arg("value"),
+        .def("get_meta", &Cache::get_meta, doc::get_meta, nb::arg("key"), nb::call_guard<nb::gil_scoped_release>())
+        .def("size", &Cache::size, doc::size, nb::call_guard<nb::gil_scoped_release>())
+        .def("volume", &Cache::volume, doc::volume, nb::call_guard<nb::gil_scoped_release>())
+        .def("set_max_cache_size", &Cache::set_max_cache_size, doc::set_max_cache_size, nb::arg("value"),
              nb::call_guard<nb::gil_scoped_release>())
-        .def("path", [](Cache& c) { return c.path().string(); })
+        .def("path", [](Cache& c) { return c.path().string(); }, doc::path)
         .def("stats", [](Cache& c) {
             auto s = [&] { nb::gil_scoped_release release; return c.stats(); }();
             nb::dict d;
             d["hits"] = s.hits;
             d["misses"] = s.misses;
             return d;
-        })
-        .def("reset_stats", &Cache::reset_stats, nb::call_guard<nb::gil_scoped_release>())
+        }, doc::stats)
+        .def("reset_stats", &Cache::reset_stats, doc::reset_stats, nb::call_guard<nb::gil_scoped_release>())
         .def("close", &Cache::close, close_doc, nb::call_guard<nb::gil_scoped_release>())
         .def("begin_user_transaction", &Cache::begin_user_transaction,
              nb::call_guard<nb::gil_scoped_release>());
 
     nb::class_<Index>(m, "Index")
         .def(nb::init<const std::string&>(), "path"_a = ".index/")
-        .def("count", &Index::count, nb::call_guard<nb::gil_scoped_release>())
+        .def("count", &Index::count, doc::count, nb::call_guard<nb::gil_scoped_release>())
         .def("__len__", &Index::count, nb::call_guard<nb::gil_scoped_release>())
         .def("set", _simple_set_item<Index>, nb::arg("key"), nb::arg("value"))
         .def("__setitem__", _simple_set_item<Index>, nb::arg("key"), nb::arg("value"))
@@ -438,7 +459,7 @@ NB_MODULE(_pysciqlop_cache, m)
         .def("keys", &Index::keys, nb::call_guard<nb::gil_scoped_release>())
         .def("iterkeys", &Index::iterkeys, nb::keep_alive<0, 1>(),
              nb::call_guard<nb::gil_scoped_release>())
-        .def("exists", &Index::exists, nb::arg("key"),
+        .def("exists", &Index::exists, doc::exists, nb::arg("key"),
              nb::call_guard<nb::gil_scoped_release>())
         .def("add", _simple_add_item<Index>, nb::arg("key"), nb::arg("value"))
         .def("delete", &Index::del, nb::arg("key"),
@@ -451,14 +472,14 @@ NB_MODULE(_pysciqlop_cache, m)
         .def("decr", &Index::decr, nb::arg("key"), nb::arg("delta") = 1,
              nb::arg("default_value") = 0,
              nb::call_guard<nb::gil_scoped_release>())
-        .def("clear", &Index::clear, nb::call_guard<nb::gil_scoped_release>())
-        .def("check", &Index::check, nb::arg("fix") = false, nb::call_guard<nb::gil_scoped_release>())
-        .def("size", &Index::size, nb::call_guard<nb::gil_scoped_release>())
-        .def("volume", &Index::volume, nb::call_guard<nb::gil_scoped_release>())
-        .def("set_meta", &Index::set_meta, nb::arg("key"), nb::arg("value"),
+        .def("clear", &Index::clear, doc::clear, nb::call_guard<nb::gil_scoped_release>())
+        .def("check", &Index::check, doc::check, nb::arg("fix") = false, nb::call_guard<nb::gil_scoped_release>())
+        .def("size", &Index::size, doc::size, nb::call_guard<nb::gil_scoped_release>())
+        .def("volume", &Index::volume, doc::volume, nb::call_guard<nb::gil_scoped_release>())
+        .def("set_meta", &Index::set_meta, doc::set_meta, nb::arg("key"), nb::arg("value"),
              nb::call_guard<nb::gil_scoped_release>())
-        .def("get_meta", &Index::get_meta, nb::arg("key"), nb::call_guard<nb::gil_scoped_release>())
-        .def("path", [](Index& idx) { return idx.path().string(); })
+        .def("get_meta", &Index::get_meta, doc::get_meta, nb::arg("key"), nb::call_guard<nb::gil_scoped_release>())
+        .def("path", [](Index& idx) { return idx.path().string(); }, doc::path)
         .def("close", &Index::close, close_doc, nb::call_guard<nb::gil_scoped_release>())
         .def("begin_user_transaction", &Index::begin_user_transaction,
              nb::call_guard<nb::gil_scoped_release>());
@@ -474,7 +495,7 @@ NB_MODULE(_pysciqlop_cache, m)
             },
             "cache_path"_a = ".cache/", "shard_count"_a = 8, "max_size"_a = 0,
             "timeout"_a = 600.0)
-        .def("count", &FanoutCache::count, nb::call_guard<nb::gil_scoped_release>())
+        .def("count", &FanoutCache::count, doc::count, nb::call_guard<nb::gil_scoped_release>())
         .def("__len__", &FanoutCache::count, nb::call_guard<nb::gil_scoped_release>())
         .def("set", _set_item_impl<FanoutCache>, nb::arg("key"), nb::arg("value"),
              nb::arg("expire") = nb::none(), nb::arg("tag") = nb::none())
@@ -488,7 +509,7 @@ NB_MODULE(_pysciqlop_cache, m)
         .def("keys", &FanoutCache::keys, nb::call_guard<nb::gil_scoped_release>())
         .def("iterkeys", &FanoutCache::iterkeys, nb::keep_alive<0, 1>(),
              nb::call_guard<nb::gil_scoped_release>())
-        .def("exists", &FanoutCache::exists, nb::arg("key"),
+        .def("exists", &FanoutCache::exists, doc::exists, nb::arg("key"),
              nb::call_guard<nb::gil_scoped_release>())
         .def("add", _add_item_impl<FanoutCache>, nb::arg("key"), nb::arg("value"),
              nb::arg("expire") = nb::none(), nb::arg("tag") = nb::none())
@@ -497,36 +518,36 @@ NB_MODULE(_pysciqlop_cache, m)
         .def("pop", &FanoutCache::pop, nb::arg("key"),
              nb::call_guard<nb::gil_scoped_release>())
         .def("touch", _touch_impl<FanoutCache>, nb::arg("key"), nb::arg("expire") = nb::none())
-        .def("expire_and_tag", &FanoutCache::expire_and_tag, nb::arg("key"),
+        .def("expire_and_tag", &FanoutCache::expire_and_tag, doc::expire_and_tag, nb::arg("key"),
              nb::call_guard<nb::gil_scoped_release>())
         .def("expire", &FanoutCache::expire, nb::call_guard<nb::gil_scoped_release>())
         .def("evict", &FanoutCache::evict, nb::call_guard<nb::gil_scoped_release>())
-        .def("evict_tag", &FanoutCache::evict_tag, nb::arg("tag"), nb::call_guard<nb::gil_scoped_release>())
+        .def("evict_tag", &FanoutCache::evict_tag, doc::evict_tag, nb::arg("tag"), nb::call_guard<nb::gil_scoped_release>())
         .def("incr", &FanoutCache::incr, nb::arg("key"), nb::arg("delta") = 1,
              nb::arg("default_value") = 0,
              nb::call_guard<nb::gil_scoped_release>())
         .def("decr", &FanoutCache::decr, nb::arg("key"), nb::arg("delta") = 1,
              nb::arg("default_value") = 0,
              nb::call_guard<nb::gil_scoped_release>())
-        .def("clear", &FanoutCache::clear, nb::call_guard<nb::gil_scoped_release>())
-        .def("check", &FanoutCache::check, nb::arg("fix") = false, nb::call_guard<nb::gil_scoped_release>())
-        .def("set_meta", &FanoutCache::set_meta, nb::arg("key"), nb::arg("value"),
+        .def("clear", &FanoutCache::clear, doc::clear, nb::call_guard<nb::gil_scoped_release>())
+        .def("check", &FanoutCache::check, doc::check, nb::arg("fix") = false, nb::call_guard<nb::gil_scoped_release>())
+        .def("set_meta", &FanoutCache::set_meta, doc::set_meta, nb::arg("key"), nb::arg("value"),
              nb::call_guard<nb::gil_scoped_release>())
-        .def("get_meta", &FanoutCache::get_meta, nb::arg("key"), nb::call_guard<nb::gil_scoped_release>())
-        .def("size", &FanoutCache::size, nb::call_guard<nb::gil_scoped_release>())
-        .def("volume", &FanoutCache::volume, nb::call_guard<nb::gil_scoped_release>())
-        .def("shard_count", &FanoutCache::shard_count)
-        .def("set_max_cache_size", &FanoutCache::set_max_cache_size, nb::arg("value"),
+        .def("get_meta", &FanoutCache::get_meta, doc::get_meta, nb::arg("key"), nb::call_guard<nb::gil_scoped_release>())
+        .def("size", &FanoutCache::size, doc::size, nb::call_guard<nb::gil_scoped_release>())
+        .def("volume", &FanoutCache::volume, doc::volume, nb::call_guard<nb::gil_scoped_release>())
+        .def("shard_count", &FanoutCache::shard_count, doc::shard_count)
+        .def("set_max_cache_size", &FanoutCache::set_max_cache_size, doc::set_max_cache_size, nb::arg("value"),
              nb::call_guard<nb::gil_scoped_release>())
-        .def("path", [](FanoutCache& c) { return c.path().string(); })
+        .def("path", [](FanoutCache& c) { return c.path().string(); }, doc::path)
         .def("stats", [](FanoutCache& c) {
             auto s = [&] { nb::gil_scoped_release release; return c.stats(); }();
             nb::dict d;
             d["hits"] = s.hits;
             d["misses"] = s.misses;
             return d;
-        })
-        .def("reset_stats", &FanoutCache::reset_stats, nb::call_guard<nb::gil_scoped_release>())
+        }, doc::stats)
+        .def("reset_stats", &FanoutCache::reset_stats, doc::reset_stats, nb::call_guard<nb::gil_scoped_release>())
         .def("close", &FanoutCache::close, close_doc, nb::call_guard<nb::gil_scoped_release>())
         .def("begin_user_transaction", &FanoutCache::begin_user_transaction, nb::arg("key"),
              nb::call_guard<nb::gil_scoped_release>());
@@ -534,7 +555,7 @@ NB_MODULE(_pysciqlop_cache, m)
     nb::class_<FanoutIndex>(m, "FanoutIndex")
         .def(nb::init<const std::string&, std::size_t>(),
              "path"_a = ".index/", "shard_count"_a = 8)
-        .def("count", &FanoutIndex::count, nb::call_guard<nb::gil_scoped_release>())
+        .def("count", &FanoutIndex::count, doc::count, nb::call_guard<nb::gil_scoped_release>())
         .def("__len__", &FanoutIndex::count, nb::call_guard<nb::gil_scoped_release>())
         .def("set", _simple_set_item<FanoutIndex>, nb::arg("key"), nb::arg("value"))
         .def("__setitem__", _simple_set_item<FanoutIndex>, nb::arg("key"), nb::arg("value"))
@@ -545,7 +566,7 @@ NB_MODULE(_pysciqlop_cache, m)
         .def("keys", &FanoutIndex::keys, nb::call_guard<nb::gil_scoped_release>())
         .def("iterkeys", &FanoutIndex::iterkeys, nb::keep_alive<0, 1>(),
              nb::call_guard<nb::gil_scoped_release>())
-        .def("exists", &FanoutIndex::exists, nb::arg("key"),
+        .def("exists", &FanoutIndex::exists, doc::exists, nb::arg("key"),
              nb::call_guard<nb::gil_scoped_release>())
         .def("add", _simple_add_item<FanoutIndex>, nb::arg("key"), nb::arg("value"))
         .def("delete", &FanoutIndex::del, nb::arg("key"),
@@ -558,15 +579,15 @@ NB_MODULE(_pysciqlop_cache, m)
         .def("decr", &FanoutIndex::decr, nb::arg("key"), nb::arg("delta") = 1,
              nb::arg("default_value") = 0,
              nb::call_guard<nb::gil_scoped_release>())
-        .def("clear", &FanoutIndex::clear, nb::call_guard<nb::gil_scoped_release>())
-        .def("check", &FanoutIndex::check, nb::arg("fix") = false, nb::call_guard<nb::gil_scoped_release>())
-        .def("size", &FanoutIndex::size, nb::call_guard<nb::gil_scoped_release>())
-        .def("volume", &FanoutIndex::volume, nb::call_guard<nb::gil_scoped_release>())
-        .def("shard_count", &FanoutIndex::shard_count)
-        .def("set_meta", &FanoutIndex::set_meta, nb::arg("key"), nb::arg("value"),
+        .def("clear", &FanoutIndex::clear, doc::clear, nb::call_guard<nb::gil_scoped_release>())
+        .def("check", &FanoutIndex::check, doc::check, nb::arg("fix") = false, nb::call_guard<nb::gil_scoped_release>())
+        .def("size", &FanoutIndex::size, doc::size, nb::call_guard<nb::gil_scoped_release>())
+        .def("volume", &FanoutIndex::volume, doc::volume, nb::call_guard<nb::gil_scoped_release>())
+        .def("shard_count", &FanoutIndex::shard_count, doc::shard_count)
+        .def("set_meta", &FanoutIndex::set_meta, doc::set_meta, nb::arg("key"), nb::arg("value"),
              nb::call_guard<nb::gil_scoped_release>())
-        .def("get_meta", &FanoutIndex::get_meta, nb::arg("key"), nb::call_guard<nb::gil_scoped_release>())
-        .def("path", [](FanoutIndex& idx) { return idx.path().string(); })
+        .def("get_meta", &FanoutIndex::get_meta, doc::get_meta, nb::arg("key"), nb::call_guard<nb::gil_scoped_release>())
+        .def("path", [](FanoutIndex& idx) { return idx.path().string(); }, doc::path)
         .def("close", &FanoutIndex::close, close_doc, nb::call_guard<nb::gil_scoped_release>())
         .def("begin_user_transaction", &FanoutIndex::begin_user_transaction, nb::arg("key"),
              nb::call_guard<nb::gil_scoped_release>());
