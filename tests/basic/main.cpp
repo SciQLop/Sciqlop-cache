@@ -1162,3 +1162,43 @@ TEMPLATE_TEST_CASE("set()/add() of ByteChunks store the concatenated chunks",
     }
     REQUIRE(store.check().ok);
 }
+
+// A failure after the value file is written (here: the row insert is rejected
+// by a trigger) must remove that file and store nothing, not orphan it.
+TEMPLATE_TEST_CASE("A row write rejected after the value file is written leaves nothing behind",
+                   "[write][failure]", Cache, Index)
+{
+    AutoCleanDirectory db_path { "RejectedRowWrite" };
+    TestType store(db_path.path());
+    {
+        sqlite3* raw = nullptr;
+        REQUIRE(sqlite3_open((db_path.path() / TestType::db_fname).string().c_str(), &raw)
+                == SQLITE_OK);
+        REQUIRE(sqlite3_exec(raw,
+                    "CREATE TRIGGER reject_boom BEFORE INSERT ON cache WHEN NEW.key = 'boom' "
+                    "BEGIN SELECT RAISE(ABORT, 'rejected'); END;",
+                    nullptr, nullptr, nullptr)
+                == SQLITE_OK);
+        sqlite3_close(raw);
+    }
+    std::vector<char> big(20000, 'x'); // file-backed
+
+    REQUIRE_THROWS(store.set("boom", big));
+    REQUIRE_THROWS(store.add("boom", big));
+
+    REQUIRE_FALSE(store.get("boom"));
+    auto result = store.check();
+    REQUIRE(result.orphaned_files == 0);
+    REQUIRE(result.ok);
+    REQUIRE(store.set("fine", big));
+    REQUIRE(store.get("fine")->to_vector() == big);
+}
+
+TEST_CASE("decr() is incr() with the opposite sign", "[counters]")
+{
+    AutoCleanDirectory db_path { "Decr" };
+    Cache cache(db_path.path());
+    REQUIRE(cache.decr("n") == -1);
+    REQUIRE(cache.decr("n", 4) == -5);
+    REQUIRE(cache.decr("fresh", 1, 10) == 9);
+}

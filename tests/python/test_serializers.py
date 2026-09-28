@@ -239,5 +239,23 @@ class TestSerializerPersistence(unittest.TestCase):
         self.assertEqual(cache.serializer.name, "pickle")
 
 
+class TestSerializerErrors(unittest.TestCase):
+    def test_unknown_serializer_name(self):
+        from pysciqlop_cache.serializers import get_serializer_by_name
+        with self.assertRaisesRegex(ValueError, "Unknown serializer"):
+            get_serializer_by_name("nope")
+
+    @unittest.skipUnless(_has_msgspec, "msgspec not installed")
+    def test_msgspec_rejects_what_it_cannot_encode(self):
+        with self.assertRaises(TypeError):
+            MsgspecSerializer().dumps(object())
+
+    @unittest.skipUnless(_has_msgspec, "msgspec not installed")
+    def test_msgspec_rejects_an_unknown_extension_type(self):
+        data = msgspec.msgpack.encode(msgspec.msgpack.Ext(99, b"x"))
+        with self.assertRaisesRegex(ValueError, "Unknown ext type code"):
+            MsgspecSerializer().loads(data)
+
+
 if __name__ == "__main__":
     unittest.main()

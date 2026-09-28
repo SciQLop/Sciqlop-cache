@@ -335,3 +335,19 @@ SCENARIO("FanoutCache stores ByteChunks as their concatenation", "[fanout][chunk
     REQUIRE(fc.add("k2", chunks, 60s));
     REQUIRE(fc.get("k2")->to_vector() == expected);
 }
+
+SCENARIO("FanoutCache forwards add() with expire and tag, decr() and set_max_cache_size()",
+         "[fanout]")
+{
+    AutoCleanDirectory db_path { "FanoutForwarding" };
+    FanoutCache fc(db_path.path(), 4);
+    std::vector<char> v(10, 'v');
+
+    REQUIRE(fc.add("a", v, std::string("t")));
+    REQUIRE(fc.add("b", v, 60s, std::string("t")));
+    REQUIRE(fc.evict_tag("t") == 2);
+    REQUIRE(fc.decr("n", 3) == -3);
+    fc.set_max_cache_size(1'000'000);
+    REQUIRE(fc.set("c", v));
+    REQUIRE(fc.get("c")->to_vector() == v);
+}

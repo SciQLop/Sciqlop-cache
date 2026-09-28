@@ -224,6 +224,59 @@ class TestBlosc2Runtime(unittest.TestCase):
             self.assertGreater(threads, 1)
 
 
+class TestErrorPaths(unittest.TestCase):
+    """Bad input raises a clear error instead of misbehaving."""
+
+    def setUp(self):
+        self.ser = PickleOOBSerializer(compress=False)
+
+    def test_unknown_header_after_the_nul_byte(self):
+        with self.assertRaisesRegex(pickle.UnpicklingError, "unknown pickle-oob header"):
+            self.ser.loads(b"\x00NOTOOB1" + b"\x00" * 32)
+
+    def test_raw_buffer_whose_raw_size_disagrees_with_its_stored_size(self):
+        data = bytearray(self.ser.dumps(fgm_like_day()))
+        raw_size_at = len(PickleOOBSerializer.MAGIC) + 12 + 9
+        stored = struct.unpack_from("<Q", data, raw_size_at)[0]
+        struct.pack_into("<Q", data, raw_size_at, stored - 8)
+        with self.assertRaisesRegex(pickle.UnpicklingError, "size mismatch"):
+            self.ser.loads(bytes(data))
+
+    def test_decode_buffers_rejects_an_alloc_of_the_wrong_size(self):
+        from pysciqlop_cache._pysciqlop_cache import decode_buffers
+        src = np.arange(10, dtype=np.uint8)
+        with self.assertRaisesRegex(ValueError, "wrong size"):
+            decode_buffers(src, [(0, 0, 10, 10)], lambda n: np.empty(n + 1, np.uint8))
+
+    @unittest.skipUnless(BLOSC2_AVAILABLE, "built without blosc2")
+    def test_compress_buffer_arguments(self):
+        from pysciqlop_cache._pysciqlop_cache import compress_buffer
+        data = np.arange(100_000, dtype=np.int64)
+        for typesize in (0, 256):
+            self.assertIsNone(compress_buffer(data, typesize, 2.0))
+        self.assertIsNone(compress_buffer(np.zeros(10, np.uint8), 3, 2.0))  # not whole items
+        self.assertIsNone(compress_buffer(np.empty(0, np.uint8), 1, 2.0))
+        for bad_ratio in (0.0, -1.0):
+            with self.assertRaisesRegex(ValueError, "min_ratio"):
+                compress_buffer(data, 8, bad_ratio)
+
+    @unittest.skipUnless(BLOSC2_AVAILABLE, "built without blosc2")
+    def test_a_buffer_that_compresses_only_at_its_start_is_kept_raw(self):
+        from pysciqlop_cache._pysciqlop_cache import compress_buffer
+        data = np.concatenate([np.zeros(256 * 1024, np.uint8),
+                               np.random.default_rng(0).integers(0, 256, 4 << 20, np.uint8)])
+        self.assertIsNone(compress_buffer(data, 1, 2.0))
+
+    @unittest.skipUnless(BLOSC2_AVAILABLE, "built without blosc2")
+    def test_corrupt_chunk_body_raises(self):
+        data = bytearray(PickleOOBSerializer().dumps({"t": np.arange(1_000_000, dtype=np.int64)}))
+        self.assertEqual(buffer_codecs(data), [1])
+        stored_at = len(data) - struct.unpack_from("<BQQ", data, 20)[1]
+        data[stored_at + 40 : stored_at + 48] = b"\xff" * 8  # past the 32-byte chunk header
+        with self.assertRaisesRegex(pickle.UnpicklingError, "could not decompress"):
+            PickleOOBSerializer().loads(bytes(data))
+
+
 class TestInCache(unittest.TestCase):
     def setUp(self):
         self.tmp_dir = tempfile.mkdtemp()
