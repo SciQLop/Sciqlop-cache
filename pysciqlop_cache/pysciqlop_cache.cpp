@@ -325,12 +325,14 @@ NB_MODULE(_pysciqlop_cache, m)
              {
                  Buffer& b = nb::cast<Buffer&>(self);
 
-                 if (!b) {
-                     throw std::runtime_error("Cannot create memory view of invalid buffer");
+                 // An empty value is valid (a serializer may return b""), but an
+                 // empty Buffer tests false, so this comes before the check.
+                 if (b.size() == 0) {
+                     return nb::steal(PyMemoryView_FromMemory(nullptr, 0, PyBUF_READ));
                  }
 
-                 if (b.data() == nullptr && b.size() == 0) {
-                     return nb::steal(PyMemoryView_FromMemory(nullptr, 0, PyBUF_READ));
+                 if (!b) {
+                     throw std::runtime_error("Cannot create memory view of invalid buffer");
                  }
 
                  return nb::steal(PyMemoryView_FromObject(self.ptr()));
