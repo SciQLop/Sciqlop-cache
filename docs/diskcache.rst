@@ -9,7 +9,8 @@ after swapping the import.
 Migrating a cache
 =================
 
-Existing data moves over with one command. Expiration times and tags are kept:
+Existing data moves over with one command. Keys keep their type, and expiration
+times and tags are kept:
 
 .. code-block:: console
 

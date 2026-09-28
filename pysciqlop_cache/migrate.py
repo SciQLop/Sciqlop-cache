@@ -18,6 +18,7 @@ from pathlib import Path
 # one unreadable legacy entry should not abort migration of every other entry, it
 # should be warned about and skipped.
 _UNREADABLE = object()
+_MISSING = object()
 
 
 class InsufficientDiskSpaceError(OSError):
@@ -88,32 +89,27 @@ def _remaining_ttl(expire_time):
 
 
 def _iter_diskcache_entries(dc):
-    """Yield (key_str, value_bytes, ttl_secs_or_none, tag_or_none) from a diskcache.
+    """Yield (key, value, ttl_secs_or_none, tag_or_none) from a diskcache.
 
+    Keys keep their type (sciqlop-cache takes any hashable key, like diskcache).
     A key whose value fails to deserialize yields ``_UNREADABLE`` as its value
     instead of raising, so one bad entry doesn't abort every entry after it.
     """
-    # diskcache.Index wraps a ._cache; use it for _sql access
-    sql_source = dc._cache if hasattr(dc, '_cache') else dc
+    # diskcache.Index wraps a Cache (._cache), which reports expire_time and tag.
+    cache = dc._cache if hasattr(dc, '_cache') else dc
     for key in list(dc):
-        key_str = str(key) if not isinstance(key, str) else key
         try:
-            value = dc.get(key) if hasattr(dc, 'get') else dc[key]
+            value, expire_time, tag = cache.get(key, _MISSING, expire_time=True, tag=True)
         except Exception as e:
-            print(f"  warning: could not read entry {key_str!r}, skipping ({e})", file=sys.stderr)
-            yield key_str, _UNREADABLE, None, None
+            print(f"  warning: could not read entry {key!r}, skipping ({e})", file=sys.stderr)
+            yield key, _UNREADABLE, None, None
             continue
-        if value is None:
-            continue
-        row = sql_source._sql(
-            "SELECT expire_time, tag FROM Cache WHERE key=?", (key,)
-        ).fetchone()
-        ttl = _remaining_ttl(row[0]) if row else None
-        tag = row[1] if row else None
-        # Skip already-expired entries
+        if value is _MISSING:
+            continue  # deleted or expired since listing
+        ttl = _remaining_ttl(expire_time)
         if ttl is not None and ttl <= 0:
             continue
-        yield key_str, value, ttl, tag
+        yield key, value, ttl, tag
 
 
 def _iter_fanout_entries(fc):
@@ -198,31 +194,31 @@ def migrate(src_path, dst_path, *, drop=False, shard_count=None, store_type="cac
     errors = 0
     t0 = time.monotonic()
 
-    for key_str, value, ttl, tag in entries:
+    for key, value, ttl, tag in entries:
         if value is _UNREADABLE:
             skipped += 1
             continue
         try:
             if is_index:
-                dst.set(key_str, value)
+                dst.set(key, value)
             else:
                 kwargs = {}
                 if ttl is not None:
                     kwargs["expire"] = ttl
                 if tag is not None:
                     kwargs["tag"] = tag
-                dst.set(key_str, value, **kwargs)
+                dst.set(key, value, **kwargs)
             if drop:
                 try:
                     if is_index and not is_fanout:
-                        del src[key_str]
+                        del src[key]
                     else:
-                        src.delete(key_str)
+                        src.delete(key)
                 except Exception:
                     pass  # best-effort deletion
             migrated += 1
         except Exception as e:
-            print(f"  error migrating {key_str!r}: {e}", file=sys.stderr)
+            print(f"  error migrating {key!r}: {e}", file=sys.stderr)
             errors += 1
 
     elapsed = time.monotonic() - t0
