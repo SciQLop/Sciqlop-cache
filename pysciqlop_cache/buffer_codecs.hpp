@@ -52,14 +52,26 @@ inline std::size_t chunk_size(int typesize)
     return max_chunk - max_chunk % static_cast<std::size_t>(typesize);
 }
 
+// blosc2 gives each decompression thread a fixed range of blocks, so the
+// call waits for its slowest thread: under load, a preempted pool worker
+// made a 0.5 MB decode take 0.7 ms instead of 0.02 ms. One thread per
+// 2 MiB keeps small buffers on the calling thread; big ones use every core.
+inline constexpr std::size_t decompression_bytes_per_thread = std::size_t { 2 } << 20;
+
+inline int decompression_threads(std::size_t nbytes)
+{
+    auto wanted = std::max<std::size_t>(1, nbytes / decompression_bytes_per_thread);
+    return static_cast<int>(std::min<std::size_t>(
+        { wanted, blosc2_runtime::thread_count(), std::size_t { INT16_MAX } }));
+}
+
 struct DecompressionCtx
 {
     blosc2_context* ctx;
-    DecompressionCtx()
+    explicit DecompressionCtx(std::size_t nbytes)
     {
         blosc2_dparams params = BLOSC2_DPARAMS_DEFAULTS;
-        params.nthreads = static_cast<int16_t>(
-            std::min<unsigned>(blosc2_runtime::thread_count(), INT16_MAX));
+        params.nthreads = static_cast<int16_t>(decompression_threads(nbytes));
         ctx = blosc2_create_dctx(params);
         if (!ctx)
             throw std::runtime_error("blosc2: could not create a decompression context");
@@ -143,7 +155,7 @@ inline std::optional<std::string> _check_blosc2(std::span<const char> stored, st
 
 inline std::optional<std::string> _decode_blosc2(std::span<const char> stored, std::span<char> dst)
 {
-    oob_blosc2::DecompressionCtx ctx;
+    oob_blosc2::DecompressionCtx ctx(dst.size());
     while (!stored.empty())
     {
         int32_t nbytes = 0, cbytes = 0, blocksize = 0;
