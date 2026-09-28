@@ -1,0 +1,16 @@
+# Python coverage of pysciqlop_cache. CI starts it in every Python process
+# (tests, their subprocesses and forked children) with a .pth hook calling
+# coverage.process_startup() and COVERAGE_PROCESS_START pointing here.
+[run]
+branch = True
+parallel = True
+source = pysciqlop_cache
+
+[paths]
+# The tests import the copies meson puts in the build directory.
+source =
+    pysciqlop_cache/
+    */build*/pysciqlop_cache/
+
+[report]
+show_missing = True
