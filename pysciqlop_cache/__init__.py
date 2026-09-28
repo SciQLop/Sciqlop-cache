@@ -145,6 +145,7 @@ class Lock:
         self._tag = tag
 
     def acquire(self):
+        """Block until the lock is acquired."""
         kwargs = {}
         if self._expire is not None:
             kwargs["expire"] = self._expire
@@ -165,6 +166,7 @@ class Lock:
         return self._cache.delete(self._key)
 
     def locked(self) -> bool:
+        """True if some holder currently has the lock."""
         return self._key in self._cache
 
     def __enter__(self):
@@ -236,6 +238,7 @@ class Cache(_Cache):
 
     @property
     def serializer(self) -> Serializer:
+        """The serializer in use, recorded in the cache on first open."""
         return self._serializer
 
     def set(
@@ -247,16 +250,17 @@ class Cache(_Cache):
         tag: Optional[str] = None,
         retry: bool = False,
     ):
-        """Set a value in the cache with an optional expiration time and tag.
+        """Store ``value`` under ``key``, replacing any previous value.
 
-        Parameters:
-        key (str): The key under which to store the value.
-        value: The value to store in the cache.
-        expire (Optional[Union[timedelta, int, float]]): Expiration time.
-            Can be a `timedelta`, an integer (seconds), or a float (seconds).
-            If `None`, the entry will not expire.
-        tag (Optional[str]): Optional tag for grouping cache entries.
-            Use `evict_tag()` to bulk-remove entries by tag.
+        Args:
+            key: A string, or any hashable key (numbers, bytes, tuples, ...).
+            value: Any value the cache's serializer accepts.
+            expire: Lifetime, as a :class:`~datetime.timedelta` or seconds. None
+                (default) never expires.
+            tag: Optional tag; :meth:`evict_tag` removes all entries of a tag.
+
+        Returns:
+            True, like diskcache.
         """
         if type(key) is not str:
             key = _encode_key(self, key)
@@ -276,12 +280,17 @@ class Cache(_Cache):
         tag: bool = False,
         retry: bool = False,
     ) -> Any:
-        """Get a value from the cache.
+        """The value stored under ``key``, or ``default`` if it is missing or expired.
 
-        Parameters:
-        key (str): The key of the value to retrieve.
+        Args:
+            key: The key.
+            default: Returned when the key is missing.
+            expire_time: Also return the entry's expiration time.
+            tag: Also return the entry's tag.
+
         Returns:
-        Any: The value, or `default` if the key does not exist or has expired.
+            The value, or ``(value, expire_time)``, ``(value, tag)`` or
+            ``(value, expire_time, tag)`` when asked for, like diskcache.
         """
         if type(key) is not str:
             key = _encode_key(self, key)
@@ -309,12 +318,9 @@ class Cache(_Cache):
         tag: bool = False,
         retry: bool = False,
     ) -> Any:
-        """Remove a value from the cache and return it.
+        """Remove ``key`` and return its value, or ``default`` if it is missing.
 
-        Parameters:
-        key (str): The key of the value to remove.
-        Returns:
-        Any: The value, or `default` if the key does not exist.
+        ``expire_time`` and ``tag`` add the same metadata as :meth:`get`.
         """
         if type(key) is not str:
             key = _encode_key(self, key)
@@ -341,14 +347,12 @@ class Cache(_Cache):
         tag: Optional[str] = None,
         retry: bool = False,
     ) -> bool:
-        """Add a value to the cache if the key does not already exist.
+        """Store ``value`` only if ``key`` is absent (atomically).
 
-        Parameters:
-        key (str): The key under which to store the value.
-        value: The value to store in the cache.
-        tag (Optional[str]): Optional tag for grouping cache entries.
+        Takes the same ``expire`` and ``tag`` as :meth:`set`.
+
         Returns:
-        bool: `True` if the value was added, `False` if the key already exists.
+            True if the value was added, False if the key already existed.
         """
         if type(key) is not str:
             key = _encode_key(self, key)
@@ -363,15 +367,16 @@ class Cache(_Cache):
     def touch(
         self, key: AnyStr, expire: Optional[Union[timedelta, int, float]] = None, retry: bool = False
     ) -> bool:
-        """Update the expiration time of an existing entry.
+        """Give an existing entry a new lifetime.
 
-        Parameters:
-        key (str): The key of the entry to touch.
-        expire (Optional[Union[timedelta, int, float]]): New expiration time.
-            Can be a `timedelta`, an integer (seconds), or a float (seconds).
-            If `None` (default), the entry will no longer expire.
+        Args:
+            key: The key.
+            expire: New lifetime, as a :class:`~datetime.timedelta` or seconds.
+                None (default) makes the entry never expire.
+
         Returns:
-        bool: `True` if the entry existed and was not expired, `False` otherwise.
+            True if the entry existed and had not expired. An expired entry is not
+            brought back.
         """
         if type(key) is not str:
             key = _encode_key(self, key)
@@ -380,25 +385,36 @@ class Cache(_Cache):
         return super().touch(key, expire=expire)
 
     def delete(self, key: AnyStr, retry: bool = False) -> bool:
+        """Remove ``key``. Returns True if it was there."""
         if type(key) is not str:
             key = _encode_key(self, key)
         return super().delete(key)
 
     def exists(self, key: AnyStr) -> bool:
+        """True if ``key`` is stored and not expired."""
         if type(key) is not str:
             key = _encode_key(self, key)
         return super().exists(key)
 
     def expire(self, retry: bool = False):
+        """Remove every expired entry now (the background thread also does it)."""
         return super().expire()
 
     def evict(self, retry: bool = False):
+        """Evict least-recently-used entries until the cache fits ``max_size``."""
         return super().evict()
 
     def clear(self, retry: bool = False):
+        """Remove every entry."""
         return super().clear()
 
     def check(self, fix: bool = False, retry: bool = False):
+        """Verify the store: SQLite integrity, dangling rows, orphaned files, sizes
+        and counters. With ``fix=True``, also repair what it can.
+
+        Returns a result with ``ok``, ``orphaned_files``, ``dangling_rows``,
+        ``size_mismatches``, ``counters_consistent`` and ``sqlite_integrity_ok``.
+        """
         return super().check(fix=fix)
 
     def incr(self, key: AnyStr, delta: int = 1, default: int = 0, retry: bool = False) -> int:
@@ -432,22 +448,22 @@ class Cache(_Cache):
         return f"{base}:{key_hash}"
 
     def memoize(self, expire=None, tag=None, typed=False, version_aware=False):
-        """Decorator to memoize function results in cache.
+        """Decorator caching a function's results in this cache.
 
-        Parameters:
-        expire: Expiration time (timedelta, int seconds, or float seconds).
-            None = no expiry.
-        tag (str): Optional tag for bulk eviction of memoized entries.
-        typed (bool): If True, arguments of different types are cached
-            separately (e.g. f(1) and f(1.0) get different cache entries).
-        version_aware (bool): If True, the function's bytecode is included
-            in the cache key so that implementation changes automatically
-            invalidate cached results.
+        The key is the function's module and name plus a hash of its arguments.
 
-        Usage:
-            cache = Cache()
+        Args:
+            expire: Lifetime of each result, as a :class:`~datetime.timedelta` or
+                seconds. None (default) never expires.
+            tag: Optional tag, to remove all results at once with :meth:`evict_tag`.
+            typed: Cache arguments of different types separately (``f(1)`` and
+                ``f(1.0)``).
+            version_aware: Include a hash of the function's bytecode in the key, so
+                changing the function invalidates its old results.
 
-            @cache.memoize()
+        Example::
+
+            @cache.memoize(expire=300)
             def expensive(x, y):
                 return x + y
         """
@@ -500,20 +516,31 @@ class Cache(_Cache):
         return _decode_keys(self, super().iterkeys())
 
     def keys(self):
+        """All keys, as a list."""
         return _decode_keys(self, super().keys())
 
     def iterkeys(self):
+        """Iterate over the keys without building a list."""
         return _decode_keys(self, super().iterkeys())
 
     def __repr__(self) -> str:
         return f"Cache({str(super().path())!r}, count={len(self)})"
 
     def lock(self, key, expire=None, tag=None):
+        """A cross-process lock stored in this cache, usable as a context manager.
+
+        ``expire`` (seconds) bounds how long a crashed holder can keep it.
+        """
         if type(key) is not str:
             key = _encode_key(self, key)
         return Lock(self, key, expire=expire, tag=tag)
 
     def transact(self, retry: bool = False):
+        """Context manager running a block in one transaction.
+
+        Commits on success, rolls back on an exception. Reentrant: a nested
+        ``transact()`` block joins the outer one.
+        """
         return _TransactionContext(self)
 
     def __enter__(self):
@@ -543,14 +570,17 @@ class Index(_Index):
 
     @property
     def serializer(self) -> Serializer:
+        """The serializer in use, recorded in the index on first open."""
         return self._serializer
 
     def set(self, key: AnyStr, value: Any, retry: bool = False):
+        """Store ``value`` under ``key``."""
         if type(key) is not str:
             key = _encode_key(self, key)
         super().set(key, _encode_value(self._serializer, value))
 
     def get(self, key: AnyStr, default=None, retry: bool = False) -> Any:
+        """The value stored under ``key``, or ``default``."""
         if type(key) is not str:
             key = _encode_key(self, key)
         value = super().get(key)
@@ -559,6 +589,9 @@ class Index(_Index):
         return default
 
     def pop(self, key: AnyStr, default=_MISSING, retry: bool = False) -> Any:
+        """Remove ``key`` and return its value. Raises KeyError if it is missing,
+        unless ``default`` is given.
+        """
         if type(key) is not str:
             key = _encode_key(self, key)
         value = super().pop(key)
@@ -569,27 +602,38 @@ class Index(_Index):
         return default
 
     def add(self, key: AnyStr, value: Any, retry: bool = False) -> bool:
+        """Store ``value`` only if ``key`` is absent. Returns True if it was added."""
         if type(key) is not str:
             key = _encode_key(self, key)
         return super().add(key, _encode_value(self._serializer, value))
 
     def delete(self, key: AnyStr, retry: bool = False) -> bool:
+        """Remove ``key``. Returns True if it was there."""
         if type(key) is not str:
             key = _encode_key(self, key)
         return super().delete(key)
 
     def exists(self, key: AnyStr) -> bool:
+        """True if ``key`` is stored."""
         if type(key) is not str:
             key = _encode_key(self, key)
         return super().exists(key)
 
     def clear(self, retry: bool = False):
+        """Remove every entry."""
         return super().clear()
 
     def check(self, fix: bool = False, retry: bool = False):
+        """Verify the store: SQLite integrity, dangling rows, orphaned files, sizes
+        and counters. With ``fix=True``, also repair what it can.
+        """
         return super().check(fix=fix)
 
     def incr(self, key: AnyStr, delta: int = 1, default: int = 0, retry: bool = False) -> int:
+        """Add ``delta`` to the integer under ``key`` atomically; return the new value.
+
+        A missing key starts at ``default``.
+        """
         with self.transact():
             value = self.get(key, default)
             new_value = value + delta
@@ -597,6 +641,7 @@ class Index(_Index):
         return new_value
 
     def decr(self, key: AnyStr, delta: int = 1, default: int = 0, retry: bool = False) -> int:
+        """Subtract ``delta`` from the integer under ``key`` atomically; return the new value."""
         return self.incr(key, -delta, default, retry)
 
     def __getitem__(self, key: AnyStr):
@@ -625,15 +670,21 @@ class Index(_Index):
         return _decode_keys(self, super().iterkeys())
 
     def keys(self):
+        """All keys, as a list."""
         return _decode_keys(self, super().keys())
 
     def iterkeys(self):
+        """Iterate over the keys without building a list."""
         return _decode_keys(self, super().iterkeys())
 
     def __repr__(self) -> str:
         return f"Index({str(super().path())!r}, count={len(self)})"
 
     def transact(self, retry: bool = False):
+        """Context manager running a block in one transaction.
+
+        Commits on success, rolls back on an exception. Reentrant.
+        """
         return _TransactionContext(self)
 
     def __enter__(self):
@@ -646,9 +697,11 @@ class Index(_Index):
     setdefault = MutableMapping.setdefault
 
     def items(self):
+        """A view of the (key, value) pairs."""
         return ItemsView(self)
 
     def values(self):
+        """A view of the values."""
         return ValuesView(self)
 
     def peekitem(self, last=True):
@@ -787,15 +840,16 @@ class FanoutCache(_FanoutCache):
     def touch(
         self, key: AnyStr, expire: Optional[Union[timedelta, int, float]] = None, retry: bool = False
     ) -> bool:
-        """Update the expiration time of an existing entry.
+        """Give an existing entry a new lifetime.
 
-        Parameters:
-        key (str): The key of the entry to touch.
-        expire (Optional[Union[timedelta, int, float]]): New expiration time.
-            Can be a `timedelta`, an integer (seconds), or a float (seconds).
-            If `None` (default), the entry will no longer expire.
+        Args:
+            key: The key.
+            expire: New lifetime, as a :class:`~datetime.timedelta` or seconds.
+                None (default) makes the entry never expire.
+
         Returns:
-        bool: `True` if the entry existed and was not expired, `False` otherwise.
+            True if the entry existed and had not expired. An expired entry is not
+            brought back.
         """
         if type(key) is not str:
             key = _encode_key(self, key)
@@ -915,6 +969,11 @@ class FanoutCache(_FanoutCache):
         return Lock(self, key, expire=expire, tag=tag)
 
     def transact(self, key: str, retry: bool = False):
+        """Context manager running a block in one transaction on the shard of ``key``.
+
+        Commits on success, rolls back on an exception. There are no cross-shard
+        transactions.
+        """
         if type(key) is not str:
             key = _encode_key(self, key)
         return _TransactionContext(self, key)
@@ -1040,6 +1099,11 @@ class FanoutIndex(_FanoutIndex):
         return f"FanoutIndex({str(super().path())!r}, shards={self.shard_count()}, count={len(self)})"
 
     def transact(self, key: str, retry: bool = False):
+        """Context manager running a block in one transaction on the shard of ``key``.
+
+        Commits on success, rolls back on an exception. There are no cross-shard
+        transactions.
+        """
         if type(key) is not str:
             key = _encode_key(self, key)
         return _TransactionContext(self, key)
@@ -1076,3 +1140,18 @@ class FanoutIndex(_FanoutIndex):
 
 MutableMapping.register(Index)
 MutableMapping.register(FanoutIndex)
+
+
+def _share_docstrings(target, source):
+    """Copy docstrings of methods `target` redefines without one: the fanout
+    stores repeat Cache's and Index's methods, one shard at a time."""
+    for name, member in vars(target).items():
+        if name.startswith("_") or getattr(member, "__doc__", None):
+            continue
+        documented = getattr(source, name, None)
+        if documented is not None and documented.__doc__:
+            member.__doc__ = documented.__doc__
+
+
+_share_docstrings(FanoutCache, Cache)
+_share_docstrings(FanoutIndex, Index)
