@@ -2,6 +2,8 @@ import os
 import shutil
 import unittest
 from pysciqlop_cache import  Cache
+from pysciqlop_cache import FanoutCache, FanoutIndex, Index, PickleOOBSerializer, PickleSerializer
+import gc
 import tempfile
 import time
 
@@ -782,6 +784,43 @@ class TestFanoutIndex(unittest.TestCase):
                 raise ValueError("rollback")
         self.assertIsNone(self.index.get("x"))
         self.assertEqual(self.index.get("pre"), "existing")
+
+
+class TestSerializerIsRecorded(unittest.TestCase):
+    """Every store records its serializer, so reopening it without one reads
+    the values back correctly instead of unpickling them with the default."""
+
+    STORES = (Cache, Index, FanoutCache, FanoutIndex)
+
+    def setUp(self):
+        self.tmp_dir = tempfile.mkdtemp()
+
+    def tearDown(self):
+        gc.collect()
+        shutil.rmtree(self.tmp_dir)
+
+    def test_reopen_without_serializer_uses_the_recorded_one(self):
+        for cls in self.STORES:
+            with self.subTest(cls.__name__):
+                path = os.path.join(self.tmp_dir, cls.__name__)
+                store = cls(path, serializer=PickleOOBSerializer())
+                store["k"] = [1, 2, 3]
+                del store
+                gc.collect()
+                reopened = cls(path)
+                self.assertEqual(reopened.serializer.name, "pickle-oob")
+                self.assertEqual(reopened["k"], [1, 2, 3])
+                del reopened
+
+    def test_reopen_with_an_incompatible_serializer_raises(self):
+        for cls in self.STORES:
+            with self.subTest(cls.__name__):
+                path = os.path.join(self.tmp_dir, cls.__name__)
+                del_me = cls(path, serializer=PickleOOBSerializer())
+                del del_me
+                gc.collect()
+                with self.assertRaises(ValueError):
+                    cls(path, serializer=PickleSerializer())
 
 
 class TestCheckResult(unittest.TestCase):
