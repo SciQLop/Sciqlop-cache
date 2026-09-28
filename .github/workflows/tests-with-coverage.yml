@@ -14,7 +14,15 @@ jobs:
         run: |
           sudo apt update
           sudo apt install -y python3-pip python3-dev lcov g++ meson ninja-build git catch2
-          pip install --upgrade meson ninja numpy meson-python>=0.14.0 build wheel ddt requests
+          pip install --upgrade meson ninja numpy meson-python>=0.14.0 build wheel ddt requests coverage diskcache msgspec
+      - name: Start Python coverage in every Python process
+        # A .pth line runs at interpreter start, so the tests, their subprocesses
+        # and forked children all record coverage (see .coveragerc).
+        run: |
+          echo "import coverage; coverage.process_startup()" | \
+            sudo tee "$(python3 -c 'import sysconfig; print(sysconfig.get_path("purelib"))')/coverage_startup.pth"
+          echo "COVERAGE_PROCESS_START=$GITHUB_WORKSPACE/.coveragerc" >> "$GITHUB_ENV"
+          echo "COVERAGE_FILE=$GITHUB_WORKSPACE/.coverage" >> "$GITHUB_ENV"
       - name: Configure with meson
         run: meson -Db_coverage=true -Dwith_tests=true . build
       - name: Build (meson)
@@ -27,11 +35,16 @@ jobs:
           lcov --remove coverage.info '/usr/*' --ignore-errors=unused --output-file coverage.info
           lcov --remove coverage.info '*/catch*' --ignore-errors=unused --output-file coverage.info
           lcov --list coverage.info
+      - name: Generate Python coverage report
+        run: |
+          python3 -m coverage combine
+          python3 -m coverage report
+          python3 -m coverage xml -o python-coverage.xml
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
-          file: ./coverage.info
+          files: ./coverage.info,./python-coverage.xml
           flags: unittests
-          name: codecov-cdfpp
+          name: codecov-sciqlop-cache
           fail_ci_if_error: true
