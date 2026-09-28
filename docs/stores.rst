@@ -40,7 +40,8 @@ Index
     print(catalog.pop("dataset/v1"))
 
 ``pop()`` on a missing key raises :class:`KeyError` unless you give a default, like a
-dict. ``peekitem()`` and ``popitem()`` follow the key order, not the insertion order.
+dict. ``peekitem()`` and ``popitem()`` follow the key order, not the insertion order. On a
+``FanoutIndex`` that order is per shard: the last item of the last shard, not the largest key.
 
 Why shard: FanoutCache
 ======================

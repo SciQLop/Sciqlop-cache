@@ -78,7 +78,8 @@ Cache the results of a function in one line:
     # 16 16 [4]
 
 The key is made of the function's module and name plus a hash of its arguments.
-``typed=True`` stores ``f(1)`` and ``f(1.0)`` separately. ``version_aware=True`` adds a
+Arguments are hashed through the serializer, so ``f(1)`` and ``f(1.0)`` are separate
+entries; ``typed=True`` also puts the argument types in the key. ``version_aware=True`` adds a
 hash of the function's bytecode, so changing the function invalidates its old results.
 
 Counters and transactions

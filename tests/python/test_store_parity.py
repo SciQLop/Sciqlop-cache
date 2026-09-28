@@ -210,12 +210,28 @@ class IndexContract(_TempDir):
             self.assertEqual(store.incr(("n", 1)), 1)
             self.assertEqual(store.decr(("n", 1), delta=3), -2)
 
-    def test_peekitem_and_popitem_follow_key_order(self):
+    def test_index_peekitem_and_popitem_follow_key_order(self):
+        index = Index(f"{self.tmp}/ordered", {"b": 2, "a": 1, "c": 3})
+        self.assertEqual(index.peekitem(), ("c", 3))
+        self.assertEqual(index.peekitem(last=False), ("a", 1))
+        self.assertEqual(index.popitem(), ("c", 3))          # last by default
+        self.assertEqual(index.popitem(last=False), ("a", 1))
+        self.assertEqual(dict(index.items()), {"b": 2})
+
+    def test_peekitem_ends_are_the_ends_of_keys(self):
         for store in self._each({"b": 2, "a": 1, "c": 3}):
-            self.assertEqual(store.peekitem(), ("c", 3))
-            self.assertEqual(store.peekitem(last=False), ("a", 1))
-            self.assertEqual(store.popitem(last=False), ("a", 1))
-            self.assertEqual(len(store), 2)
+            keys = store.keys()
+            self.assertEqual(store.peekitem()[0], keys[-1])
+            self.assertEqual(store.peekitem(last=False)[0], keys[0])
+
+    def test_popitem_removes_what_peekitem_shows(self):
+        # FanoutIndex order is per shard, and shards depend on the platform's hash.
+        for store in self._each({"b": 2, "a": 1, "c": 3}):
+            for last in (True, False):
+                peeked = store.peekitem(last=last)
+                self.assertEqual(store.popitem(last=last), peeked)
+                self.assertNotIn(peeked[0], store)
+            self.assertEqual(len(store), 1)
 
     def test_transact_and_maintenance(self):
         for store in self._each():
@@ -226,6 +242,151 @@ class IndexContract(_TempDir):
             self.assertTrue(store.check(fix=True).ok)
             store.clear()
             self.assertEqual(len(store), 0)
+
+
+ALL_STORES = (Cache, FanoutCache, Index, FanoutIndex)
+
+
+def _transact(store, key="k"):
+    return store.transact(key) if isinstance(store, (FanoutCache, FanoutIndex)) else store.transact()
+
+
+class ExceptionsEscape(_TempDir):
+    def test_an_exception_in_transact_rolls_back_and_propagates(self):
+        for cls in ALL_STORES:
+            with self.subTest(cls.__name__):
+                store = cls(f"{self.tmp}/{cls.__name__}")
+                store["k"] = "before"
+                with self.assertRaises(ZeroDivisionError):
+                    with _transact(store):
+                        store["k"] = "during"
+                        1 / 0
+                self.assertEqual(store["k"], "before")
+
+    def test_with_store_does_not_swallow_exceptions(self):
+        for cls in ALL_STORES:
+            with self.subTest(cls.__name__):
+                store = cls(f"{self.tmp}/{cls.__name__}")
+                with self.assertRaises(ZeroDivisionError):
+                    with store:
+                        1 / 0
+                store["still"] = "usable"
+
+    def test_an_exception_in_a_lock_releases_it_and_propagates(self):
+        for cls in (Cache, FanoutCache):
+            with self.subTest(cls.__name__):
+                lock = cls(f"{self.tmp}/{cls.__name__}").lock("resource")
+                with self.assertRaises(ZeroDivisionError):
+                    with lock:
+                        1 / 0
+                self.assertFalse(lock.locked())
+
+
+class LockSemantics(_TempDir):
+    def test_a_held_lock_blocks_a_second_holder(self):
+        import threading
+        cache = Cache(f"{self.tmp}/locks")
+        first, second = cache.lock("resource"), cache.lock("resource")
+        first.acquire()
+        taken = threading.Event()
+
+        def take():
+            second.acquire()
+            taken.set()
+
+        thread = threading.Thread(target=take)
+        thread.start()
+        self.assertFalse(taken.wait(0.3), "a second holder got a held lock")
+        first.release()
+        self.assertTrue(taken.wait(5))
+        thread.join()
+        second.release()
+
+    def test_an_expired_lock_can_be_taken(self):
+        cache = Cache(f"{self.tmp}/locks")
+        cache.lock("resource", expire=0.2).acquire()   # never released: a crashed holder
+        time.sleep(1.3)
+        taken = cache.lock("resource")
+        taken.acquire()
+        self.assertTrue(taken.locked())
+
+    def test_a_tagged_lock_goes_with_its_tag(self):
+        cache = Cache(f"{self.tmp}/locks")
+        lock = cache.lock("resource", tag="locks")
+        lock.acquire()
+        self.assertEqual(cache.evict_tag("locks"), 1)
+        self.assertFalse(lock.locked())
+
+
+class ConstructorsAndDefaults(_TempDir):
+    def test_the_directory_argument_is_used(self):
+        import os
+        for cls, alias in ((Cache, "cache_path"), (FanoutCache, "cache_path"),
+                           (Index, "path"), (FanoutIndex, "path")):
+            with self.subTest(cls.__name__):
+                for kwargs in ({"directory": f"{self.tmp}/{cls.__name__}-d"},
+                               {alias: f"{self.tmp}/{cls.__name__}-a"}):
+                    store = cls(**kwargs)
+                    wanted = os.path.realpath(next(iter(kwargs.values())))
+                    self.assertEqual(os.path.realpath(store.path()), wanted)
+
+    def test_no_size_limit_by_default(self):
+        for cls in (Cache, FanoutCache):
+            with self.subTest(cls.__name__):
+                store = cls(f"{self.tmp}/{cls.__name__}")
+                for i in range(30):
+                    store[f"k{i}"] = b"x" * 20_000
+                store.evict()
+                self.assertEqual(len(store), 30)
+
+    def test_max_size_is_enforced(self):
+        cache = Cache(f"{self.tmp}/bounded", max_size=100_000)
+        for i in range(20):
+            cache[f"k{i}"] = b"x" * 20_000
+        cache.evict()
+        self.assertLessEqual(cache.size(), 100_000)
+        self.assertLess(len(cache), 20)
+        self.assertIn("k19", cache, "the most recently used entry must survive")
+
+    def test_fanout_defaults(self):
+        self.assertEqual(FanoutCache(f"{self.tmp}/fc").shard_count(), 8)
+        self.assertEqual(FanoutIndex(f"{self.tmp}/fi").shard_count(), 8)
+
+    def test_decr_defaults(self):
+        for cls in ALL_STORES:
+            with self.subTest(cls.__name__):
+                store = cls(f"{self.tmp}/{cls.__name__}")
+                self.assertEqual(store.decr("n"), -1)
+
+
+class KeyEncodingOnDisk(_TempDir):
+    """Non-str keys are stored in this encoding: existing caches depend on it."""
+
+    GOLDEN = {
+        42: "\x00i42",
+        True: "\x00i1",
+        3.5: "\x00f3.5",
+        b"x\xff": "\x00bx\xff",
+        ("sensor", 7): "\x00pgASVDgAAAAAAAACMBnNlbnNvcpRLB4aULg==",
+        frozenset({1}): "\x00pgASVBgAAAAAAAAAoSwGRlC4=",
+    }
+
+    def test_stored_key_strings(self):
+        cache = Cache(f"{self.tmp}/keys")
+        for key in self.GOLDEN:
+            cache[key] = repr(key)
+        raw_keys = set(type(cache).__mro__[1].keys(cache))
+        self.assertEqual(raw_keys, set(self.GOLDEN.values()))
+        for key in self.GOLDEN:
+            self.assertEqual(cache[key], repr(key))
+
+
+class FanoutDocstrings(unittest.TestCase):
+    def test_fanout_methods_share_the_documentation(self):
+        self.assertEqual(FanoutCache.get.__doc__, Cache.get.__doc__)
+        self.assertEqual(FanoutCache.memoize.__doc__, Cache.memoize.__doc__)
+        self.assertEqual(FanoutIndex.items.__doc__, Index.items.__doc__)
+        self.assertIn("shard", FanoutCache.transact.__doc__)
 
 
 class SerializerChoiceParity(_TempDir):

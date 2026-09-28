@@ -257,5 +257,47 @@ class TestSerializerErrors(unittest.TestCase):
             MsgspecSerializer().loads(data)
 
 
+@unittest.skipUnless(_has_msgspec, "msgspec not installed")
+class TestMsgspecOnDiskFormat(unittest.TestCase):
+    """Bytes written by an earlier version must still decode: the extension
+    codes and layouts below are persisted in existing caches."""
+
+    GOLDEN = {
+        "int16 array": b"\xc7'\x01\x1d\x00\x00\x00\x83\xa5dtype\xa5int16\xa5shape\x91\x03"
+                       b"\xa5order\xa1F\x00\x00\x01\x00\x02\x00",
+        "dict of float64 array": b"\x81\xa1k\xc7+\x01\x1f\x00\x00\x00\x83\xa5dtype\xa7float64"
+                                 b"\xa5shape\x91\x01\xa5order\xa1F\x00\x00\x00\x00\x00\x00\xf8?",
+        "object": b"\xc71\x02\x82\xa8__type__\xb5types.SimpleNamespace\xa8__data__\x82\xa1a"
+                  b"\x01\xa1b\xa1x",
+    }
+
+    def values(self):
+        import types
+        return {
+            "int16 array": np.arange(3, dtype="<i2"),
+            "dict of float64 array": {"k": np.array([1.5], dtype="<f8")},
+            "object": types.SimpleNamespace(a=1, b="x"),
+        }
+
+    def test_golden_bytes_decode(self):
+        ser = MsgspecSerializer()
+        for name, value in self.values().items():
+            with self.subTest(name):
+                decoded = ser.loads(self.GOLDEN[name])
+                if isinstance(value, np.ndarray):
+                    np.testing.assert_array_equal(decoded, value)
+                    self.assertEqual(decoded.dtype, value.dtype)
+                elif isinstance(value, dict):
+                    np.testing.assert_array_equal(decoded["k"], value["k"])
+                else:
+                    self.assertEqual(vars(decoded), vars(value))
+
+    def test_encoding_is_unchanged(self):
+        ser = MsgspecSerializer()
+        for name, value in self.values().items():
+            with self.subTest(name):
+                self.assertEqual(ser.dumps(value), self.GOLDEN[name])
+
+
 if __name__ == "__main__":
     unittest.main()

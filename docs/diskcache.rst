@@ -98,7 +98,8 @@ What differs
 - ``evict()`` is the size-limit cleanup. diskcache's ``evict(tag)`` is ``evict_tag(tag)``.
 - ``FanoutCache.transact()`` takes a key: transactions are per shard.
 - ``stats()`` returns a dict.
-- ``peekitem()`` / ``popitem()`` follow key order, not insertion order.
+- ``peekitem()`` / ``popitem()`` follow key order, not insertion order (for a ``FanoutIndex``:
+  key order within each shard, shard after shard).
 - ``disk=`` is rejected: use ``serializer=`` (see :doc:`serializers`).
 - Not implemented: ``Deque``, ``RLock``, throttling, barriers, ``push``/``pull``/``peek``
   and ``read=True`` file handles (which raise :class:`NotImplementedError`).

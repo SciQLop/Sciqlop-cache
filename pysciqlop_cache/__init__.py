@@ -456,8 +456,10 @@ class Cache(_Cache):
             expire: Lifetime of each result, as a :class:`~datetime.timedelta` or
                 seconds. None (default) never expires.
             tag: Optional tag, to remove all results at once with :meth:`evict_tag`.
-            typed: Cache arguments of different types separately (``f(1)`` and
-                ``f(1.0)``).
+            typed: Also put the argument types in the key. Arguments are hashed
+                through the serializer, so ``f(1)`` and ``f(1.0)`` are separate
+                entries either way; this only separates values that serialize
+                identically (like diskcache).
             version_aware: Include a hash of the function's bytecode in the key, so
                 changing the function invalidates its old results.
 
@@ -934,11 +936,6 @@ class FanoutCache(_FanoutCache):
         return f"{base}:{key_hash}"
 
     def memoize(self, expire=None, tag=None, typed=False, version_aware=False):
-        """Decorator to memoize function results in cache.
-
-        See Cache.memoize for full documentation.
-        """
-
         def decorator(func):
             base = f"{func.__module__}.{func.__qualname__}"
             if version_aware:
