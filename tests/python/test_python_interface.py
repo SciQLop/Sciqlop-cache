@@ -341,6 +341,19 @@ class TestCache(unittest.TestCase):
         self.cache.expire()
         self.assertIsNone(self.cache.get("touchme"))
 
+    def test_expire_zero_is_expired_even_across_a_second_boundary(self):
+        # Expiry is compared with SQLite's unixepoch('now'). On Windows SQLite
+        # reads a coarse (~15 ms) clock, std::chrono a precise one: right
+        # after a second ticks over, an expire computed from std::chrono was
+        # still one second in SQLite's future. Loop past a boundary.
+        deadline = time.monotonic() + 1.2
+        while time.monotonic() < deadline:
+            self.cache.set("k", "v", expire=0)
+            self.assertIsNone(self.cache.get("k"))
+            self.cache.set("k", "v", expire=3600)
+            self.assertTrue(self.cache.touch("k", expire=0))
+            self.assertIsNone(self.cache.get("k"))
+
     def test_touch_accepts_float_seconds(self):
         self.cache.set("touchme", "val", expire=3600)
         self.assertTrue(self.cache.touch("touchme", expire=0.0))
