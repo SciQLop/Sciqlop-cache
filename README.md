@@ -183,7 +183,7 @@ existing pickle cache can switch in place. The reverse still raises.
 from pysciqlop_cache import Cache, PickleOOBSerializer
 
 cache = Cache("/tmp/my-cache", serializer=PickleOOBSerializer())
-cache["mms1/fgm/2020-01-01"] = variable  # any object holding numpy arrays
+cache["sensor-42/2020-01-01"] = measurements  # any object holding numpy arrays
 ```
 
 **The problem it solves.** Plain pickle copies every array byte into (and
@@ -211,7 +211,7 @@ threads of a GUI, they end up waiting on each other instead of working.
 **Where it shines:**
 
 - **Big arrays.** Anything holding numpy arrays of 64 KiB or more: time
-  series, spectrograms, images, speasy variables.
+  series, spectrograms, images, any measurement data.
 - **Many threads.** A GUI or a server with several threads reading or writing
   the cache. The array copies no longer block the other threads.
 - **Heavy writes.** `set` of a big value is ~6x faster, because pickle's
@@ -228,8 +228,8 @@ threads of a GUI, they end up waiting on each other instead of working.
 - In a single-threaded script nothing is waiting on the GIL, so reads are
   only slightly faster. The gains there are faster writes and less disk.
 
-One day of MMS FGM (33 MB: 4 float32 components and a datetime64 time axis),
-measured with `benchmark/pickle_oob_gil.py`:
+One day of sensor measurements (33 MB: 1.4 M samples of 4 float32 values plus
+a datetime64 time axis), measured with `benchmark/pickle_oob_gil.py`:
 
 | | `pickle` | `pickle-oob` |
 |---|---|---|
