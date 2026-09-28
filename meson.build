@@ -181,7 +181,7 @@ if get_option('with_torture_tests')
 endif
 
 if not get_option('disable_python_wrapper')
-    foreach test_name:['test_python_interface', 'test_perf_vs_diskcache', 'test_serializers', 'test_diskcache_compat', 'test_pickle_oob']
+    foreach test_name:['test_python_interface', 'test_perf_vs_diskcache', 'test_serializers', 'test_diskcache_compat', 'test_pickle_oob', 'test_migrate', 'test_store_parity']
         test(test_name, python3,
             args:files('tests/python/@0@.py'.format(test_name)),
             env : {'PYTHONPATH': meson.current_build_dir()}

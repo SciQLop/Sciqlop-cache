@@ -8,7 +8,15 @@ import tempfile
 import unittest
 from unittest import mock
 
-import diskcache
+try:
+    import diskcache
+except ImportError:  # migration needs diskcache, an optional dependency
+    diskcache = None
+
+
+def setUpModule():
+    if diskcache is None:
+        raise unittest.SkipTest("diskcache not installed")
 
 from pysciqlop_cache.migrate import (
     InsufficientDiskSpaceError,
@@ -175,6 +183,120 @@ class MigrateMoveMode(unittest.TestCase):
         dst = Cache(str(self.dst_root))
         self.assertEqual(dst.get("a"), 1)
         self.assertEqual(dst.get("b"), 2)
+
+
+class MigrateSourcesAndMetadata(unittest.TestCase):
+    """Every source type, and everything an entry carries, arrives intact."""
+
+    def setUp(self):
+        self.src = tempfile.mkdtemp(prefix="migrate_src_")
+        self.dst = tempfile.mkdtemp(prefix="migrate_dst_")
+        self.addCleanup(shutil.rmtree, self.src, ignore_errors=True)
+        self.addCleanup(shutil.rmtree, self.dst, ignore_errors=True)
+
+    def test_keys_keep_their_type(self):
+        cache = diskcache.Cache(self.src)
+        cache[42] = "int key"
+        cache[("sensor", 7)] = "tuple key"
+        cache["text"] = "str key"
+        cache.close()
+
+        migrate(self.src, self.dst)
+
+        from pysciqlop_cache import Cache
+        dst = Cache(self.dst)
+        self.assertEqual(dst[42], "int key")
+        self.assertEqual(dst[("sensor", 7)], "tuple key")
+        self.assertEqual(dst["text"], "str key")
+        self.assertNotIn("42", dst)
+
+    def test_drop_removes_non_str_keys_from_the_source(self):
+        cache = diskcache.Cache(self.src)
+        cache[42] = "int key"
+        cache.close()
+
+        migrate(self.src, self.dst, drop=True)
+
+        self.assertEqual(list(diskcache.Cache(self.src)), [])
+
+    def test_none_values_are_migrated(self):
+        cache = diskcache.Cache(self.src)
+        cache["nothing"] = None
+        cache.close()
+
+        result = migrate(self.src, self.dst)
+
+        from pysciqlop_cache import Cache
+        self.assertEqual(result["migrated"], 1)
+        self.assertIn("nothing", Cache(self.dst))
+
+    def test_expire_and_tag_are_kept_and_expired_entries_skipped(self):
+        cache = diskcache.Cache(self.src)
+        cache.set("live", 1, expire=3600, tag="t")
+        cache.set("expired", 2, expire=0.01)
+        cache.close()
+        import time
+        time.sleep(0.05)
+
+        result = migrate(self.src, self.dst)
+
+        from pysciqlop_cache import Cache
+        dst = Cache(self.dst)
+        self.assertEqual(result["migrated"], 1)
+        value, expire_time, tag = dst.get("live", expire_time=True, tag=True)
+        self.assertEqual((value, tag), (1, "t"))
+        self.assertGreater(expire_time, time.time() + 3000)
+        self.assertNotIn("expired", dst)
+
+    def test_fanout_cache_source_keeps_its_shard_count(self):
+        fanout = diskcache.FanoutCache(self.src, shards=4)
+        for i in range(20):
+            fanout[f"k{i}"] = i
+        fanout.close()
+
+        result = migrate(self.src, self.dst)
+
+        from pysciqlop_cache import FanoutCache
+        dst = FanoutCache(self.dst, shard_count=4)
+        self.assertEqual(result["migrated"], 20)
+        self.assertEqual(dst.shard_count(), 4)
+        self.assertEqual(sorted(dst[f"k{i}"] for i in range(20)), list(range(20)))
+
+    def test_index_source(self):
+        index = diskcache.Index(self.src)
+        index["a"] = [1, 2]
+        index["b"] = {"x": 1}
+
+        result = migrate(self.src, self.dst, store_type="index")
+
+        from pysciqlop_cache import Index
+        dst = Index(self.dst)
+        self.assertEqual(result["migrated"], 2)
+        self.assertEqual(dst["a"], [1, 2])
+        self.assertEqual(dst["b"], {"x": 1})
+
+
+class MigrateCommandLine(unittest.TestCase):
+    def setUp(self):
+        self.src = tempfile.mkdtemp(prefix="migrate_src_")
+        self.dst = tempfile.mkdtemp(prefix="migrate_dst_")
+        self.addCleanup(shutil.rmtree, self.src, ignore_errors=True)
+        self.addCleanup(shutil.rmtree, self.dst, ignore_errors=True)
+
+    def test_main_migrates_and_prints_a_summary(self):
+        from pysciqlop_cache import migrate as migrate_module
+        cache = diskcache.Cache(self.src)
+        cache["a"] = 1
+        cache.close()
+
+        with mock.patch("sys.argv", ["migrate", "--drop", self.src, self.dst]), \
+                mock.patch("sys.stdout") as out:
+            migrate_module.main()
+
+        printed = "".join(call.args[0] for call in out.write.call_args_list)
+        self.assertIn("1 migrated", printed)
+        from pysciqlop_cache import Cache
+        self.assertEqual(Cache(self.dst)["a"], 1)
 
 
 if __name__ == "__main__":
