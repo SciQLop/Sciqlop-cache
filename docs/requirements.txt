@@ -1,0 +1,6 @@
+numpy
+sphinx>=7,<9
+furo
+sphinx-design
+sphinx-copybutton
+sphinxcontrib-mermaid

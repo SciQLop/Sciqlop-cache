@@ -46,6 +46,25 @@ pip install meson-python numpy && python -m build --wheel
 meson test -C build --benchmark bgscan
 ```
 
+### Documentation
+
+Sphinx site in `docs/` (furo, sphinx-design, mermaid, napoleon), published on Read the Docs
+(`.readthedocs.yaml` builds the package from source so autodoc can import it). User docs
+live there; the README is only a pitch plus links. `docs/` also holds design notes
+(`plans/`, `superpowers/`, `known-issues/`, `*.md`) excluded from the site.
+
+```bash
+pip install -r docs/requirements.txt
+cd docs && PYTHONPATH=../build python -m sphinx -W -b html . /tmp/html   # run from docs/:
+# from the repo root the source pysciqlop_cache/ (no .so) shadows the build
+PYTHONPATH=build python docs/check_examples.py   # runs every ``code-block:: python``
+```
+
+Every Python example must run (each page's blocks share one namespace, in a temp dir),
+so no placeholders. Docstrings are Google style (napoleon); the C++-only methods get theirs
+from the `doc::` table in `pysciqlop_cache.cpp`, and `_share_docstrings()` copies Cache's and
+Index's onto the fanout classes.
+
 ### Meson Options
 
 - `with_tests` (false) — build C++ tests
