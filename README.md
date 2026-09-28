@@ -36,6 +36,7 @@ Any picklable Python object works out of the box.
 - **Safe to share** — multiple threads *and* multiple processes (including forked worker pools) can hit the same cache concurrently. No corruption, no lock files, no setup.
 - **Bounded** — optional size limit with automatic LRU eviction, optional per-key expiration, and tag-based bulk eviction.
 - **Fast** — small values live inside SQLite; large values are memory-mapped files, so reading a 100 MB array costs ~zero copies.
+- **Built for big arrays** — the `PickleOOBSerializer` moves numpy array bytes in C++ without holding the GIL, and compresses them when it pays off, so threads loading data don't block each other ([details](#big-numpy-arrays-pickleoobserializer)).
 - **Self-healing** — crashes, races and interrupted writes are detected and repaired automatically or via `cache.check(fix=True)`.
 
 ## The 5-minute tour
@@ -156,8 +157,13 @@ print(result.ok, result.orphaned_files, result.dangling_rows)
 
 ### Serializers
 
-Pickle is the default (any Python object). For structured data, msgspec is
-faster and safer:
+A serializer turns your Python values into bytes. Pick one per cache:
+
+| Serializer | Use it for |
+|---|---|
+| `PickleSerializer` (default) | Anything picklable. The safe default. |
+| `PickleOOBSerializer` | Values that carry big numpy arrays, in multithreaded programs. See below. |
+| `MsgspecSerializer` | Plain structured data (dicts, lists, numbers, small arrays). Faster and safer than pickle. |
 
 ```python
 from pysciqlop_cache import Cache, MsgspecSerializer
@@ -165,19 +171,64 @@ from pysciqlop_cache import Cache, MsgspecSerializer
 cache = Cache("/tmp/my-cache", serializer=MsgspecSerializer())
 ```
 
-For large numpy arrays (for example speasy variables), `PickleOOBSerializer`
-stores the array buffers next to the pickle instead of inside it (protocol 5
-out-of-band buffers). `set` writes the arrays straight from their memory, and
-`get` copies them into fresh arrays, both with the GIL released, so threads
-reading or writing big values at the same time no longer queue on the GIL:
+The serializer choice is recorded in the cache itself, for every store type.
+Reopening a cache without a serializer uses the recorded one. Asking for a
+different one raises instead of silently misreading your data. The one
+exception is `pickle` → `pickle-oob`: it reads plain pickle entries too, so an
+existing pickle cache can switch in place. The reverse still raises.
+
+### Big numpy arrays: `PickleOOBSerializer`
 
 ```python
 from pysciqlop_cache import Cache, PickleOOBSerializer
 
 cache = Cache("/tmp/my-cache", serializer=PickleOOBSerializer())
+cache["mms1/fgm/2020-01-01"] = variable  # any object holding numpy arrays
 ```
 
-One day of MMS FGM (33 MB: float32 values and a datetime64 time axis),
+**The problem it solves.** Plain pickle copies every array byte into (and
+out of) the pickle stream. Python runs that copy while holding the GIL. For
+a 33 MB array that is 15 ms per write and 1 ms per read during which no other
+Python thread can run. If several threads load data at once, like the fetch
+threads of a GUI, they end up waiting on each other instead of working.
+
+**What it does differently.** It uses pickle protocol 5 and keeps the arrays
+*out* of the pickle stream:
+
+1. The pickle only holds the small parts: object structure, metadata, dtypes,
+   shapes.
+2. The array bytes are stored next to it, one block per array.
+3. `set` writes those blocks straight from the arrays' memory, in C++,
+   without holding the GIL.
+4. `get` copies them into fresh numpy arrays, also in C++ without the GIL.
+   The arrays you get back are normal and writable. They don't depend on the
+   cache staying open.
+5. Blocks of 256 KiB or more are compressed with the bundled
+   [blosc2](https://www.blosc.org/) (lz4 + shuffle, on all cores), but only
+   when that makes them at least twice smaller. Time axes shrink about 15x.
+   Noisy float data is detected on a small sample in ~6 µs and stored raw.
+
+**Where it shines:**
+
+- **Big arrays.** Anything holding numpy arrays of 64 KiB or more: time
+  series, spectrograms, images, speasy variables.
+- **Many threads.** A GUI or a server with several threads reading or writing
+  the cache. The array copies no longer block the other threads.
+- **Heavy writes.** `set` of a big value is ~6x faster, because pickle's
+  growing output buffer, and the copy into it, are gone.
+- **Regular data.** Timestamps, counters, masks and other smooth arrays are
+  stored compressed, so more of them fit under a `max_size` limit, and reads
+  get a little faster.
+
+**Where it doesn't help:**
+
+- Values without big arrays (dicts, strings, small arrays) are written as
+  plain pickle. It costs the same as `PickleSerializer`, within a few percent.
+- Object arrays and non-numpy containers go through plain pickle too.
+- In a single-threaded script nothing is waiting on the GIL, so reads are
+  only slightly faster. The gains there are faster writes and less disk.
+
+One day of MMS FGM (33 MB: 4 float32 components and a datetime64 time axis),
 measured with `benchmark/pickle_oob_gil.py`:
 
 | | `pickle` | `pickle-oob` |
@@ -186,20 +237,16 @@ measured with `benchmark/pickle_oob_gil.py`:
 | GIL held during `set` | 15.6 ms | 0 ms |
 | `get` | 2.0 ms | 1.6 ms |
 | GIL held during `get` | 1.0 ms | 0 ms |
-| 8 days, 4 threads | 45–55 ms | 23 ms |
+| 8 days, read by 4 threads | 45–55 ms | 23 ms |
 | Disk per day | 31.6 MiB | 22.4 MiB |
 
-Arrays of 256 KiB or more are also compressed with the bundled
-[blosc2](https://www.blosc.org/) (lz4 + shuffle, on all cores) when that
-makes them at least `min_ratio` (default 2) times smaller. Time axes shrink
-about 15x; noisy float values stay raw after a ~6 µs sample test.
-`PickleOOBSerializer(compress=False)` turns this off; reads decode either way.
-Arrays under 64 KiB and values without arrays are written as plain pickle.
+**Options.** `PickleOOBSerializer(compress=False)` stores every block raw.
+`min_ratio=` sets how much smaller a block must get to be kept compressed
+(default 2). Reads decode any block, whatever the options. The wheels bundle
+blosc2. A source build with `-Dwith_blosc2=false` leaves it out and refuses
+compressed values with a clear error.
 
-The serializer choice is recorded in the cache itself: reopening a cache with a
-different serializer raises instead of silently misreading your data. The one
-exception is `pickle` → `pickle-oob`: it reads plain pickle entries too, so an
-existing pickle cache can switch in place. The reverse still raises.
+As with pickle, only load caches you wrote: unpickling runs code.
 
 ## Migrating from diskcache
 
