@@ -30,6 +30,27 @@ _META_SERIALIZER = "serializer"
 _META_MAX_SIZE = "max_size"
 _SENTINEL = object()
 
+
+def _resolve_serializer(store, requested):
+    """The serializer to use for `store`, recorded in its meta.
+
+    Reopening without one uses the recorded serializer. Asking for another
+    one raises, unless it can read what the recorded one wrote (an upgrade).
+    """
+    stored = store.get_meta(_META_SERIALIZER)
+    if requested is None:
+        if stored is not None:
+            return get_serializer_by_name(stored)
+        requested = PickleSerializer()
+    elif stored not in (None, requested.name) and (stored, requested.name) not in SERIALIZER_UPGRADES:
+        raise ValueError(
+            f"{type(store).__name__} metadata {_META_SERIALIZER!r} is {stored!r}, "
+            f"but {requested.name!r} was requested."
+        )
+    if stored != requested.name:
+        store.set_meta(_META_SERIALIZER, requested.name)
+    return requested
+
 # diskcache tuning knobs (SQLite pragmas, eviction policy, statistics, ...) with no
 # equivalent here; accepted and ignored so diskcache configs drop in unchanged.
 _IGNORED_SETTINGS = frozenset({
@@ -197,40 +218,21 @@ class Cache(_Cache):
             max_size = size_limit
         super().__init__(cache_path=path, max_size=0, timeout=600.0 if timeout is None else timeout)
         self._keys_encoded = False
-        self._serializer = self._resolve_meta(
-            _META_SERIALIZER, serializer,
-            default=PickleSerializer,
-            to_str=lambda s: s.name,
-            from_str=get_serializer_by_name,
-            mismatch_ok=False,
-            upgrades=SERIALIZER_UPGRADES,
-        )
-        effective_max_size = self._resolve_meta(
-            _META_MAX_SIZE, max_size if max_size is not _SENTINEL else None,
-            default=lambda: 0,
-            to_str=str,
-            from_str=int,
-            mismatch_ok=True,
-        )
+        self._serializer = _resolve_serializer(self, serializer)
+        effective_max_size = self._resolve_max_size(max_size if max_size is not _SENTINEL else None)
         if effective_max_size != 0:
             super().set_max_cache_size(effective_max_size)
 
-    def _resolve_meta(self, key, explicit, *, default, to_str, from_str, mismatch_ok, upgrades=frozenset()):
-        stored = super().get_meta(key)
-        if explicit is not None:
-            requested = to_str(explicit)
-            if stored not in (None, requested) and not mismatch_ok and (stored, requested) not in upgrades:
-                raise ValueError(
-                    f"Cache metadata {key!r} is {stored!r}, "
-                    f"but {to_str(explicit)!r} was requested."
-                )
-            super().set_meta(key, to_str(explicit))
-            return explicit
-        if stored is not None:
-            return from_str(stored)
-        value = default()
-        super().set_meta(key, to_str(value))
-        return value
+    def _resolve_max_size(self, requested):
+        # An explicit max_size replaces the recorded one; without one the
+        # recorded value applies (0 = unlimited when nothing is recorded).
+        stored = super().get_meta(_META_MAX_SIZE)
+        if requested is None:
+            if stored is not None:
+                return int(stored)
+            requested = 0
+        super().set_meta(_META_MAX_SIZE, str(requested))
+        return requested
 
     @property
     def serializer(self) -> Serializer:
@@ -534,20 +536,7 @@ class Index(_Index):
         effective_path = directory if directory is not None else (path if path is not None else ".index/")
         super().__init__(path=effective_path)
         self._keys_encoded = False
-        stored = super().get_meta(_META_SERIALIZER)
-        if serializer is not None:
-            if stored not in (None, serializer.name) and (stored, serializer.name) not in SERIALIZER_UPGRADES:
-                raise ValueError(
-                    f"Index metadata {_META_SERIALIZER!r} is {stored!r}, "
-                    f"but {serializer.name!r} was requested."
-                )
-            super().set_meta(_META_SERIALIZER, serializer.name)
-            self._serializer = serializer
-        elif stored is not None:
-            self._serializer = get_serializer_by_name(stored)
-        else:
-            self._serializer = PickleSerializer()
-            super().set_meta(_META_SERIALIZER, self._serializer.name)
+        self._serializer = _resolve_serializer(self, serializer)
         for mapping in mappings:
             self.update(mapping)
         self.update(items)
@@ -703,7 +692,7 @@ class FanoutCache(_FanoutCache):
             timeout=600.0 if timeout is None else timeout,
         )
         self._keys_encoded = False
-        self._serializer = serializer or PickleSerializer()
+        self._serializer = _resolve_serializer(self, serializer)
 
     @property
     def serializer(self) -> Serializer:
@@ -953,7 +942,7 @@ class FanoutIndex(_FanoutIndex):
         effective_shard_count = shards if shards is not None else shard_count
         super().__init__(path=effective_path, shard_count=effective_shard_count)
         self._keys_encoded = False
-        self._serializer = serializer or PickleSerializer()
+        self._serializer = _resolve_serializer(self, serializer)
         for mapping in mappings:
             self.update(mapping)
         self.update(items)
