@@ -224,6 +224,53 @@ class TestBlosc2Runtime(unittest.TestCase):
             self.assertGreater(threads, 1)
 
 
+class TestOnDiskFormat(unittest.TestCase):
+    """The pickle-oob layout is persisted in existing caches: a value packed by
+    hand, following the documented layout, must load."""
+
+    def test_magic(self):
+        self.assertEqual(PickleOOBSerializer.MAGIC, b"\x00SQCOOB1")
+
+    def test_hand_packed_value_loads(self):
+        array = np.arange(20_000, dtype=np.int64)
+        buffers = []
+        header = pickle.dumps({"a": array}, protocol=5, buffer_callback=buffers.append)
+        raw = buffers[0].raw()
+        data = b"".join([
+            b"\x00SQCOOB1",
+            struct.pack("<IQ", 1, len(header)),          # buffer count, header size
+            struct.pack("<BQQ", 0, raw.nbytes, raw.nbytes),  # codec raw, stored, raw size
+            header,
+            raw,
+        ])
+        np.testing.assert_array_equal(PickleOOBSerializer().loads(data)["a"], array)
+
+
+class TestThresholds(unittest.TestCase):
+    """Buffers from exactly MIN_OOB_BUFFER (64 KiB) go out-of-band, and from
+    exactly MIN_COMPRESS_BUFFER (256 KiB) are compressed when it pays off."""
+
+    def entries(self, value, **options):
+        data = PickleOOBSerializer(**options).dumps(value)
+        return None if data[:1] == b"\x80" else buffer_codecs(data)
+
+    def test_out_of_band_threshold(self):
+        self.assertEqual(self.entries(np.zeros(64 * 1024, np.uint8), compress=False), [0])
+        self.assertIsNone(self.entries(np.zeros(64 * 1024 - 1, np.uint8), compress=False))
+
+    @unittest.skipUnless(BLOSC2_AVAILABLE, "built without blosc2")
+    def test_compression_threshold(self):
+        self.assertEqual(self.entries(np.zeros(256 * 1024, np.uint8)), [1])
+        self.assertEqual(self.entries(np.zeros(256 * 1024 - 1, np.uint8)), [0])
+
+    def test_value_whose_out_of_band_buffers_are_all_empty(self):
+        ser = PickleOOBSerializer(compress=False)
+        ser.MIN_OOB_BUFFER = 0
+        data = ser.dumps({"e": np.empty(0, np.uint8)})
+        self.assertEqual(buffer_codecs(data), [0])
+        self.assertEqual(ser.loads(data)["e"].size, 0)
+
+
 class TestErrorPaths(unittest.TestCase):
     """Bad input raises a clear error instead of misbehaving."""
 

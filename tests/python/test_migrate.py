@@ -245,7 +245,7 @@ class MigrateSourcesAndMetadata(unittest.TestCase):
         self.assertEqual(result["migrated"], 1)
         value, expire_time, tag = dst.get("live", expire_time=True, tag=True)
         self.assertEqual((value, tag), (1, "t"))
-        self.assertGreater(expire_time, time.time() + 3000)
+        self.assertAlmostEqual(expire_time, time.time() + 3600, delta=60)
         self.assertNotIn("expired", dst)
 
     def test_fanout_cache_source_keeps_its_shard_count(self):
@@ -262,6 +262,53 @@ class MigrateSourcesAndMetadata(unittest.TestCase):
         self.assertEqual(dst.shard_count(), 4)
         self.assertEqual(sorted(dst[f"k{i}"] for i in range(20)), list(range(20)))
 
+    def test_the_source_is_left_intact_by_default(self):
+        cache = diskcache.Cache(self.src)
+        cache["a"] = 1
+        cache.close()
+
+        migrate(self.src, self.dst)
+
+        self.assertEqual(diskcache.Cache(self.src)["a"], 1)
+
+    def test_single_shard_fanout_source(self):
+        fanout = diskcache.FanoutCache(self.src, shards=1)
+        fanout["k"] = "v"
+        fanout.close()
+
+        result = migrate(self.src, self.dst)
+
+        from pysciqlop_cache import FanoutCache
+        self.assertEqual(result["migrated"], 1)
+        self.assertEqual(FanoutCache(self.dst, shard_count=1)["k"], "v")
+
+    def test_drop_empties_an_index_source(self):
+        index = diskcache.Index(self.src)
+        index["a"] = 1
+        index["b"] = 2
+
+        migrate(self.src, self.dst, store_type="index", drop=True)
+
+        self.assertEqual(len(diskcache.Index(self.src)), 0)
+
+    def test_an_entry_that_fails_to_write_is_counted_as_an_error(self):
+        from pysciqlop_cache import Cache
+        cache = diskcache.Cache(self.src)
+        cache["good"] = 1
+        cache["bad"] = 2
+        cache.close()
+        real_set = Cache.set
+
+        def failing_set(store, key, value, **kwargs):
+            if key == "bad":
+                raise OSError("disk full")
+            return real_set(store, key, value, **kwargs)
+
+        with mock.patch.object(Cache, "set", failing_set), mock.patch("sys.stderr"):
+            result = migrate(self.src, self.dst)
+
+        self.assertEqual((result["migrated"], result["errors"]), (1, 1))
+
     def test_index_source(self):
         index = diskcache.Index(self.src)
         index["a"] = [1, 2]
@@ -274,6 +321,50 @@ class MigrateSourcesAndMetadata(unittest.TestCase):
         self.assertEqual(result["migrated"], 2)
         self.assertEqual(dst["a"], [1, 2])
         self.assertEqual(dst["b"], {"x": 1})
+
+
+class MigratePreflightBoundary(unittest.TestCase):
+    def setUp(self):
+        self.src = tempfile.mkdtemp(prefix="migrate_src_")
+        self.addCleanup(shutil.rmtree, self.src, ignore_errors=True)
+        cache = diskcache.Cache(self.src)
+        cache["big"] = "x" * 100_000
+        cache.close()
+
+    def test_exactly_enough_space_passes_and_one_byte_less_fails(self):
+        from pysciqlop_cache.migrate import _dir_size, _ensure_enough_disk_space
+        needed = _dir_size(self.src) * 1.2
+        dst = os.path.join(self.src, "not", "created", "yet")  # checked on its closest existing parent
+        with mock.patch("pysciqlop_cache.migrate.shutil.disk_usage",
+                        return_value=mock.Mock(free=needed)):
+            _ensure_enough_disk_space(self.src, dst)
+        with mock.patch("pysciqlop_cache.migrate.shutil.disk_usage",
+                        return_value=mock.Mock(free=needed - 1)):
+            with self.assertRaises(InsufficientDiskSpaceError):
+                _ensure_enough_disk_space(self.src, dst)
+
+    def test_size_helpers_on_a_missing_path(self):
+        from pysciqlop_cache.migrate import _dir_size, _largest_file_size
+        missing = os.path.join(self.src, "missing")
+        self.assertEqual((_dir_size(missing), _largest_file_size(missing)), (0, 0))
+        self.assertGreater(_largest_file_size(self.src), 0)
+
+
+class MigrateHelpers(unittest.TestCase):
+    def test_remaining_ttl(self):
+        import time
+        from pysciqlop_cache.migrate import _remaining_ttl
+        self.assertIsNone(_remaining_ttl(None))
+        self.assertEqual(_remaining_ttl(time.time() - 10), 0)
+        self.assertAlmostEqual(_remaining_ttl(time.time() + 100), 100, delta=1)
+
+    def test_existing_ancestor_and_empty_directories(self):
+        from pysciqlop_cache.migrate import _existing_ancestor, _largest_file_size
+        root = tempfile.mkdtemp(prefix="migrate_anc_")
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+        from pathlib import Path
+        self.assertEqual(Path(_existing_ancestor(os.path.join(root, "a", "b"))), Path(root))
+        self.assertEqual(_largest_file_size(root), 0)
 
 
 class MigrateCommandLine(unittest.TestCase):
@@ -297,6 +388,16 @@ class MigrateCommandLine(unittest.TestCase):
         self.assertIn("1 migrated", printed)
         from pysciqlop_cache import Cache
         self.assertEqual(Cache(self.dst)["a"], 1)
+
+    def test_main_exits_with_1_when_an_entry_fails(self):
+        from pysciqlop_cache import migrate as migrate_module
+        failed = {"migrated": 0, "skipped": 0, "errors": 1, "elapsed_secs": 0.0}
+        with mock.patch("sys.argv", ["migrate", self.src, self.dst]), \
+                mock.patch.object(migrate_module, "migrate", return_value=failed), \
+                mock.patch("sys.stdout"):
+            with self.assertRaises(SystemExit) as exited:
+                migrate_module.main()
+        self.assertEqual(exited.exception.code, 1)
 
 
 if __name__ == "__main__":
