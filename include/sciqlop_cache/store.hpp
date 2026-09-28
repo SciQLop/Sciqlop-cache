@@ -998,12 +998,27 @@ private:
         return true;
     }
 
+    // Whole seconds since the epoch, from the clock unixepoch('now') uses.
+    // Expiry is compared with unixepoch('now') in SQL; on Windows SQLite reads
+    // the coarse (~15 ms) GetSystemTimeAsFileTime while std::chrono uses the
+    // precise one, so right after a second ticks over an expire=0 computed
+    // from std::chrono was still one second in SQLite's future.
+    static std::int64_t _sqlite_unix_now()
+    {
+        constexpr sqlite3_int64 unix_epoch_julian_ms = 210866760000000;
+        sqlite3_vfs* vfs = sqlite3_vfs_find(nullptr);
+        sqlite3_int64 julian_ms = 0;
+        if (vfs && vfs->iVersion >= 2 && vfs->xCurrentTimeInt64
+            && vfs->xCurrentTimeInt64(vfs, &julian_ms) == SQLITE_OK)
+            return (julian_ms - unix_epoch_julian_ms) / 1000;
+        return std::chrono::duration_cast<std::chrono::seconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count();
+    }
+
     static std::optional<double> _abs_expire(std::optional<double> offset_secs)
     {
         if (!offset_secs) return std::nullopt;
-        auto now = std::chrono::duration_cast<std::chrono::seconds>(
-            std::chrono::system_clock::now().time_since_epoch()).count();
-        return static_cast<double>(now) + *offset_secs;
+        return static_cast<double>(_sqlite_unix_now()) + *offset_secs;
     }
 
     inline bool _touch(const std::string& key, std::optional<double> expire_secs)
