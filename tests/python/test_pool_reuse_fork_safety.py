@@ -34,6 +34,7 @@ import json
 import os
 import subprocess
 import sys
+import shutil
 import tempfile
 import unittest
 
@@ -136,6 +137,7 @@ class TestPoolReuseForkSafety(unittest.TestCase):
 
     def test_reused_pool_survives_sustained_concurrent_touches(self):
         tmp_dir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp_dir, ignore_errors=True)
         env = os.environ.copy()
         env["PYTHONPATH"] = (
             os.path.join(os.path.dirname(__file__), "..", "..", "build")

@@ -28,7 +28,15 @@ jobs:
       - name: Build (meson)
         run: ninja -C build
       - name: Run tests (meson)
-        run: ninja test -C build
+        # Tests run in a private TMPDIR, which must be empty afterwards: a test that
+        # leaves directories behind fills /tmp, which is RAM on many machines.
+        run: |
+          export TMPDIR="$(mktemp -d)"
+          ninja test -C build
+          leftovers="$(find "$TMPDIR" -mindepth 1 -maxdepth 1)"
+          if [ -n "$leftovers" ]; then
+            echo "::error::tests left files in TMPDIR:"; echo "$leftovers"; exit 1
+          fi
       - name: Generate Coverage report
         run: |
           lcov --capture  --ignore-errors=inconsistent,mismatch --directory . --output-file coverage.info

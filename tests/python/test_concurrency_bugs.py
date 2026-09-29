@@ -19,6 +19,14 @@ from multiprocessing import Pool
 from pysciqlop_cache import Cache, FanoutCache
 
 
+def _temp_dir(test):
+    """A directory removed after `test`: subprocess workers get it as an argument,
+    because a worker killed by a timeout can't clean up after itself."""
+    path = tempfile.mkdtemp()
+    test.addCleanup(shutil.rmtree, path, ignore_errors=True)
+    return path
+
+
 def _mp_increment(args):
     path, n = args
     cache = Cache(path)
@@ -148,10 +156,9 @@ class PopRace(unittest.TestCase):
 
 
 _DEADLOCK_WORKER = '''
-import tempfile, threading, time, sys, os
+import threading, time, sys, os
 from pysciqlop_cache import Cache
-tmp = tempfile.mkdtemp()
-cache = Cache(tmp)
+cache = Cache(sys.argv[1])
 for i in range(50):
     cache.set(f"k{i}", i)
 
@@ -197,7 +204,7 @@ class KeyCursorBlocks(unittest.TestCase):
             + os.pathsep + env.get("PYTHONPATH", ""))
         try:
             res = subprocess.run(
-                [sys.executable, "-c", _DEADLOCK_WORKER],
+                [sys.executable, "-c", _DEADLOCK_WORKER, _temp_dir(self)],
                 capture_output=True, text=True, timeout=5.0, env=env)
         except subprocess.TimeoutExpired as e:
             self.fail("deadlock confirmed: subprocess hung (output so far: "
@@ -210,7 +217,7 @@ class KeyCursorBlocks(unittest.TestCase):
 
 
 _GIL_RELEASE_WORKER = '''
-import sys, tempfile, threading, time
+import os, sys, threading, time
 from pysciqlop_cache import Cache, Index, FanoutCache, FanoutIndex
 
 OPS = {
@@ -262,7 +269,7 @@ def probe(store, name, op):
     print(f"{type(store).__name__}.{name}:ok", flush=True)
 
 for cls in (Cache, Index, FanoutCache, FanoutIndex):
-    store = cls(tempfile.mkdtemp())
+    store = cls(os.path.join(sys.argv[1], cls.__name__))
     for name, op in OPS.items():
         store.set("k", b"v")
         try:
@@ -290,7 +297,7 @@ class BindingsReleaseGilWhileWaiting(unittest.TestCase):
             + os.pathsep + env.get("PYTHONPATH", ""))
         try:
             res = subprocess.run(
-                [sys.executable, "-c", _GIL_RELEASE_WORKER],
+                [sys.executable, "-c", _GIL_RELEASE_WORKER, _temp_dir(self)],
                 capture_output=True, text=True, timeout=60.0, env=env)
         except subprocess.TimeoutExpired as e:
             done = (e.stdout or b"").decode(errors="replace").split()
@@ -301,9 +308,9 @@ class BindingsReleaseGilWhileWaiting(unittest.TestCase):
 
 
 _CURSOR_OUTLIVES_STORE_WORKER = '''
-import gc, sys, tempfile
+import gc, sys
 from pysciqlop_cache import _pysciqlop_cache as raw
-store = getattr(raw, sys.argv[1])(tempfile.mkdtemp())
+store = getattr(raw, sys.argv[1])(sys.argv[2])
 for i in range(200):
     store.set(f"k{i}", b"v" * 10)
 cursor = store.iterkeys()
@@ -327,7 +334,7 @@ class CursorOutlivesStore(unittest.TestCase):
         for cls in ("Cache", "Index", "FanoutCache", "FanoutIndex"):
             with self.subTest(cls=cls):
                 res = subprocess.run(
-                    [sys.executable, "-c", _CURSOR_OUTLIVES_STORE_WORKER, cls],
+                    [sys.executable, "-c", _CURSOR_OUTLIVES_STORE_WORKER, cls, _temp_dir(self)],
                     capture_output=True, text=True, timeout=60, env=env)
                 self.assertEqual(res.returncode, 0, f"crashed: {res.stderr[-500:]}")
                 self.assertEqual(res.stdout.strip(), "200")

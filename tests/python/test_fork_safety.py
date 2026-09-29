@@ -20,6 +20,7 @@ one of them.
 import os
 import threading
 import time
+import shutil
 import tempfile
 import unittest
 
@@ -31,6 +32,7 @@ class TestForkSafety(unittest.TestCase):
 
     def test_child_using_inherited_cache_does_not_deadlock(self):
         tmp_dir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp_dir, ignore_errors=True)
         cache = Cache(os.path.join(tmp_dir, "c"))
         cache.set("k", 0)
 
