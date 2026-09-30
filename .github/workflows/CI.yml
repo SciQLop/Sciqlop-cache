@@ -57,7 +57,6 @@ jobs:
       # numpy (a build dependency) has no win_arm64 wheels before 3.11
       CIBW_SKIP: "*-win32 *i686 cp39-win_arm64 cp310-win_arm64"
       CIBW_ARCHS: ${{ matrix.CIBW_ARCHS }}
-      CIBW_PRERELEASE_PYTHONS: "True"
       # see https://github.com/matplotlib/matplotlib/pull/28687/files#diff-504e739c530d50b780e9a09ae8fd0c3ea8258ea7553be06afb06f03f95b1ee0aR103
       CIBW_CONFIG_SETTINGS_WINDOWS: >-
         setup-args="--vsenv"
@@ -96,7 +95,7 @@ jobs:
           echo 'CIBW_CONTAINER_ENGINE=docker; create_args: --volume=${{ github.workspace }}/.ccache:/host_ccache' >> $GITHUB_ENV
 
       - name: Build wheels
-        uses: pypa/cibuildwheel@v3.1.4
+        uses: pypa/cibuildwheel@v4.2.1
 
       - name: Show ccache size (Linux)
         if: runner.os == 'Linux' && always()
@@ -113,7 +112,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [macos-15-intel, macos-14, windows-latest, windows-11-arm, ubuntu-latest, ubuntu-24.04-arm]
-        python-version: ['3.10', '3.11', '3.12', '3.13', '3.14', '3.14t']
+        python-version: ['3.10', '3.11', '3.12', '3.13', '3.14', '3.14t', '3.15', '3.15t']
         exclude:
           # no win_arm64 wheel is built for 3.10 (see CIBW_SKIP)
           - os: windows-11-arm
