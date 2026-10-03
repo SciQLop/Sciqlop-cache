@@ -193,17 +193,28 @@ class DiskStorage
     // truncating when the file is already there, so a duplicate blob name can
     // never silently overwrite another value's file. Uses raw fds because
     // std::ofstream has no portable create-exclusive mode pre-C++23.
+    [[nodiscard]] static int _open_exclusive(const std::filesystem::path& file_path)
+    {
+#ifdef _WIN32
+        return ::_open(file_path.string().c_str(), _O_WRONLY | _O_CREAT | _O_EXCL | _O_BINARY,
+                       _S_IREAD | _S_IWRITE);
+#else
+        return ::open(file_path.c_str(), O_WRONLY | O_CREAT | O_EXCL, 0644);
+#endif
+    }
+
     [[nodiscard]] inline bool _write_exclusive(
         const std::filesystem::path& file_path, const Payload auto& value)
     {
-        std::filesystem::create_directories(file_path.parent_path());
-#ifdef _WIN32
-        int fd = ::_open(file_path.string().c_str(),
-                         _O_WRONLY | _O_CREAT | _O_EXCL | _O_BINARY,
-                         _S_IREAD | _S_IWRITE);
-#else
-        int fd = ::open(file_path.c_str(), O_WRONLY | O_CREAT | O_EXCL, 0644);
-#endif
+        // The directories almost always exist: create them only when the open
+        // says they don't. macOS's libc++ create_directories() calls mkdir()
+        // before checking, and a failing mkdir costs ~20 us on APFS.
+        int fd = _open_exclusive(file_path);
+        if (fd < 0 && errno == ENOENT)
+        {
+            std::filesystem::create_directories(file_path.parent_path());
+            fd = _open_exclusive(file_path);
+        }
         if (fd < 0)
         {
             if (errno == EEXIST)
