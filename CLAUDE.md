@@ -49,14 +49,15 @@ meson test -C build --benchmark bgscan
 ### Coverage
 
 ```bash
-meson setup build-cov -Db_coverage=true -Dwith_tests=true && meson compile -C build-cov
+meson setup build-cov -Db_coverage=true -Dwith_tests=true -Dc_args=-fprofile-update=atomic -Dcpp_args=-fprofile-update=atomic && meson compile -C build-cov
 meson test -C build-cov            # C++ counters (.gcda) accumulate across runs
 gcovr -r . build-cov --filter include/ --filter pysciqlop_cache/ --merge-lines --txt
 # Python: start coverage.py in every process with a .pth hook (see .coveragerc and
 # .github/workflows/tests-with-coverage.yml), run the tests, then coverage combine/report
 ```
 
-`--merge-lines` matters: without it a line counts as uncovered if any template
+`-fprofile-update=atomic` matters: threaded tests otherwise race on the gcov counters, and lcov
+fails on the negative counts that produces (intermittent). `--merge-lines` matters: without it a line counts as uncovered if any template
 instantiation of it never runs. The remaining C++ gaps are defensive SQLite error paths,
 the file-name collision heal (random UUIDs, not forceable from a test) and the
 checkpoint-connection retry.
