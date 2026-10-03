@@ -17,6 +17,13 @@ from collections import defaultdict
 import matplotlib.pyplot as plt
 import numpy as np
 
+# Appended to every chart title (--machine), so charts from two machines can't be mixed up.
+MACHINE = ""
+
+
+def titled(text):
+    return f"{text} ({MACHINE})" if MACHINE else text
+
 
 def read_summary_csv(path):
     with open(path) as f:
@@ -80,7 +87,7 @@ def plot_line(by_backend, output):
 
     ax.set_ylabel("Latency (\u00b5s / op)")
     ax.set_xlabel("Cache entries")
-    ax.set_title("Sciqlop-cache vs diskcache: Latency Scaling")
+    ax.set_title(titled("Sciqlop-cache vs diskcache: Latency Scaling"))
     ax.legend(fontsize=9, ncol=2)
     ax.grid(True, alpha=0.3)
 
@@ -99,7 +106,7 @@ def plot_violin(data, output):
     ))
 
     fig, axes = plt.subplots(len(ops), 1, figsize=(14, 10), sharex=True)
-    fig.suptitle("Latency Distribution: sciqlop-cache vs diskcache", fontsize=14)
+    fig.suptitle(titled("Latency Distribution: sciqlop-cache vs diskcache"), fontsize=14)
 
     backend_colors = {"sciqlop": "#e74c3c", "diskcache": "#3498db"}
     width = 0.35
@@ -151,7 +158,11 @@ def main():
     parser.add_argument("-o", "--output", default="benchmark/scaling_chart.png")
     parser.add_argument("--violin", action="store_true",
                         help="generate violin plot (requires --raw CSV)")
+    parser.add_argument("--machine", default="",
+                        help="machine name appended to the chart titles, e.g. 'Apple M2, macOS'")
     args = parser.parse_args()
+    global MACHINE
+    MACHINE = args.machine
 
     if args.violin:
         data = read_raw_csv(args.csv_file)

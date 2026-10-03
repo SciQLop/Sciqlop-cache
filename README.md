@@ -58,8 +58,9 @@ Any picklable Python object works out of the box.
 
 ## Performance
 
-Measured against diskcache, both with their default settings, on a RAM filesystem.
-Numpy measurement arrays from 100 KB to 100 MB, and 1 to 16 threads:
+Measured against diskcache, both with their default settings, on a RAM filesystem, on
+Linux (x86-64) and macOS (Apple M2). Numpy measurement arrays from 100 KB to 100 MB, and 1
+to 16 threads, on Linux:
 
 ![numpy array benchmark](benchmark/arrays_chart.png)
 

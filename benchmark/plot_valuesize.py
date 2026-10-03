@@ -13,6 +13,13 @@ from collections import defaultdict
 import matplotlib.pyplot as plt
 import numpy as np
 
+# Appended to every chart title (--machine), so charts from two machines can't be mixed up.
+MACHINE = ""
+
+
+def titled(text):
+    return f"{text} ({MACHINE})" if MACHINE else text
+
 
 def read_csv(path):
     rows = []
@@ -76,7 +83,7 @@ def _annotate_storage_modes(ax, value_size):
 
 def plot_single_ops(rows, output):
     fig, (ax_set, ax_get) = plt.subplots(1, 2, figsize=(12, 5))
-    fig.suptitle("Single-op Latency vs Value Size", fontsize=14)
+    fig.suptitle(titled("Single-op Latency vs Value Size"), fontsize=14)
 
     for op, ax, title in [("single_set", ax_set, "set()"), ("single_get", ax_get, "get()")]:
         for backend in ["sciqlop", "diskcache"]:
@@ -116,7 +123,7 @@ def plot_batch(rows, output):
     if len(batch_value_sizes) == 1:
         axes = [axes]
 
-    fig.suptitle("Batch set() Latency: Transaction of N ops", fontsize=14)
+    fig.suptitle(titled("Batch set() Latency: Transaction of N ops"), fontsize=14)
 
     for ax, vsz in zip(axes, batch_value_sizes):
         for backend in ["sciqlop", "diskcache"]:
@@ -153,7 +160,7 @@ def plot_batch_per_op(rows, output):
     if len(batch_value_sizes) == 1:
         axes = [axes]
 
-    fig.suptitle("Per-op Cost in Batched Transactions", fontsize=14)
+    fig.suptitle(titled("Per-op Cost in Batched Transactions"), fontsize=14)
 
     for ax, vsz in zip(axes, batch_value_sizes):
         for backend in ["sciqlop", "diskcache"]:
@@ -185,7 +192,11 @@ def main():
     parser.add_argument("csv_file", help="CSV from bench_valuesize.py")
     parser.add_argument("-o", "--output-dir", default="benchmark",
                         help="Directory for output PNGs")
+    parser.add_argument("--machine", default="",
+                        help="machine name appended to the chart titles, e.g. 'Apple M2, macOS'")
     args = parser.parse_args()
+    global MACHINE
+    MACHINE = args.machine
 
     rows = read_csv(args.csv_file)
     d = args.output_dir

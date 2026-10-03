@@ -11,6 +11,14 @@ from collections import defaultdict
 
 import matplotlib.pyplot as plt
 
+# Appended to every chart title (--machine), so charts from two machines can't be mixed up.
+MACHINE = ""
+
+
+def titled(text):
+    return f"{text} ({MACHINE})" if MACHINE else text
+
+
 STYLE = {
     "diskcache": dict(color="#3498db", marker="s"),
     "sciqlop pickle": dict(color="#f39c12", marker="^"),
@@ -37,7 +45,11 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("csv")
     parser.add_argument("-o", "--output", default="benchmark/arrays_chart.png")
+    parser.add_argument("--machine", default="",
+                        help="machine name appended to the chart titles, e.g. 'Apple M2, macOS'")
     args = parser.parse_args()
+    global MACHINE
+    MACHINE = args.machine
     series = read(args.csv)
 
     fig, axes = plt.subplots(2, 2, figsize=(12, 8))
@@ -57,7 +69,7 @@ def main():
         ax.set_ylabel(ylabel)
         ax.grid(True, which="both", alpha=0.3)
     axes[0][0].legend()
-    fig.suptitle("numpy measurement arrays: 4 x float32 + datetime64 time axis per sample")
+    fig.suptitle(titled("numpy measurement arrays: 4 x float32 + datetime64 time axis per sample"))
     fig.tight_layout()
     fig.savefig(args.output, dpi=110)
     print(f"wrote {args.output}")
