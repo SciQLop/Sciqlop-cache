@@ -82,10 +82,13 @@ def _annotate_storage_modes(ax, value_size):
 
 
 def plot_single_ops(rows, output):
-    fig, (ax_set, ax_get) = plt.subplots(1, 2, figsize=(12, 5))
+    ops = [("single_set", "set()"), ("single_get", "get(), same key"),
+           ("first_get", "get(), first read of each key")]
+    ops = [(op, title) for op, title in ops if any(r["operation"] == op for r in rows)]
+    fig, axes = plt.subplots(1, len(ops), figsize=(6 * len(ops), 5))
     fig.suptitle(titled("Single-op Latency vs Value Size"), fontsize=14)
 
-    for op, ax, title in [("single_set", ax_set, "set()"), ("single_get", ax_get, "get()")]:
+    for (op, title), ax in zip(ops, axes):
         for backend in ["sciqlop", "diskcache"]:
             data = [(r["value_size"], r["latency_us"])
                     for r in rows if r["operation"] == op and r["backend"] == backend]

@@ -111,12 +111,19 @@ Raw ``bytes`` values from 64 B to 1 MB:
         .. image:: ../benchmark/macos-m2/valuesize_chart.png
             :alt: set and get latency vs value size (macOS, Apple M2)
 
-Values from 8 KB to 32 KB are the one range where diskcache writes faster: 130 µs against
-37 µs on the M2, 80 µs against 40–44 µs on the Ryzen. SciQLop Cache stores them as files,
-while diskcache keeps them in SQLite up to 32 KB. A file costs ~100 µs more than a blob on the
-M2 (~50 µs on the Ryzen): on APFS, ``open`` with ``O_CREAT`` alone takes 32 µs and ``close``
-10 µs. Reads of the same values are faster than diskcache's, 1.4x on the Ryzen and 1.8x on
-the M2, because they come from memory-mapped files.
+Values from 8 KB to 32 KB are the one range where diskcache is faster. SciQLop Cache stores
+them as files, while diskcache keeps them in SQLite up to 32 KB.
+
+- **Writes:** 130 µs against 37 µs on the M2, 75–81 µs against 52–60 µs on the Ryzen. A file
+  costs ~100 µs more than a blob on the M2 (~50 µs on the Ryzen): on APFS, ``open`` with
+  ``O_CREAT`` alone takes 32 µs and ``close`` 10 µs.
+- **First read of a value:** 12–15 µs against 7 µs on the Ryzen, the cost of opening the
+  file. From 64 KB, where diskcache uses files too, both are level.
+- **Reading the same value again** is faster than diskcache from 8 KB up, 1.5x at 16 KB
+  and 3x at 64 KB on the Ryzen: SciQLop Cache keeps the last 128 values it loaded from
+  files in memory, so it doesn't open the file again.
+
+The M2 chart predates the "first read" measurement, so it has no third panel.
 
 Batched transactions
 ====================
@@ -165,17 +172,18 @@ pays off (see :doc:`serializers`).
 
 - **Writes:** pickle-oob is the fastest from 400 KB up, and ~5x faster than diskcache at
   100 MB. The arrays go to disk with no copy into a pickle buffer.
-- **Reads, one thread:** below 1 MB, both SciQLop Cache serializers are ~10x faster than
-  diskcache, because values are read from memory-mapped files. Between 1 and 10 MB,
+- **Reads, one thread:** below 1 MB, both SciQLop Cache serializers are 3x to 14x faster
+  than diskcache. The benchmark reads the same key again, and SciQLop Cache keeps the
+  last 128 files it loaded open, so only the unpickling is left. Between 1 and 10 MB,
   pickle-oob is a little slower than the default serializer: decompressing the time axis
-  costs more than copying it. From 25 MB it is the fastest, 3.3x at 100 MB.
+  costs more than copying it. From 25 MB it is the fastest, 3.4x at 100 MB.
   ``PickleOOBSerializer(compress=False)`` skips the decompression.
 - **Reads, many threads:** the array bytes are copied without the GIL, so throughput
-  keeps growing with the thread count: 11 GB/s at 16 threads, against 7.4 GB/s for
-  diskcache (its file reads release the GIL) and 4.6 GB/s for the default serializer (it
+  keeps growing with the thread count: 9.6 GB/s at 16 threads, against 7.9 GB/s for
+  diskcache (its file reads release the GIL) and 4.8 GB/s for the default serializer (it
   copies with the GIL held).
 - **Writes, many threads:** SQLite takes one writer at a time, so no library scales
-  here. pickle-oob sustains 3.5 GB/s, 2.5x to 3.5x diskcache.
+  here. pickle-oob sustains 2.6 to 3.9 GB/s, 2.2x to 3.8x diskcache.
 - **Disk:** noisy float values don't compress, but the time axis does. From 1.6 MB up,
   each value takes ~29 % less space with pickle-oob.
 

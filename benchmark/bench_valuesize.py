@@ -24,6 +24,15 @@ def measure(fn, number):
     return timeit.timeit(fn, number=number) / number * 1e6  # μs
 
 
+def measure_first_get(cache, value, number):
+    """Each key read once: what a get() costs before any in-process cache has seen it."""
+    keys = [f"first_{i}" for i in range(number)]
+    for k in keys:
+        cache.set(k, value)
+    it = iter(keys)
+    return measure(lambda: cache.get(next(it)), number)
+
+
 def bench_single_ops(writer):
     """Benchmark individual set/get across value sizes."""
     for sz in VALUE_SIZES:
@@ -43,9 +52,11 @@ def bench_single_ops(writer):
                 set_t = measure(lambda: cache.set(key, value), iterations)
                 cache.set(key, value)
                 get_t = measure(lambda: cache.get(key), iterations)
+                first_get_t = measure_first_get(cache, value, iterations)
 
                 writer.writerow([name, "single_set", sz, 1, f"{set_t:.2f}"])
                 writer.writerow([name, "single_get", sz, 1, f"{get_t:.2f}"])
+                writer.writerow([name, "first_get", sz, 1, f"{first_get_t:.2f}"])
 
                 if hasattr(cache, 'close'):
                     cache.close()
