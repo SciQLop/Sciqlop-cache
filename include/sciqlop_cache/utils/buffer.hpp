@@ -1,13 +1,18 @@
 #pragma once
 
 #include <cpp_utils/io/memory_mapped_file.hpp>
+#include <cerrno>
 #include <cstdio>
 #include <filesystem>
 #include <memory>
 #include <sqlite3.h>
 #include <string>
+#include <system_error>
 #include <uuid.h>
 #include <vector>
+#ifndef _WIN32
+#include <sys/mman.h>
+#endif
 
 using namespace cpp_utils::io;
 
@@ -59,6 +64,66 @@ public:
     [[nodiscard]] inline size_t size() const noexcept { return vec.size(); }
 
     [[nodiscard]] inline std::vector<char> to_vector() const { return vec; }
+};
+
+#ifndef _WIN32
+// Maps an already-open file, so the caller's open + fstat are the only path
+// lookups. The mapping outlives the fd: the caller closes it right after.
+class FdMappedFile:public IMemoryView
+{
+    char* _data;
+    std::size_t _size;
+public:
+    FdMappedFile(int fd, std::size_t size)
+            : _data(static_cast<char*>(::mmap(nullptr, size, PROT_READ, MAP_PRIVATE, fd, 0)))
+            , _size(size)
+    {
+        if (_data == MAP_FAILED)
+            throw std::system_error(errno, std::generic_category(), "mmap failed");
+    }
+
+    FdMappedFile(const FdMappedFile&) = delete;
+    FdMappedFile& operator=(const FdMappedFile&) = delete;
+
+    ~FdMappedFile() { ::munmap(_data, _size); }
+
+    [[nodiscard]] inline operator bool() const noexcept { return true; }
+
+    [[nodiscard]] inline const char* data() const noexcept { return _data; }
+
+    [[nodiscard]] inline size_t size() const noexcept { return _size; }
+
+    [[nodiscard]] inline std::vector<char> to_vector() const
+    {
+        return std::vector<char>(_data, _data + _size);
+    }
+};
+#endif
+
+// Uninitialised heap bytes: a std::vector<char> would zero them just before
+// read() overwrites them.
+class HeapMemoryView:public IMemoryView
+{
+    std::unique_ptr<char[]> _bytes;
+    std::size_t _size;
+public:
+    explicit HeapMemoryView(std::size_t size)
+            : _bytes(std::make_unique_for_overwrite<char[]>(size)), _size(size)
+    {
+    }
+
+    [[nodiscard]] inline char* mutable_data() noexcept { return _bytes.get(); }
+
+    [[nodiscard]] inline operator bool() const noexcept { return _size != 0; }
+
+    [[nodiscard]] inline const char* data() const noexcept { return _bytes.get(); }
+
+    [[nodiscard]] inline size_t size() const noexcept { return _size; }
+
+    [[nodiscard]] inline std::vector<char> to_vector() const
+    {
+        return std::vector<char>(_bytes.get(), _bytes.get() + _size);
+    }
 };
 
 class Buffer

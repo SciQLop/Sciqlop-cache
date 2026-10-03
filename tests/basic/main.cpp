@@ -1202,3 +1202,24 @@ TEST_CASE("decr() is incr() with the opposite sign", "[counters]")
     REQUIRE(cache.decr("n", 4) == -5);
     REQUIRE(cache.decr("fresh", 1, 10) == 9);
 }
+
+SCENARIO("File values on both sides of the read/map threshold load intact", "[cache]")
+{
+    AutoCleanDirectory db_path {"ReadMapThreshold"};
+    Cache cache(db_path.path());
+    // Read into memory up to 20 KB, mapped above: cover both and the edge.
+    for (std::size_t size : { 8 * 1024 + 1, 20 * 1024, 20 * 1024 + 1, 4 * 1024 * 1024 })
+    {
+        std::vector<char> value(size);
+        std::generate(value.begin(), value.end(), std::rand);
+        auto key = "v" + std::to_string(size);
+        cache.set(key, value);
+        for (int pass = 0; pass < 2; ++pass) // first load opens the file, second hits the LRU
+        {
+            auto loaded = cache.get(key);
+            REQUIRE(loaded.has_value());
+            REQUIRE(loaded->size() == size);
+            REQUIRE(std::memcmp(loaded->data(), value.data(), size) == 0);
+        }
+    }
+}

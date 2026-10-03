@@ -53,8 +53,12 @@ Values take one of two paths, chosen by size:
 - **Large values** get their own file, named ``<uuid>-<pid>`` and spread over a
   two-level directory tree (``ab/cd/…``). The row keeps the *relative* path, so the
   whole cache directory can be moved or copied.
-- **Reads** of large values are memory-mapped: the bytes are not copied until your code
-  uses them. The last 128 mappings stay open to avoid mapping churn.
+- **Reads** of values above 20 KB are memory-mapped: the bytes are not copied until
+  your code uses them. Files up to 20 KB are read into memory instead: for them a
+  mapping (``mmap``, a page fault, and an ``munmap`` that interrupts every CPU the
+  process ran on) costs more than the copy. Above that, the copy loses: fresh heap
+  memory faults one 4 KB page at a time. The last 128 loaded values stay in memory, so
+  reading one again costs no file access.
 
 Why not put everything in SQLite? Every write goes through SQLite's write-ahead log, so
 large values would churn it, and every read would copy them. Files and ``mmap`` avoid
