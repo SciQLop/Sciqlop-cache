@@ -19,6 +19,7 @@ TEST_CASE("fork safety (POSIX only)")
 #include <thread>
 #include <vector>
 
+#include <csignal>
 #include <sys/wait.h>
 #include <unistd.h>
 
