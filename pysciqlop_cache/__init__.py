@@ -1,9 +1,11 @@
 from ._pysciqlop_cache import Cache as _Cache, Index as _Index, FanoutCache as _FanoutCache, FanoutIndex as _FanoutIndex, Timeout
+import atexit
 import base64
 import functools
 import hashlib
 import pickle
 import time
+import weakref
 from collections.abc import ItemsView, MutableMapping, ValuesView
 from datetime import timedelta
 from typing import Any, AnyStr, Optional, Union
@@ -117,6 +119,18 @@ def _meta_result(value, meta, expire_time, tag):
     return value, t
 
 
+_open_stores = weakref.WeakSet()
+
+
+@atexit.register
+def _close_open_stores():
+    # A store an embedding host (e.g. Julia via PythonCall) still references at
+    # Py_Finalize would outlive the extension module, its SQLite connection never
+    # closed. Registered at import, so atexit hooks added later still find it open.
+    for store in list(_open_stores):
+        store.close()
+
+
 def _reject_disk(disk):
     if disk is not None:
         raise TypeError("disk= is not supported, use serializer= instead")
@@ -219,6 +233,7 @@ class Cache(_Cache):
         if size_limit is not None:
             max_size = size_limit
         super().__init__(cache_path=path, max_size=0, timeout=600.0 if timeout is None else timeout)
+        _open_stores.add(self)
         self._keys_encoded = False
         self._serializer = _resolve_serializer(self, serializer)
         effective_max_size = self._resolve_max_size(max_size if max_size is not _SENTINEL else None)
@@ -564,6 +579,7 @@ class Index(_Index):
     ):
         effective_path = directory if directory is not None else (path if path is not None else ".index/")
         super().__init__(path=effective_path)
+        _open_stores.add(self)
         self._keys_encoded = False
         self._serializer = _resolve_serializer(self, serializer)
         for mapping in mappings:
@@ -746,6 +762,7 @@ class FanoutCache(_FanoutCache):
             cache_path=path, shard_count=effective_shard_count, max_size=effective_max_size,
             timeout=600.0 if timeout is None else timeout,
         )
+        _open_stores.add(self)
         self._keys_encoded = False
         self._serializer = _resolve_serializer(self, serializer)
 
@@ -997,6 +1014,7 @@ class FanoutIndex(_FanoutIndex):
         effective_path = directory if directory is not None else (path if path is not None else ".index/")
         effective_shard_count = shards if shards is not None else shard_count
         super().__init__(path=effective_path, shard_count=effective_shard_count)
+        _open_stores.add(self)
         self._keys_encoded = False
         self._serializer = _resolve_serializer(self, serializer)
         for mapping in mappings:
