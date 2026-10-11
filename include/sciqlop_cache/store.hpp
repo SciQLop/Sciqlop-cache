@@ -636,8 +636,6 @@ class _Store : private Policies..., private _ForkAware
             _drain_trash(cp_db);
         }
 
-        if constexpr (has_eviction)
-            _bg_flush_uses(cp_db);
         // Final drain so a short-lived process doesn't leave past-grace trash
         // behind; still-in-grace entries are left for the next open's thread.
         _drain_trash(cp_db);
@@ -1136,9 +1134,16 @@ public:
     // file can't be removed while still mapped, so leaving it behind would
     // let a post-close() `shutil.rmtree()` of the cache directory silently
     // fail on any file-backed value that had been read.
+    // Pending reads are written here, not by the exiting checkpoint thread: a
+    // close() right after open can stop it before it has a connection.
     inline bool close()
     {
         _stop_checkpoint_thread();
+        if constexpr (has_eviction)
+        {
+            if (opened())
+                _flush_uses();
+        }
         storage->clear_mmap_cache();
         auto g = _raw_db();
         return _finalize_statements() & g->close();

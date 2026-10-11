@@ -27,6 +27,31 @@ HOLD_WRITE_LOCK = textwrap.dedent("""
 
 VALUE = b"x" * 1000
 
+# On one CPU the background thread rarely starts before close(), so it never
+# opened its connection and couldn't write the pending reads (lost 189/200).
+QUICK_CLOSE = textwrap.dedent("""
+    import os, shutil, sys, tempfile
+    from pysciqlop_cache import Cache
+    if hasattr(os, "sched_setaffinity"):
+        os.sched_setaffinity(0, {sorted(os.sched_getaffinity(0))[0]})
+    value = b"x" * 1000
+    lost = 0
+    for _ in range(50):
+        d = tempfile.mkdtemp(dir=sys.argv[1])
+        c = Cache(d, max_size=1 << 30)
+        for k in "abc":
+            c[k] = value
+        c.get("a")
+        c.close()
+        c = Cache(d, max_size=1 << 30)
+        c["d"] = value
+        c.set_max_cache_size(3500)
+        c.evict()
+        lost += "a" not in c
+        c.close()
+    print(lost)
+""")
+
 
 def _wait_for(predicate, timeout=5.0):
     deadline = time.monotonic() + timeout
@@ -102,6 +127,11 @@ class RecentReadsStillCount(_Stores):
         cache.evict()
         self.assertNotIn("b", cache)
         self.assertIn("a", cache)
+
+    def test_reads_survive_a_close_right_after_open(self):
+        out = subprocess.run([sys.executable, "-c", QUICK_CLOSE, self.dir], cwd=self.dir,
+                             capture_output=True, text=True, check=True).stdout
+        self.assertEqual(out.strip(), "0")
 
 
 if __name__ == "__main__":
