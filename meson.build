@@ -247,6 +247,12 @@ if not get_option('disable_python_wrapper')
         is_parallel : false,
         timeout : 60,
     )
+    test('test_lru_batching', python3,
+        args:files('tests/python/test_lru_batching.py'),
+        env : {'PYTHONPATH': meson.current_build_dir()},
+        is_parallel : false,
+        timeout : 60,
+    )
     test('test_close_at_exit', python3,
         args:files('tests/python/test_close_at_exit.py'),
         env : {'PYTHONPATH': meson.current_build_dir()},

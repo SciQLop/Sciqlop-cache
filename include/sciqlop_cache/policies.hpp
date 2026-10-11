@@ -1,9 +1,13 @@
 #pragma once
 
 #include <atomic>
+#include <algorithm>
 #include <cstdint>
+#include <mutex>
 #include <string>
 #include <type_traits>
+#include <utility>
+#include <unordered_map>
 
 template <typename Policy, typename... Policies>
 inline constexpr bool has_policy_v = (std::is_same_v<Policy, Policies> || ...);
@@ -27,7 +31,33 @@ struct WithExpiration
 
 struct WithEviction
 {
+    using Uses = std::unordered_map<std::string, std::size_t>;
+
     std::atomic<std::size_t> _access_seq { 0 };
+    // get() hits wait here for the background thread to write them out once
+    // per tick: an inline UPDATE made every hit a write transaction.
+    std::mutex _uses_mtx;
+    Uses _pending_uses;
+
+    void _note_use(const std::string& key)
+    {
+        auto seq = _access_seq.fetch_add(1, std::memory_order_relaxed);
+        std::lock_guard lock(_uses_mtx);
+        _pending_uses[key] = seq;
+    }
+
+    Uses _take_uses()
+    {
+        std::lock_guard lock(_uses_mtx);
+        return std::exchange(_pending_uses, {});
+    }
+
+    void _restore_uses(const Uses& uses)
+    {
+        std::lock_guard lock(_uses_mtx);
+        for (const auto& [key, seq] : uses)
+            _pending_uses[key] = std::max(_pending_uses[key], seq);
+    }
 
     static std::string where_valid() { return ""; }
     static std::string extra_columns()

@@ -176,9 +176,17 @@ Each store runs a background thread that, about once per second:
 
 1. checkpoints the WAL without blocking writers (under heavy writes, the writer's own
    automatic checkpoint keeps the WAL around 16 MB);
-2. deletes expired entries and, when ``max_size`` is exceeded, evicts the
+2. writes out the reads recorded since the last tick (see below);
+3. deletes expired entries and, when ``max_size`` is exceeded, evicts the
    least-recently-used entries;
-3. drains the trash table.
+4. drains the trash table.
+
+With a ``max_size`` set, ``get()`` doesn't write the entry's last use to the database.
+It notes it in memory, and the background thread writes all of them in one transaction
+just before it evicts. ``evict()`` and ``close()`` write them out too. A read is
+therefore never a write: it costs the same as on an unlimited cache, and it doesn't wait
+behind another process's write transaction. Another process sees a read at most about a
+second late, which only shifts the LRU order a little.
 
 Durability settings
 ===================
