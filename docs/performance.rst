@@ -94,7 +94,8 @@ Scaling with the number of entries
 Latency vs value size
 =====================
 
-Raw ``bytes`` values from 64 B to 1 MB:
+Raw ``bytes`` values from 64 B to 1 MB. The dashed line is SciQLop Cache with a 1 GiB
+size limit, diskcache's default:
 
 .. tab-set::
     :sync-group: platform
@@ -111,19 +112,24 @@ Raw ``bytes`` values from 64 B to 1 MB:
         .. image:: ../benchmark/macos-m2/valuesize_chart.png
             :alt: set and get latency vs value size (macOS, Apple M2)
 
+**A size limit costs nothing.** The dashed line follows the solid one. A read doesn't
+write the entry's last use to the database: it notes it in memory, and the background
+thread writes them all once per second (see :doc:`internals`).
+
 Values from 8 KB to 32 KB are the one range where diskcache is faster. SciQLop Cache stores
 them as files, while diskcache keeps them in SQLite up to 32 KB.
 
-- **Writes:** 130 µs against 37 µs on the M2, 75–81 µs against 52–60 µs on the Ryzen. A file
-  costs ~100 µs more than a blob on the M2 (~50 µs on the Ryzen): on APFS, ``open`` with
+- **Writes:** 130 µs against 37 µs on the M2, 69–71 µs against 39–40 µs on the Ryzen. A file
+  costs ~100 µs more than a blob on the M2 (~40 µs on the Ryzen): on APFS, ``open`` with
   ``O_CREAT`` alone takes 32 µs and ``close`` 10 µs.
-- **First read of a value:** 12–15 µs against 7 µs on the Ryzen, the cost of opening the
+- **First read of a value:** 11 µs against 6–7 µs on the Ryzen, the cost of opening the
   file. From 64 KB, where diskcache uses files too, both are level.
-- **Reading the same value again** is faster than diskcache from 8 KB up, 1.5x at 16 KB
+- **Reading the same value again** is faster than diskcache from 8 KB up, 1.4x at 16 KB
   and 3x at 64 KB on the Ryzen: SciQLop Cache keeps the last 128 values it loaded from
   files in memory, so it doesn't open the file again.
 
-The M2 chart predates the "first read" measurement, so it has no third panel.
+The M2 chart predates the "first read" measurement and the size-limited line, so it has
+neither.
 
 Batched transactions
 ====================
