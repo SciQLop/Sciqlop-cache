@@ -229,12 +229,6 @@ class _Store : private Policies..., private _ForkAware
         EVICT_EXPIRED_STMT { "DELETE FROM cache WHERE expire IS NOT NULL AND expire <= unixepoch('now');" };
 
     [[no_unique_address]] std::conditional_t<has_eviction, CompiledStatement, NoStmt>
-        UPDATE_LAST_USE_STMT {
-            "UPDATE cache SET last_use = ?, "
-            "access_count_since_last_update = access_count_since_last_update + 1 "
-            "WHERE key = ?;"
-        };
-    [[no_unique_address]] std::conditional_t<has_eviction, CompiledStatement, NoStmt>
         EVICT_LRU_STMT { "SELECT key, path, size FROM cache ORDER BY last_use ASC;" };
 
     [[no_unique_address]] std::conditional_t<has_tags, CompiledStatement, NoStmt>
@@ -257,7 +251,6 @@ class _Store : private Policies..., private _ForkAware
         }
         if constexpr (has_eviction)
         {
-            stmts.push_back(&UPDATE_LAST_USE_STMT);
             stmts.push_back(&EVICT_LRU_STMT);
         }
         if constexpr (has_expiration && has_tags)
@@ -501,6 +494,47 @@ class _Store : private Policies..., private _ForkAware
 
     // --- Background checkpoint / eviction ---
 
+    // MAX: a set() after the get() already wrote a newer seq. Caller owns the
+    // transaction.
+    static bool _write_uses(sqlite3* db, const WithEviction::Uses& uses)
+        requires (has_eviction)
+    {
+        sqlite3_stmt* stmt = nullptr;
+        if (sqlite3_prepare_v2(db,
+                "UPDATE cache SET last_use = MAX(last_use, ?), "
+                "access_count_since_last_update = access_count_since_last_update + 1 "
+                "WHERE key = ?;", -1, &stmt, nullptr) != SQLITE_OK)
+            return false;
+        bool ok = true;
+        for (auto it = uses.begin(); ok && it != uses.end(); ++it)
+        {
+            sqlite3_bind_int64(stmt, 1, static_cast<sqlite3_int64>(it->second));
+            sqlite3_bind_text(stmt, 2, it->first.data(), static_cast<int>(it->first.size()),
+                              SQLITE_STATIC);
+            ok = sqlite3_step(stmt) == SQLITE_DONE;
+            sqlite3_reset(stmt);
+        }
+        sqlite3_finalize(stmt);
+        return ok;
+    }
+
+    // A busy DB keeps the uses for the next tick.
+    void _bg_flush_uses(sqlite3* bg_db)
+        requires (has_eviction)
+    {
+        auto uses = WithEviction::_take_uses();
+        if (uses.empty())
+            return;
+        if (sqlite3_exec(bg_db, "BEGIN IMMEDIATE;", nullptr, nullptr, nullptr) == SQLITE_OK)
+        {
+            if (_write_uses(bg_db, uses)
+                && sqlite3_exec(bg_db, "COMMIT;", nullptr, nullptr, nullptr) == SQLITE_OK)
+                return;
+            sqlite3_exec(bg_db, "ROLLBACK;", nullptr, nullptr, nullptr);
+        }
+        WithEviction::_restore_uses(uses);
+    }
+
     void _bg_evict([[maybe_unused]] sqlite3* bg_db)
     {
         // Files of deleted rows are queued in trash by the cache_trash_delete
@@ -595,11 +629,15 @@ class _Store : private Policies..., private _ForkAware
             if (_stop_checkpoint.load(std::memory_order_relaxed))
                 break;
             sqlite3_wal_checkpoint_v2(cp_db, nullptr, SQLITE_CHECKPOINT_PASSIVE, nullptr, nullptr);
+            if constexpr (has_eviction)
+                _bg_flush_uses(cp_db);
             if constexpr (has_expiration || has_eviction)
                 _bg_evict(cp_db);
             _drain_trash(cp_db);
         }
 
+        if constexpr (has_eviction)
+            _bg_flush_uses(cp_db);
         // Final drain so a short-lived process doesn't leave past-grace trash
         // behind; still-in-grace entries are left for the next open's thread.
         _drain_trash(cp_db);
@@ -1220,8 +1258,7 @@ public:
             if constexpr (has_eviction)
             {
                 if (max_size > 0)
-                    db->exec(UPDATE_LAST_USE_STMT,
-                             WithEviction::_access_seq.fetch_add(1, std::memory_order_relaxed), key);
+                    WithEviction::_note_use(key);
             }
 
             const auto& [_, path] = *values;
@@ -1397,6 +1434,7 @@ public:
         if (max_size == 0)
             return 0;
 
+        _flush_uses();
         if constexpr (has_expiration)
             expire();
 
@@ -1425,6 +1463,22 @@ public:
             db->exec(DELETE_STMT, entry.key); // file queued by cache_trash_delete
 
         return to_evict.size();
+    }
+
+    void _flush_uses()
+        requires (has_eviction)
+    {
+        auto db = this->db();
+        if (std::lock_guard lock(WithEviction::_uses_mtx); WithEviction::_pending_uses.empty())
+            return;
+        _NestedTxn txn(*this);
+        auto uses = WithEviction::_take_uses();
+        if (!_write_uses(db->get(), uses))
+        {
+            WithEviction::_restore_uses(uses);
+            return;
+        }
+        txn.commit();
     }
 
     // --- Tag-specific ---
