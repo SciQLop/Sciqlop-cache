@@ -18,6 +18,13 @@ from diskcache import Cache as DiskCache
 VALUE_SIZES = [64, 200, 1024, 4096, 8192, 16384, 65536, 262144, 1048576]
 BATCH_SIZES = [1, 10, 50, 100, 500]
 BATCH_VALUE_SIZES = [200, 16384, 65536]
+SIZE_LIMIT = 1 << 30  # diskcache's default size_limit
+
+SINGLE_OP_BACKENDS = [
+    ("sciqlop", SciqlopCache),
+    ("sciqlop (size limit)", lambda path: SciqlopCache(path, max_size=SIZE_LIMIT)),
+    ("diskcache", DiskCache),
+]
 
 
 def measure(fn, number):
@@ -39,7 +46,7 @@ def bench_single_ops(writer):
         value = os.urandom(sz)
         iterations = max(20, 2000 // max(1, sz // 1024))
 
-        for name, factory in [("sciqlop", SciqlopCache), ("diskcache", DiskCache)]:
+        for name, factory in SINGLE_OP_BACKENDS:
             with TemporaryDirectory() as tmp:
                 cache = factory(tmp)
                 key = "bench_key"

@@ -1,115 +1,142 @@
 backend,operation,value_size,batch_size,latency_us
-sciqlop,single_set,64,1,22.48
-sciqlop,single_get,64,1,4.30
-sciqlop,first_get,64,1,3.47
-diskcache,single_set,64,1,45.66
-diskcache,single_get,64,1,5.19
-diskcache,first_get,64,1,6.53
-sciqlop,single_set,200,1,23.43
-sciqlop,single_get,200,1,4.67
-sciqlop,first_get,200,1,3.65
-diskcache,single_set,200,1,46.59
-diskcache,single_get,200,1,5.70
-diskcache,first_get,200,1,6.24
-sciqlop,single_set,1024,1,30.88
-sciqlop,single_get,1024,1,5.92
-sciqlop,first_get,1024,1,5.04
-diskcache,single_set,1024,1,41.88
-diskcache,single_get,1024,1,5.36
-diskcache,first_get,1024,1,6.02
-sciqlop,single_set,4096,1,31.71
-sciqlop,single_get,4096,1,6.40
-sciqlop,first_get,4096,1,6.45
-diskcache,single_set,4096,1,45.61
-diskcache,single_get,4096,1,5.67
-diskcache,first_get,4096,1,6.28
-sciqlop,single_set,8192,1,80.78
-sciqlop,single_get,8192,1,4.18
-sciqlop,first_get,8192,1,11.83
-diskcache,single_set,8192,1,60.32
-diskcache,single_get,8192,1,7.13
-diskcache,first_get,8192,1,6.58
-sciqlop,single_set,16384,1,75.36
-sciqlop,single_get,16384,1,4.34
-sciqlop,first_get,16384,1,15.19
-diskcache,single_set,16384,1,52.33
-diskcache,single_get,16384,1,6.40
-diskcache,first_get,16384,1,7.16
-sciqlop,single_set,65536,1,114.62
-sciqlop,single_get,65536,1,6.69
-sciqlop,first_get,65536,1,19.38
-diskcache,single_set,65536,1,200.67
-diskcache,single_get,65536,1,18.96
-diskcache,first_get,65536,1,21.14
-sciqlop,single_set,262144,1,158.93
-sciqlop,single_get,262144,1,10.89
-sciqlop,first_get,262144,1,31.66
-diskcache,single_set,262144,1,368.93
-diskcache,single_get,262144,1,29.38
-diskcache,first_get,262144,1,29.55
-sciqlop,single_set,1048576,1,809.77
-sciqlop,single_get,1048576,1,31.08
-sciqlop,first_get,1048576,1,98.28
-diskcache,single_set,1048576,1,1052.69
-diskcache,single_get,1048576,1,64.91
-diskcache,first_get,1048576,1,118.35
-sciqlop,batch_set,200,1,23.67
-sciqlop,batch_set_per_op,200,1,23.67
-diskcache,batch_set,200,1,52.43
-diskcache,batch_set_per_op,200,1,52.43
-sciqlop,batch_set,200,10,70.65
-sciqlop,batch_set_per_op,200,10,7.06
-diskcache,batch_set,200,10,273.54
-diskcache,batch_set_per_op,200,10,27.35
-sciqlop,batch_set,200,50,291.93
-sciqlop,batch_set_per_op,200,50,5.84
-diskcache,batch_set,200,50,1397.60
-diskcache,batch_set_per_op,200,50,27.95
-sciqlop,batch_set,200,100,576.05
-sciqlop,batch_set_per_op,200,100,5.76
-diskcache,batch_set,200,100,2575.41
-diskcache,batch_set_per_op,200,100,25.75
-sciqlop,batch_set,200,500,3207.36
-sciqlop,batch_set_per_op,200,500,6.41
-diskcache,batch_set,200,500,13680.64
-diskcache,batch_set_per_op,200,500,27.36
-sciqlop,batch_set,16384,1,82.05
-sciqlop,batch_set_per_op,16384,1,82.05
-diskcache,batch_set,16384,1,54.44
-diskcache,batch_set_per_op,16384,1,54.44
-sciqlop,batch_set,16384,10,554.55
-sciqlop,batch_set_per_op,16384,10,55.45
-diskcache,batch_set,16384,10,334.98
-diskcache,batch_set_per_op,16384,10,33.50
-sciqlop,batch_set,16384,50,2428.32
-sciqlop,batch_set_per_op,16384,50,48.57
-diskcache,batch_set,16384,50,1389.17
-diskcache,batch_set_per_op,16384,50,27.78
-sciqlop,batch_set,16384,100,4708.00
-sciqlop,batch_set_per_op,16384,100,47.08
-diskcache,batch_set,16384,100,2707.67
-diskcache,batch_set_per_op,16384,100,27.08
-sciqlop,batch_set,16384,500,23331.10
-sciqlop,batch_set_per_op,16384,500,46.66
-diskcache,batch_set,16384,500,13668.21
-diskcache,batch_set_per_op,16384,500,27.34
-sciqlop,batch_set,65536,1,102.03
-sciqlop,batch_set_per_op,65536,1,102.03
-diskcache,batch_set,65536,1,203.84
-diskcache,batch_set_per_op,65536,1,203.84
-sciqlop,batch_set,65536,10,742.04
-sciqlop,batch_set_per_op,65536,10,74.20
-diskcache,batch_set,65536,10,1762.65
-diskcache,batch_set_per_op,65536,10,176.26
-sciqlop,batch_set,65536,50,3289.78
-sciqlop,batch_set_per_op,65536,50,65.80
-diskcache,batch_set,65536,50,8494.59
-diskcache,batch_set_per_op,65536,50,169.89
-sciqlop,batch_set,65536,100,6407.67
-sciqlop,batch_set_per_op,65536,100,64.08
-diskcache,batch_set,65536,100,16878.75
-diskcache,batch_set_per_op,65536,100,168.79
-sciqlop,batch_set,65536,500,31797.67
-sciqlop,batch_set_per_op,65536,500,63.60
-diskcache,batch_set,65536,500,82354.11
-diskcache,batch_set_per_op,65536,500,164.71
+sciqlop,single_set,64,1,22.39
+sciqlop,single_get,64,1,4.22
+sciqlop,first_get,64,1,3.37
+sciqlop (size limit),single_set,64,1,21.13
+sciqlop (size limit),single_get,64,1,4.14
+sciqlop (size limit),first_get,64,1,3.40
+diskcache,single_set,64,1,32.43
+diskcache,single_get,64,1,4.87
+diskcache,first_get,64,1,5.33
+sciqlop,single_set,200,1,21.31
+sciqlop,single_get,200,1,4.11
+sciqlop,first_get,200,1,3.51
+sciqlop (size limit),single_set,200,1,21.35
+sciqlop (size limit),single_get,200,1,4.11
+sciqlop (size limit),first_get,200,1,3.49
+diskcache,single_set,200,1,31.80
+diskcache,single_get,200,1,4.81
+diskcache,first_get,200,1,5.19
+sciqlop,single_set,1024,1,27.98
+sciqlop,single_get,1024,1,5.57
+sciqlop,first_get,1024,1,4.87
+sciqlop (size limit),single_set,1024,1,27.62
+sciqlop (size limit),single_get,1024,1,5.60
+sciqlop (size limit),first_get,1024,1,4.99
+diskcache,single_set,1024,1,32.03
+diskcache,single_get,1024,1,4.91
+diskcache,first_get,1024,1,5.44
+sciqlop,single_set,4096,1,30.82
+sciqlop,single_get,4096,1,6.22
+sciqlop,first_get,4096,1,5.34
+sciqlop (size limit),single_set,4096,1,31.25
+sciqlop (size limit),single_get,4096,1,6.22
+sciqlop (size limit),first_get,4096,1,5.38
+diskcache,single_set,4096,1,36.04
+diskcache,single_get,4096,1,5.37
+diskcache,first_get,4096,1,5.86
+sciqlop,single_set,8192,1,69.20
+sciqlop,single_get,8192,1,3.90
+sciqlop,first_get,8192,1,10.53
+sciqlop (size limit),single_set,8192,1,70.80
+sciqlop (size limit),single_get,8192,1,3.90
+sciqlop (size limit),first_get,8192,1,10.64
+diskcache,single_set,8192,1,40.42
+diskcache,single_get,8192,1,5.64
+diskcache,first_get,8192,1,6.23
+sciqlop,single_set,16384,1,70.99
+sciqlop,single_get,16384,1,4.10
+sciqlop,first_get,16384,1,11.43
+sciqlop (size limit),single_set,16384,1,71.29
+sciqlop (size limit),single_get,16384,1,4.28
+sciqlop (size limit),first_get,16384,1,11.02
+diskcache,single_set,16384,1,39.31
+diskcache,single_get,16384,1,5.84
+diskcache,first_get,16384,1,7.19
+sciqlop,single_set,65536,1,87.52
+sciqlop,single_get,65536,1,5.62
+sciqlop,first_get,65536,1,18.57
+sciqlop (size limit),single_set,65536,1,90.31
+sciqlop (size limit),single_get,65536,1,5.71
+sciqlop (size limit),first_get,65536,1,19.14
+diskcache,single_set,65536,1,171.32
+diskcache,single_get,65536,1,17.07
+diskcache,first_get,65536,1,19.33
+sciqlop,single_set,262144,1,161.37
+sciqlop,single_get,262144,1,10.50
+sciqlop,first_get,262144,1,35.63
+sciqlop (size limit),single_set,262144,1,160.59
+sciqlop (size limit),single_get,262144,1,10.37
+sciqlop (size limit),first_get,262144,1,31.49
+diskcache,single_set,262144,1,344.44
+diskcache,single_get,262144,1,26.18
+diskcache,first_get,262144,1,30.50
+sciqlop,single_set,1048576,1,810.86
+sciqlop,single_get,1048576,1,30.82
+sciqlop,first_get,1048576,1,105.69
+sciqlop (size limit),single_set,1048576,1,809.71
+sciqlop (size limit),single_get,1048576,1,27.92
+sciqlop (size limit),first_get,1048576,1,96.60
+diskcache,single_set,1048576,1,1000.63
+diskcache,single_get,1048576,1,60.73
+diskcache,first_get,1048576,1,112.48
+sciqlop,batch_set,200,1,22.50
+sciqlop,batch_set_per_op,200,1,22.50
+diskcache,batch_set,200,1,41.46
+diskcache,batch_set_per_op,200,1,41.46
+sciqlop,batch_set,200,10,65.91
+sciqlop,batch_set_per_op,200,10,6.59
+diskcache,batch_set,200,10,195.59
+diskcache,batch_set_per_op,200,10,19.56
+sciqlop,batch_set,200,50,277.33
+sciqlop,batch_set_per_op,200,50,5.55
+diskcache,batch_set,200,50,882.14
+diskcache,batch_set_per_op,200,50,17.64
+sciqlop,batch_set,200,100,549.81
+sciqlop,batch_set_per_op,200,100,5.50
+diskcache,batch_set,200,100,1732.00
+diskcache,batch_set_per_op,200,100,17.32
+sciqlop,batch_set,200,500,3017.81
+sciqlop,batch_set_per_op,200,500,6.04
+diskcache,batch_set,200,500,8843.34
+diskcache,batch_set_per_op,200,500,17.69
+sciqlop,batch_set,16384,1,77.95
+sciqlop,batch_set_per_op,16384,1,77.95
+diskcache,batch_set,16384,1,44.17
+diskcache,batch_set_per_op,16384,1,44.17
+sciqlop,batch_set,16384,10,529.06
+sciqlop,batch_set_per_op,16384,10,52.91
+diskcache,batch_set,16384,10,226.34
+diskcache,batch_set_per_op,16384,10,22.63
+sciqlop,batch_set,16384,50,2302.36
+sciqlop,batch_set_per_op,16384,50,46.05
+diskcache,batch_set,16384,50,1162.26
+diskcache,batch_set_per_op,16384,50,23.25
+sciqlop,batch_set,16384,100,4562.03
+sciqlop,batch_set_per_op,16384,100,45.62
+diskcache,batch_set,16384,100,1953.22
+diskcache,batch_set_per_op,16384,100,19.53
+sciqlop,batch_set,16384,500,22538.57
+sciqlop,batch_set_per_op,16384,500,45.08
+diskcache,batch_set,16384,500,10541.57
+diskcache,batch_set_per_op,16384,500,21.08
+sciqlop,batch_set,65536,1,98.62
+sciqlop,batch_set_per_op,65536,1,98.62
+diskcache,batch_set,65536,1,208.72
+diskcache,batch_set_per_op,65536,1,208.72
+sciqlop,batch_set,65536,10,761.20
+sciqlop,batch_set_per_op,65536,10,76.12
+diskcache,batch_set,65536,10,1606.14
+diskcache,batch_set_per_op,65536,10,160.61
+sciqlop,batch_set,65536,50,3167.24
+sciqlop,batch_set_per_op,65536,50,63.34
+diskcache,batch_set,65536,50,7996.90
+diskcache,batch_set_per_op,65536,50,159.94
+sciqlop,batch_set,65536,100,6311.54
+sciqlop,batch_set_per_op,65536,100,63.12
+diskcache,batch_set,65536,100,15200.03
+diskcache,batch_set_per_op,65536,100,152.00
+sciqlop,batch_set,65536,500,31478.26
+sciqlop,batch_set_per_op,65536,500,62.96
+diskcache,batch_set,65536,500,75378.04
+diskcache,batch_set_per_op,65536,500,150.76

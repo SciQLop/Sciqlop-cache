@@ -43,7 +43,8 @@ def fmt_size(n):
     return f"{n}B"
 
 
-COLORS = {"sciqlop": "#e74c3c", "diskcache": "#3498db"}
+COLORS = {"sciqlop": "#e74c3c", "sciqlop (size limit)": "#e74c3c", "diskcache": "#3498db"}
+LINESTYLES = {"sciqlop (size limit)": "--"}
 
 # Blob-to-file storage thresholds
 SCIQLOP_FILE_THRESHOLD = 8192       # 8 KB
@@ -89,7 +90,7 @@ def plot_single_ops(rows, output):
     fig.suptitle(titled("Single-op Latency vs Value Size"), fontsize=14)
 
     for (op, title), ax in zip(ops, axes):
-        for backend in ["sciqlop", "diskcache"]:
+        for backend in COLORS:
             data = [(r["value_size"], r["latency_us"])
                     for r in rows if r["operation"] == op and r["backend"] == backend]
             if not data:
@@ -97,7 +98,7 @@ def plot_single_ops(rows, output):
             data.sort()
             sizes, latencies = zip(*data)
             ax.loglog(sizes, latencies, marker="o", color=COLORS[backend],
-                      label=backend, markersize=5)
+                      linestyle=LINESTYLES.get(backend, "-"), label=backend, markersize=5)
 
         ax.set_xlabel("Value size (bytes)")
         ax.set_ylabel("Latency (μs)")
