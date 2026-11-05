@@ -31,13 +31,17 @@ DRAIN_DEADLINE = 20  # grace + tick + slow-runner margin
 SHARED_KEYS = [f"k{i}" for i in range(20)]
 
 
-def _value_files(root):
-    return sum(
-        1
-        for _, _, names in os.walk(root)
+def _value_paths(root):
+    return [
+        os.path.join(d, name)
+        for d, _, names in os.walk(root)
         for name in names
         if not name.startswith("sciqlop-cache.db")
-    )
+    ]
+
+
+def _value_files(root):
+    return len(_value_paths(root))
 
 
 def _wait_until(predicate, deadline_secs):
@@ -163,6 +167,47 @@ class TrashBacklog(unittest.TestCase):
         self.assertEqual(report.dangling_rows, 0)
         self.assertEqual(report.orphaned_files, 0)
         cache.close()
+
+
+class DrainSafety(unittest.TestCase):
+    """Each test pins one rule the lock-free drain relies on (mutation-checked)."""
+
+    def setUp(self):
+        self.path = tempfile.mkdtemp()
+        self.cache = Cache(self.path)
+        self.cache.set("k", VALUE)
+        (self.file,) = _value_paths(self.path)
+
+    def tearDown(self):
+        self.cache.close()
+        os.chmod(os.path.dirname(self.file), 0o755)
+        shutil.rmtree(self.path, ignore_errors=True)
+
+    def test_a_deleted_file_outlives_the_grace_period(self):
+        self.cache.delete("k")
+        time.sleep(2.5)  # > 2 bg ticks, < the 4 s minimum grace (whole-second timestamps)
+        self.assertTrue(os.path.exists(self.file), "file unlinked before the grace period")
+        self.assertTrue(_wait_until(lambda: not os.path.exists(self.file), DRAIN_DEADLINE))
+
+    @unittest.skipIf(os.name == "nt" or os.geteuid() == 0, "needs POSIX directory permissions, non-root")
+    def test_a_file_the_drain_cannot_delete_stays_queued(self):
+        os.chmod(os.path.dirname(self.file), 0o555)
+        self.cache.delete("k")
+        time.sleep(WINDOW_SECS)  # the drain has tried, and failed, to unlink it
+        report = self.cache.check()
+        self.assertEqual(report.orphaned_files, 0, "queue entry dropped for a file still on disk")
+        os.chmod(os.path.dirname(self.file), 0o755)
+        self.assertTrue(
+            _wait_until(lambda: not os.path.exists(self.file), DRAIN_DEADLINE),
+            "file never retried once deletable",
+        )
+
+    def test_a_file_another_process_deleted_leaves_the_queue(self):
+        self.cache.delete("k")
+        os.remove(self.file)  # another process's drain won the race
+        time.sleep(WINDOW_SECS)
+        self.cache.close()
+        self.assertEqual(_trash_rows(self.path), 0, "queue entry kept for a file already gone")
 
 
 if __name__ == "__main__":
