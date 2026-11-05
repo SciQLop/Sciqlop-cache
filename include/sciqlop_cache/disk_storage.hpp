@@ -396,9 +396,15 @@ public:
     // Used by callers to tell a genuinely-missing file from a transient open
     // failure (permissions, fd exhaustion, ...) on a file that is still
     // present on disk.
-    [[nodiscard]] inline bool file_exists(const std::filesystem::path& stored) const
+    // A failed check counts as present: callers only act on "confirmed gone"
+    // (drop a trash row, delete a row whose file vanished). It never throws:
+    // on Windows the check fails with "access denied" while another process
+    // is deleting the file, and the bg trash drain must not die on that.
+    [[nodiscard]] inline bool file_exists(const std::filesystem::path& stored) const noexcept
     {
-        return std::filesystem::exists(abs_path(stored));
+        std::error_code ec;
+        const bool exists = std::filesystem::exists(abs_path(stored), ec);
+        return exists || ec;
     }
 
     [[nodiscard]] inline std::string generate_random_filename()

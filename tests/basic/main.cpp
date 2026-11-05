@@ -1078,6 +1078,32 @@ SCENARIO("close() releases mmap'd file handles for file-backed values", "[close]
     }
 }
 
+#ifndef _WIN32
+// The lock-free trash drain checks whether a file is still there. On Windows
+// that check fails with "access denied" while another process is deleting
+// the same file, and the throwing std::filesystem::exists() aborted the bg
+// thread. A symlink loop (ELOOP) reproduces a failing check on POSIX.
+SCENARIO("file_exists() never throws, and reports a file it can't check as present",
+         "[storage]")
+{
+    GIVEN("a stored path the filesystem can't resolve")
+    {
+        AutoCleanDirectory dir { "FileExistsError" };
+        DiskStorage storage(dir.path());
+        std::filesystem::create_symlink(dir.path() / "b", dir.path() / "a");
+        std::filesystem::create_symlink(dir.path() / "a", dir.path() / "b");
+        const auto stored = std::filesystem::path("a") / "value";
+
+        THEN("file_exists() reports it present instead of throwing")
+        {
+            bool present = false;
+            REQUIRE_NOTHROW(present = storage.file_exists(stored));
+            REQUIRE(present);
+        }
+    }
+}
+#endif
+
 // Issue #27: the pool of mapped value files was capped at 128 files whatever
 // their size, so reading a few large values pinned gigabytes of RSS.
 SCENARIO("the mapped-file pool is bounded by bytes, not file count", "[buffer]")
