@@ -923,6 +923,12 @@ private:
     // while the row exists, the collision-heal check treats the path as taken.
     // Two processes unlinking the same file is harmless (the second one sees
     // it gone). Runs on the bg connection, never takes _mtx.
+    // simplify: one known race, accepted. Two drains read the same due path;
+    // the first unlinks it and drops its row; a set() then draws that exact
+    // name (uuid + pid, ~1e-36) and writes a live file; the slow second drain
+    // unlinks it. Closing it means claiming rows before unlinking (DELETE in
+    // one txn, unlink, re-queue the failures), which leaks the file if the
+    // process dies in between; unlink-then-drop never loses track of a file.
     // One pass is capped at ~0.5 s so close() and the checkpoint stay
     // responsive. Returns true when it stopped with due entries left (or rows
     // it couldn't drop yet), so the bg loop runs the next pass at once
@@ -1006,6 +1012,8 @@ private:
         // (safe to overwrite and reuse). Only ever runs on EEXIST — the happy
         // path never queries. Safe to check-then-overwrite here: this function
         // holds BEGIN EXCLUSIVE plus _mtx, so no concurrent writer can race.
+        // The trash drain unlinks without that lock; see _drain_trash for the
+        // one (negligible) race that leaves.
         auto is_referenced = [&db](const std::filesystem::path& p) {
             auto path = p.string();
             return db->template exec<bool>(
