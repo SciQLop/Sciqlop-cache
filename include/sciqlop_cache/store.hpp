@@ -622,10 +622,12 @@ class _Store : private Policies..., private _ForkAware
         // file). Never applies to the writer's own connection/path.
         sqlite3_busy_timeout(cp_db, 250);
 
+        bool trash_backlog = false;
         while (!_stop_checkpoint.load(std::memory_order_relaxed))
         {
             std::unique_lock lock(_checkpoint_mutex);
-            _checkpoint_cv.wait_for(lock, std::chrono::seconds(1));
+            if (!trash_backlog)
+                _checkpoint_cv.wait_for(lock, std::chrono::seconds(1));
             if (_stop_checkpoint.load(std::memory_order_relaxed))
                 break;
             sqlite3_wal_checkpoint_v2(cp_db, nullptr, SQLITE_CHECKPOINT_PASSIVE, nullptr, nullptr);
@@ -633,7 +635,7 @@ class _Store : private Policies..., private _ForkAware
                 _bg_flush_uses(cp_db);
             if constexpr (has_expiration || has_eviction)
                 _bg_evict(cp_db);
-            _drain_trash(cp_db);
+            trash_backlog = _drain_trash(cp_db);
         }
 
         // Final drain so a short-lived process doesn't leave past-grace trash
@@ -881,38 +883,74 @@ private:
         return paths;
     }
 
-    // Unlink trashed files once their grace period has passed. Runs on the
-    // background connection without _mtx, inside BEGIN IMMEDIATE: only one
-    // process drains at a time, and a trash row is dropped only once its file
-    // is really gone. A file that can't be removed yet (Windows: a live
-    // Buffer maps it) gets a fresh timestamp and is retried after another
-    // grace period. A busy DB skips the tick; nothing is lost.
-    // simplify: at most 512 files per tick bounds how long the write lock is
-    // held; a huge backlog (clear() of a big cache) drains over several ticks.
-    void _drain_trash(sqlite3* bg_db)
+    static void _exec_per_path(sqlite3* conn, const char* sql,
+                               const std::vector<std::string>& paths)
     {
-        constexpr int batch = 512;
-        if (_due_trash(bg_db, 1).empty())
+        sqlite3_stmt* stmt = nullptr;
+        if (sqlite3_prepare_v2(conn, sql, -1, &stmt, nullptr) != SQLITE_OK)
             return;
-        if (sqlite3_exec(bg_db, "BEGIN IMMEDIATE;", nullptr, nullptr, nullptr) != SQLITE_OK)
-            return;
-        sqlite3_stmt* drop = nullptr;
-        sqlite3_stmt* retry = nullptr;
-        sqlite3_prepare_v2(bg_db, "DELETE FROM trash WHERE path = ?;", -1, &drop, nullptr);
-        sqlite3_prepare_v2(bg_db, "UPDATE trash SET ts = unixepoch('now') WHERE path = ?;", -1,
-                           &retry, nullptr);
-        for (const auto& p : _due_trash(bg_db, batch))
+        for (const auto& p : paths)
         {
-            auto* stmt = (storage->remove(p) || !storage->file_exists(p)) ? drop : retry;
-            if (!stmt)
-                continue;
             sqlite3_bind_text(stmt, 1, p.data(), static_cast<int>(p.size()), SQLITE_TRANSIENT);
             sqlite3_step(stmt);
             sqlite3_reset(stmt);
         }
-        sqlite3_finalize(drop);
-        sqlite3_finalize(retry);
-        sqlite3_exec(bg_db, "COMMIT;", nullptr, nullptr, nullptr);
+        sqlite3_finalize(stmt);
+    }
+
+    // One short write transaction: drop the rows of removed files, and give
+    // the ones that couldn't be removed (Windows: a live Buffer maps it) a
+    // fresh timestamp so they are retried after another grace period.
+    // Returns the SQLite result; on failure the rows stay and a later pass
+    // sees their files already gone.
+    static int _forget_trash(sqlite3* conn, const std::vector<std::string>& gone,
+                             const std::vector<std::string>& stuck)
+    {
+        if (int rc = sqlite3_exec(conn, "BEGIN IMMEDIATE;", nullptr, nullptr, nullptr);
+            rc != SQLITE_OK)
+            return rc;
+        _exec_per_path(conn, "DELETE FROM trash WHERE path = ?;", gone);
+        _exec_per_path(conn, "UPDATE trash SET ts = unixepoch('now') WHERE path = ?;", stuck);
+        int rc = sqlite3_exec(conn, "COMMIT;", nullptr, nullptr, nullptr);
+        if (rc != SQLITE_OK)
+            sqlite3_exec(conn, "ROLLBACK;", nullptr, nullptr, nullptr);
+        return rc;
+    }
+
+    // Issue #31: files are unlinked with no lock held, so a busy writer can't
+    // starve the drain. Safe because a due file has had no row for at least
+    // the grace period, and its trash row is dropped only after the unlink:
+    // while the row exists, the collision-heal check treats the path as taken.
+    // Two processes unlinking the same file is harmless (the second one sees
+    // it gone). Runs on the bg connection, never takes _mtx.
+    // One pass is capped at ~0.5 s so close() and the checkpoint stay
+    // responsive. Returns true when it stopped with due entries left (or rows
+    // it couldn't drop yet), so the bg loop runs the next pass at once
+    // instead of after a 1 s tick.
+    bool _drain_trash(sqlite3* bg_db)
+    {
+        constexpr int batch = 4096;
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(500);
+        while (std::chrono::steady_clock::now() < deadline)
+        {
+            auto due = _due_trash(bg_db, batch);
+            if (due.empty())
+                return false;
+            std::vector<std::string> gone, stuck;
+            for (auto& p : due)
+                ((storage->remove(p) || !storage->file_exists(p)) ? gone : stuck)
+                    .push_back(std::move(p));
+            // A lost lock retries within the pass: these files are already
+            // gone, so the retry only re-reads their rows, and each attempt
+            // waits in the busy handler first. Any other failure (read-only
+            // or full disk) fails fast, so it waits for the next tick.
+            const int rc = _forget_trash(bg_db, gone, stuck);
+            const bool drained = rc == SQLITE_OK && due.size() < batch;
+            const bool hard_failure = rc != SQLITE_OK && (rc & 0xff) != SQLITE_BUSY;
+            if (drained || hard_failure)
+                return false;
+        }
+        return true;
     }
 
     // --- set/add implementation ---

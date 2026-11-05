@@ -229,6 +229,12 @@ if not get_option('disable_python_wrapper')
         is_parallel : false,
         timeout : 180,
     )
+    test('test_trash_backlog', python3,
+        args:files('tests/python/test_trash_backlog.py'),
+        env : {'PYTHONPATH': meson.current_build_dir()},
+        is_parallel : false,
+        timeout : 150,
+    )
     test('test_mmap_fd_leak', python3,
         args:files('tests/python/test_mmap_fd_leak.py'),
         env : {'PYTHONPATH': meson.current_build_dir()},

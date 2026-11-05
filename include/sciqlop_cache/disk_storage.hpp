@@ -59,6 +59,11 @@ class DiskStorage
     // cache needs its own mutex.
     mutable std::mutex _cache_mutex;
     std::size_t _mmap_cache_capacity;
+    // Issue #27: a count cap alone let a few large mappings pin gigabytes of
+    // RSS. Reusing a big mapping saves one open + mmap next to a full copy of
+    // the value, so they are not worth keeping around.
+    static constexpr std::size_t _mmap_cache_byte_budget = 64 << 20;
+    std::size_t _mmap_cache_bytes = 0;
     std::list<std::string> _lru_order;
     std::unordered_map<std::string,
         std::pair<std::shared_ptr<IMemoryView>,
@@ -66,9 +71,8 @@ class DiskStorage
 
     void _evict_lru_locked()
     {
-        if (_lru_order.empty()) return;
-        _mmap_cache.erase(_lru_order.back());
-        _lru_order.pop_back();
+        if (!_lru_order.empty())
+            _cache_evict_locked(_lru_order.back());
     }
 
     void _cache_evict_locked(const std::string& key)
@@ -76,6 +80,7 @@ class DiskStorage
         auto it = _mmap_cache.find(key);
         if (it != _mmap_cache.end())
         {
+            _mmap_cache_bytes -= it->second.first->size();
             _lru_order.erase(it->second.second);
             _mmap_cache.erase(it);
         }
@@ -92,12 +97,15 @@ class DiskStorage
 
     void _cache_put_locked(const std::string& key, std::shared_ptr<IMemoryView> mmf)
     {
-        if (_mmap_cache_capacity == 0) return;
         _cache_evict_locked(key); // remove old entry if exists
-        while (_mmap_cache.size() >= _mmap_cache_capacity)
+        const auto size = mmf->size();
+        if (_mmap_cache_capacity == 0 || size > _mmap_cache_byte_budget) return;
+        while (_mmap_cache.size() >= _mmap_cache_capacity
+               || _mmap_cache_bytes + size > _mmap_cache_byte_budget)
             _evict_lru_locked();
         _lru_order.push_front(key);
         _mmap_cache[key] = { std::move(mmf), _lru_order.begin() };
+        _mmap_cache_bytes += size;
     }
 
     [[noreturn]] static void _throw_write_error(int err, const std::filesystem::path& file_path)
@@ -453,6 +461,7 @@ public:
         std::lock_guard lk { _cache_mutex };
         _mmap_cache.clear();
         _lru_order.clear();
+        _mmap_cache_bytes = 0;
     }
 
     [[nodiscard]] std::size_t mmap_cache_size() const

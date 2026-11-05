@@ -1078,6 +1078,31 @@ SCENARIO("close() releases mmap'd file handles for file-backed values", "[close]
     }
 }
 
+// Issue #27: the pool of mapped value files was capped at 128 files whatever
+// their size, so reading a few large values pinned gigabytes of RSS.
+SCENARIO("the mapped-file pool is bounded by bytes, not file count", "[buffer]")
+{
+    GIVEN("a Cache holding three 40 MiB file-backed values")
+    {
+        AutoCleanDirectory db_path { "MmapPoolBudget" };
+        Cache cache(db_path.path());
+        std::vector<char> big(40 << 20, 'x');
+        for (const auto* key : { "a", "b", "c" })
+            cache.set(key, big);
+
+        WHEN("each value is read once and dropped")
+        {
+            for (const auto* key : { "a", "b", "c" })
+                REQUIRE(cache.get(key));
+
+            THEN("the pool keeps at most one of them mapped (64 MiB budget)")
+            {
+                REQUIRE(cache.mmap_cache_size() <= 1);
+            }
+        }
+    }
+}
+
 SCENARIO("Buffer is safe to inspect after being moved from", "[buffer]")
 {
     GIVEN("a Buffer wrapping a vector")
