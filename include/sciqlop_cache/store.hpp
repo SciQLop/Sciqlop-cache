@@ -31,17 +31,6 @@ inline pid_t _sq_getpid() { return getpid(); }
 using _sq_pid_t = pid_t;
 #endif
 
-// Classification query for DiskStorage's collision-healing path (the
-// is_referenced callback in _Store::_set_impl): decides whether an existing
-// blob path is owned by a live cache row (genuine collision -> regenerate)
-// or is an orphaned leftover (safe to overwrite and reuse). It must cover the
-// trash table too: a displaced path spends 5 s there pending deferred
-// deletion, and classifying it as orphaned would let the heal reuse a file
-// that _drain_trash then unlinks — orphaning the new row. Defined at
-// namespace scope so tests exercise the exact production SQL.
-inline constexpr std::string_view IS_PATH_REFERENCED_SQL
-    = "SELECT 1 FROM cache WHERE path = ? UNION ALL "
-      "SELECT 1 FROM trash WHERE path = ? LIMIT 1;";
 
 // --- Fork safety -----------------------------------------------------------
 // A live Store owns a background checkpoint thread that periodically holds the
@@ -920,7 +909,7 @@ private:
     // Issue #31: files are unlinked with no lock held, so a busy writer can't
     // starve the drain. Safe because a due file has had no row for at least
     // the grace period, and its trash row is dropped only after the unlink:
-    // while the row exists, the collision-heal check treats the path as taken.
+    // while the file exists, set() can't take its name (exclusive create).
     // Two processes unlinking the same file is harmless (the second one sees
     // it gone). Runs on the bg connection, never takes _mtx.
     // simplify: one known race, accepted. Two drains read the same due path;
@@ -991,8 +980,7 @@ private:
 
         // A displaced file (old row was file-backed) is queued in trash by the
         // cache_trash_delete trigger, atomically with the REPLACE. BEGIN
-        // EXCLUSIVE still matters: it is where a locked DB surfaces as Timeout,
-        // and the collision-heal check below is check-then-overwrite.
+        // EXCLUSIVE still matters: it is where a locked DB surfaces as Timeout.
         _NestedTxn txn(*this);
 
         if constexpr (Bytes<decltype(value)>)
@@ -1007,19 +995,7 @@ private:
             }
         }
 
-        // Tells DiskStorage's collision-healing path whether an existing blob
-        // file is owned by a live row (regenerate) or is an orphaned leftover
-        // (safe to overwrite and reuse). Only ever runs on EEXIST — the happy
-        // path never queries. Safe to check-then-overwrite here: this function
-        // holds BEGIN EXCLUSIVE plus _mtx, so no concurrent writer can race.
-        // The trash drain unlinks without that lock; see _drain_trash for the
-        // one (negligible) race that leaves.
-        auto is_referenced = [&db](const std::filesystem::path& p) {
-            auto path = p.string();
-            return db->template exec<bool>(
-                std::string(IS_PATH_REFERENCED_SQL), path, path).has_value();
-        };
-        auto new_filepath = storage->store(value, is_referenced);
+        auto new_filepath = storage->store(value);
         try
         {
             auto path_str = new_filepath.string();

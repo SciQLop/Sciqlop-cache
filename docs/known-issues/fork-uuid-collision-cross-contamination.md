@@ -11,13 +11,10 @@ the other key's bytes), and fixed in `DiskStorage`/`_Store`:
    lockstep-identical-sequence root cause).
 3. `getpid()` embedded in the blob filename (structural uniqueness that does
    not depend on the atfork hook firing).
-4. Exclusive-create (`O_CREAT|O_EXCL`) in `store()` with a collision-healing
-   path: on EEXIST, an `is_referenced` callback (SQL `IS_PATH_REFERENCED_SQL`:
-   live cache row **or pending trash-table entry** owns the path → regenerate;
-   orphaned leftover → overwrite and reuse). Covering trash matters: a
-   displaced path spends 5 s pending deferred deletion, and classifying it as
-   orphaned would let the heal reuse a file that `_drain_trash` then unlinks.
-   The happy path is a single exclusive create with no DB query.
+4. Exclusive-create (`O_CREAT|O_EXCL`) in `store()`: on EEXIST a fresh name
+   is drawn, so an existing file is never overwritten. (It first reused a
+   name whose file no row or pending deletion referenced; dropped, since the
+   lock-free trash drain made that check racy and it bought nothing.)
 
 ## TL;DR
 
