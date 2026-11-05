@@ -114,23 +114,6 @@ class DiskStorage
                                 "Failed to write file " + file_path.string());
     }
 
-    inline void _write(const std::filesystem::path& file_path, const Payload auto& value)
-    {
-        errno = 0;
-        std::ofstream ofs(file_path, std::ios::binary);
-        if (ofs)
-        {
-            for (const auto& chunk : chunks_of(value))
-                ofs.write(chunk.data(), static_cast<std::streamsize>(chunk.size()));
-            // close() runs the final flush; without it the destructor flushes
-            // AFTER good() is evaluated, so a failed last flush (ENOSPC,
-            // quota) silently produced a truncated file under a committed row.
-            ofs.close();
-        }
-        if (!ofs.good())
-            _throw_write_error(errno, file_path);
-    }
-
     // Returns 0 or the errno of the failed write.
     [[nodiscard]] static int _write_fd(int fd, std::span<const char> chunk)
     {
@@ -478,19 +461,13 @@ public:
 
 
     // Writes `value` to a fresh random blob file and returns its path relative
-    // to the storage root. The happy path is a single exclusive create — no
-    // callback invocation, no extra work. On EEXIST (astronomically rare with
-    // a uuid+pid name) the collision is healed: `is_referenced(rel_path)`
-    // tells whether a live cache row owns that path — if yes (genuine
-    // collision) a fresh name is generated and retried; if no (orphaned
-    // leftover file) it is overwritten in place and reused. The default
-    // callback behaves as "always referenced" (always regenerate), keeping
-    // DiskStorage usable standalone, DB-agnostic. A write failure throws
+    // to the storage root. The file is created exclusively, so an existing
+    // file is never overwritten: a taken name (astronomically rare with a
+    // uuid+pid name) just draws a fresh one, whether a live row, a pending
+    // deletion or nothing owns it (an orphan is check()'s job). A write failure throws
     // std::system_error with the real errno (issue #16: returning "no path"
     // dropped it, and callers turned that into a silent data loss).
-    [[nodiscard]] inline std::filesystem::path store(
-        const Payload auto& value,
-        std::function<bool(const std::filesystem::path&)> is_referenced = {})
+    [[nodiscard]] inline std::filesystem::path store(const Payload auto& value)
     {
         for (int attempt = 0; attempt < 16; ++attempt)
         {
@@ -499,10 +476,6 @@ public:
                 / filename.substr(2, 2) / filename;
             if (_write_exclusive(_path / rel_path, value))
                 return rel_path;
-            if (!is_referenced || is_referenced(rel_path))
-                continue; // genuine collision: regenerate a fresh name
-            _write(_path / rel_path, value); // orphaned leftover: reuse it
-            return rel_path;
         }
         throw std::runtime_error("Failed to find a free blob file name in " + _path.string());
     }
