@@ -3,6 +3,7 @@ import atexit
 import base64
 import functools
 import hashlib
+import inspect
 import pickle
 import time
 import weakref
@@ -120,6 +121,81 @@ def _meta_result(value, meta, expire_time, tag):
 
 
 _open_stores = weakref.WeakSet()
+
+
+def _memoize_key(serializer, base, args, kwargs, typed):
+    key_data = (args, tuple(sorted(kwargs.items())))
+    if typed:
+        key_data += (
+            tuple(type(a) for a in args),
+            tuple(type(v) for v in kwargs.values()),
+        )
+    return f"{base}:{hashlib.sha256(serializer.dumps(key_data)).hexdigest()}"
+
+
+def _ignored_arguments(func, ignore):
+    """`ignore` as (positions, names). A name also covers its parameter's
+    position and a position its name, so ``ignore={"session"}`` works however
+    the caller passes it (diskcache #240)."""
+    positions = {i for i in ignore if isinstance(i, int)}
+    names = {i for i in ignore if isinstance(i, str)}
+    try:
+        params = list(inspect.signature(func).parameters.values())
+    except (TypeError, ValueError):  # builtins without a signature
+        return frozenset(positions), frozenset(names)
+    for index, p in enumerate(params):
+        if p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD):
+            if p.name in names:
+                positions.add(index)
+            elif index in positions:
+                names.add(p.name)
+    return frozenset(positions), frozenset(names)
+
+
+def _memoize_key_function(store, func, typed, version_aware, ignore, key):
+    base = f"{func.__module__}.{func.__qualname__}"
+    if version_aware:
+        base = f"{base}@{hashlib.sha256(func.__code__.co_code).hexdigest()[:16]}"
+    positions, names = _ignored_arguments(func, ignore)
+
+    def cache_key(*args, **kwargs):
+        if key is not None:
+            return _memoize_key(store._serializer, base, (key(*args, **kwargs),), {}, typed)
+        if positions or names:
+            args = tuple(a for i, a in enumerate(args) if i not in positions)
+            kwargs = {k: v for k, v in kwargs.items() if k not in names}
+        return _memoize_key(store._serializer, base, args, kwargs, typed)
+
+    return cache_key
+
+
+def _memoize(store, func, expire, tag, typed, version_aware, ignore, key):
+    cache_key = _memoize_key_function(store, func, typed, version_aware, ignore, key)
+
+    # simplify: the async wrapper calls the blocking get()/set() directly. They
+    # release the GIL and take microseconds for small values; a big value blocks
+    # the event loop while it is written. Upgrade: asyncio.to_thread() for set().
+    if inspect.iscoroutinefunction(func):
+        @functools.wraps(func)
+        async def wrapper(*args, **kwargs):
+            k = cache_key(*args, **kwargs)
+            result = store.get(k, _MISSING)
+            if result is _MISSING:
+                result = await func(*args, **kwargs)
+                store.set(k, result, expire=expire, tag=tag)
+            return result
+    else:
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            k = cache_key(*args, **kwargs)
+            result = store.get(k, _MISSING)
+            if result is _MISSING:
+                result = func(*args, **kwargs)
+                store.set(k, result, expire=expire, tag=tag)
+            return result
+
+    wrapper.__cache_key__ = cache_key
+    return wrapper
 
 
 @atexit.register
@@ -450,19 +526,8 @@ class Cache(_Cache):
         """
         return self.incr(key, -delta, default, retry)
 
-    def _memoize_key(self, base, args, kwargs, typed):
-        key_data = (args, tuple(sorted(kwargs.items())))
-        if typed:
-            key_data += (
-                tuple(type(a) for a in args),
-                tuple(type(v) for v in kwargs.values()),
-            )
-        key_hash = hashlib.sha256(
-            self._serializer.dumps(key_data)
-        ).hexdigest()
-        return f"{base}:{key_hash}"
-
-    def memoize(self, expire=None, tag=None, typed=False, version_aware=False):
+    def memoize(self, expire=None, tag=None, typed=False, version_aware=False,
+                ignore=(), key=None):
         """Decorator caching a function's results in this cache.
 
         The key is the function's module and name plus a hash of its arguments.
@@ -477,6 +542,16 @@ class Cache(_Cache):
                 identically (like diskcache).
             version_aware: Include a hash of the function's bytecode in the key, so
                 changing the function invalidates its old results.
+            ignore: Arguments to leave out of the key, by position (int) or name
+                (str). A name matches whether the argument is passed by position
+                or by keyword, so ``ignore={"session"}`` keeps a database session
+                out of the key either way.
+            key: A function taking the same arguments as the decorated one and
+                returning what identifies the call (e.g. a file's hash instead of
+                its path). It replaces the arguments in the key.
+
+        ``async def`` functions are supported: the result is cached, not the
+        coroutine.
 
         Example::
 
@@ -485,29 +560,7 @@ class Cache(_Cache):
                 return x + y
         """
 
-        def decorator(func):
-            base = f"{func.__module__}.{func.__qualname__}"
-            if version_aware:
-                code_hash = hashlib.sha256(func.__code__.co_code).hexdigest()[:16]
-                base = f"{base}@{code_hash}"
-
-            @functools.wraps(func)
-            def wrapper(*args, **kwargs):
-                key = self._memoize_key(base, args, kwargs, typed)
-                result = self.get(key, _MISSING)
-                if result is not _MISSING:
-                    return result
-                result = func(*args, **kwargs)
-                self.set(key, result, expire=expire, tag=tag)
-                return result
-
-            wrapper.__cache_key__ = lambda *args, **kwargs: self._memoize_key(
-                base, args, kwargs, typed
-            )
-            wrapper.__wrapped__ = func
-            return wrapper
-
-        return decorator
+        return lambda func: _memoize(self, func, expire, tag, typed, version_aware, ignore, key)
 
     def __getitem__(self, key: AnyStr):
         if type(key) is not str:
@@ -946,42 +999,9 @@ class FanoutCache(_FanoutCache):
     def __repr__(self) -> str:
         return f"FanoutCache({str(super().path())!r}, shards={self.shard_count()}, count={len(self)})"
 
-    def _memoize_key(self, base, args, kwargs, typed):
-        key_data = (args, tuple(sorted(kwargs.items())))
-        if typed:
-            key_data += (
-                tuple(type(a) for a in args),
-                tuple(type(v) for v in kwargs.values()),
-            )
-        key_hash = hashlib.sha256(
-            self._serializer.dumps(key_data)
-        ).hexdigest()
-        return f"{base}:{key_hash}"
-
-    def memoize(self, expire=None, tag=None, typed=False, version_aware=False):
-        def decorator(func):
-            base = f"{func.__module__}.{func.__qualname__}"
-            if version_aware:
-                code_hash = hashlib.sha256(func.__code__.co_code).hexdigest()[:16]
-                base = f"{base}@{code_hash}"
-
-            @functools.wraps(func)
-            def wrapper(*args, **kwargs):
-                key = self._memoize_key(base, args, kwargs, typed)
-                result = self.get(key, _MISSING)
-                if result is not _MISSING:
-                    return result
-                result = func(*args, **kwargs)
-                self.set(key, result, expire=expire, tag=tag)
-                return result
-
-            wrapper.__cache_key__ = lambda *args, **kwargs: self._memoize_key(
-                base, args, kwargs, typed
-            )
-            wrapper.__wrapped__ = func
-            return wrapper
-
-        return decorator
+    def memoize(self, expire=None, tag=None, typed=False, version_aware=False,
+                ignore=(), key=None):
+        return lambda func: _memoize(self, func, expire, tag, typed, version_aware, ignore, key)
 
     def lock(self, key, expire=None, tag=None):
         if type(key) is not str:
