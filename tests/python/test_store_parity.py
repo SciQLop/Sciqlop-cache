@@ -116,6 +116,55 @@ class CacheContract(_TempDir):
             self.assertIn(double.__cache_key__(1), store)
             self.assertEqual(store.evict_tag("memo"), 2)
 
+    def test_memoize_ignore_by_position_and_name(self):
+        for store in self._each():
+            calls = []
+
+            @store.memoize(ignore={"session", 2})
+            def fetch(entity, session, verbose=False):
+                calls.append(entity)
+                return entity * 10
+
+            unpicklable = lambda: None  # noqa: E731 -- must never reach the serializer
+            self.assertEqual(fetch(1, unpicklable), 10)
+            self.assertEqual(fetch(1, session=object()), 10)
+            self.assertEqual(fetch(1, object(), True), 10)
+            self.assertEqual(fetch(2, object()), 20)
+            self.assertEqual(calls, [1, 2])
+
+    def test_memoize_custom_key(self):
+        for store in self._each():
+            calls = []
+
+            @store.memoize(key=lambda path, **_: path.lower())
+            def load(path, retries=3):
+                calls.append(path)
+                return len(path)
+
+            self.assertEqual((load("A.txt"), load("a.TXT", retries=5)), (5, 5))
+            self.assertEqual(calls, ["A.txt"])
+            self.assertIn(load.__cache_key__("a.txt"), store)
+
+    def test_memoize_async_function_caches_the_result(self):
+        import asyncio
+
+        for store in self._each():
+            calls = []
+
+            @store.memoize(tag="async")
+            async def compute(x):
+                calls.append(x)
+                await asyncio.sleep(0)
+                return x * 2
+
+            async def run():
+                return [await compute(3), await compute(3), await compute(4)]
+
+            self.assertTrue(asyncio.iscoroutinefunction(compute))
+            self.assertEqual(asyncio.run(run()), [6, 6, 8])
+            self.assertEqual(calls, [3, 4])
+            self.assertEqual(store.evict_tag("async"), 2)
+
     def test_lock_with_tag_and_expire(self):
         for store in self._each():
             lock = store.lock(("resource", 1), expire=30, tag="locks")

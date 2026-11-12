@@ -88,6 +88,45 @@ Arguments are hashed through the serializer, so ``f(1)`` and ``f(1.0)`` are sepa
 entries; ``typed=True`` also puts the argument types in the key. ``version_aware=True`` adds a
 hash of the function's bytecode, so changing the function invalidates its old results.
 
+``ignore`` leaves arguments out of the key, by position or by name. A name works however
+the caller passes the argument, so a database session or a logger never reaches the
+serializer:
+
+.. code-block:: python
+
+    @cache.memoize(ignore={"session"})
+    def fetch(entity_id, session):
+        return {"id": entity_id}
+
+    print(fetch(7, object()) == fetch(7, session=object()))
+    # True
+
+``key`` replaces the arguments with what really identifies the call. It takes the same
+arguments as the function:
+
+.. code-block:: python
+
+    @cache.memoize(key=lambda path: path.lower())
+    def line_count(path):
+        return 3
+
+    print(line_count("Data.CSV"), line_count.__cache_key__("data.csv") in cache)
+    # 3 True
+
+``async def`` functions work too: the awaited result is cached, not the coroutine.
+
+.. code-block:: python
+
+    import asyncio
+
+    @cache.memoize(expire=60)
+    async def remote_lookup(name):
+        await asyncio.sleep(0)
+        return name.upper()
+
+    print(asyncio.run(remote_lookup("mms")))
+    # MMS
+
 Counters and transactions
 =========================
 
