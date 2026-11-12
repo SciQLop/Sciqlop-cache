@@ -998,7 +998,7 @@ private:
         auto new_filepath = storage->store(value);
         try
         {
-            auto path_str = new_filepath.string();
+            auto path_str = new_filepath.generic_string();
             auto binded = REPLACE_PATH_STMT.bind_all();
             _bind_core_and_policies(binded.get(), key, path_str, new_size,
                                     abs_exp, seq, tag);
@@ -1050,7 +1050,7 @@ private:
         bool inserted = false;
         try
         {
-            auto path_str = file_path.string();
+            auto path_str = file_path.generic_string();
             auto binded = INSERT_PATH_STMT.bind_all();
             _bind_core_and_policies(binded.get(), key, path_str, new_size,
                                     abs_exp, seq, tag);
@@ -1608,7 +1608,7 @@ public:
         {
             if (!entry.is_regular_file(ec) || _is_db_file(entry.path()))
                 continue;
-            auto stored = std::filesystem::relative(entry.path(), storage->path(), ec).string();
+            auto stored = std::filesystem::relative(entry.path(), storage->path(), ec).generic_string();
             if (ec || stored.empty())
                 continue;
             db->exec("INSERT OR REPLACE INTO trash (path, ts) VALUES (?, unixepoch('now'));",

@@ -370,10 +370,16 @@ public:
     // cache directory can be moved/copied and still resolve. Resolve a stored
     // path back to an absolute one against the current root. Absolute inputs
     // (legacy DBs written before this change, or the root itself) pass through
-    // unchanged.
+    // unchanged. Rows written on Windows before v0.4 used '\' separators;
+    // value file names never contain one, so it can only be a separator, and
+    // turning it into '/' lets Linux/macOS read a cache copied from Windows.
     [[nodiscard]] inline std::filesystem::path abs_path(const std::filesystem::path& stored) const
     {
-        return stored.is_absolute() ? stored : _path / stored;
+        if (stored.is_absolute())
+            return stored;
+        auto portable = stored.generic_string();
+        std::ranges::replace(portable, '\\', '/');
+        return _path / portable;
     }
 
     // Used by callers to tell a genuinely-missing file from a transient open
@@ -461,7 +467,8 @@ public:
 
 
     // Writes `value` to a fresh random blob file and returns its path relative
-    // to the storage root. The file is created exclusively, so an existing
+    // to the storage root (store its generic_string(): '/' on every platform,
+    // so a cache copied between OSes still resolves). The file is created exclusively, so an existing
     // file is never overwritten: a taken name (astronomically rare with a
     // uuid+pid name) just draws a fresh one, whether a live row, a pending
     // deletion or nothing owns it (an orphan is check()'s job). A write failure throws

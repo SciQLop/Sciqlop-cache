@@ -35,7 +35,8 @@ meson test -C build sciqlop-cache:basic
 #                     sciqlop-cache:test_perf_vs_diskcache,
 #                     sciqlop-cache:test_concurrency_bugs,
 #                     sciqlop-cache:test_free_threading,
-#                     sciqlop-cache:test_lru_batching
+#                     sciqlop-cache:test_lru_batching,
+#                     sciqlop-cache:test_portable_paths
 #   Python (with_torture_tests=true):
 #                     sciqlop-cache:test_torture, sciqlop-cache:test_hypothesis
 
