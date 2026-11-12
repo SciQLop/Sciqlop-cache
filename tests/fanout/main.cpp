@@ -351,3 +351,48 @@ SCENARIO("FanoutCache forwards add() with expire and tag, decr() and set_max_cac
     REQUIRE(fc.set("c", v));
     REQUIRE(fc.get("c")->to_vector() == v);
 }
+
+static bool shard_holds(const std::filesystem::path& shard_dir, const std::string& key)
+{
+    Index shard(shard_dir);
+    return shard.exists(key);
+}
+
+SCENARIO("A new fanout store routes keys with XXH3, the same on every platform",
+         "[fanout][portable]")
+{
+    AutoCleanDirectory db_path { "FanoutXXH3" };
+    std::vector<char> v(10, 'v');
+    {
+        FanoutIndex fi(db_path.path(), 8);
+        fi.set("", v);
+        fi.set("hello", v);
+        fi.set("speasy/amda/imf/2020-01-01", v);
+    }
+    // Golden shards: XXH3_64bits(key) % 8, see subprojects/xxhash.wrap.
+    REQUIRE(shard_holds(db_path.path() / "xxh3_02", ""));
+    REQUIRE(shard_holds(db_path.path() / "xxh3_05", "hello"));
+    REQUIRE(shard_holds(db_path.path() / "xxh3_05", "speasy/amda/imf/2020-01-01"));
+    REQUIRE_FALSE(std::filesystem::exists(db_path.path() / "00"));
+}
+
+SCENARIO("An existing fanout store keeps its std::hash routing", "[fanout][portable]")
+{
+    AutoCleanDirectory db_path { "FanoutLegacy" };
+    std::vector<char> v(10, 'v');
+    const std::string key = "hello";
+    const auto legacy_shard = std::hash<std::string> {}(key) % 4;
+    for (std::size_t i = 0; i < 4; ++i)
+    {
+        auto dir = db_path.path() / fmt::format("{:02d}", i);
+        std::filesystem::create_directories(dir);
+        if (i == legacy_shard)
+            Index(dir).set(key, v);
+    }
+
+    FanoutIndex fi(db_path.path(), 4);
+    REQUIRE(fi.get(key)->to_vector() == v);
+    fi.set("other", v);
+    REQUIRE(fi.exists("other"));
+    REQUIRE_FALSE(std::filesystem::exists(db_path.path() / "xxh3_00"));
+}

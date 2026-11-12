@@ -15,6 +15,13 @@ Can I move or copy a cache directory?
 Yes, while no process has it open. Rows store the paths of value files relative to the
 cache directory, so a moved or copied cache still works.
 
+This also holds across platforms, with one exception: a ``FanoutCache`` or
+``FanoutIndex`` created before v0.4 (shard folders ``00``, ``01``, ...). Those pick a
+key's shard with the C++ standard library's hash, which differs between Linux, macOS
+and Windows. Such a store keeps working where it was made. Stores created since v0.4
+(shard folders ``xxh3_00``, ...) use XXH3 and can be copied anywhere. An older version
+of the library opening a new store sees an empty cache rather than misplaced keys.
+
 Can I put a cache on a network filesystem?
 ==========================================
 

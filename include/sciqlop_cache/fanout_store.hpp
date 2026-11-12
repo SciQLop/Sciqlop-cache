@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <filesystem>
 #include <fmt/format.h>
 #include <functional>
@@ -8,14 +9,50 @@
 #include <string>
 #include <vector>
 
+#define XXH_INLINE_ALL
+#include <xxhash.h>
+
+// Stores created before v0.4 named their shards "00".. and routed keys with
+// std::hash, which differs between libstdc++, libc++ and MSVC (issue #26).
+// Such stores keep that routing; new ones use XXH3, whose output is frozen
+// across platforms. The new shard names keep an old library version from
+// misrouting keys of a new store: it sees no "00" and starts an empty one.
+enum class ShardHash
+{
+    legacy_std,
+    xxh3
+};
+
+inline ShardHash detect_shard_hash(const std::filesystem::path& path)
+{
+    if (std::filesystem::exists(path / "00") && !std::filesystem::exists(path / "xxh3_00"))
+        return ShardHash::legacy_std;
+    return ShardHash::xxh3;
+}
+
+inline std::string shard_dir_name(ShardHash hash, std::size_t index)
+{
+    if (hash == ShardHash::xxh3)
+        return fmt::format("xxh3_{:02d}", index);
+    return fmt::format("{:02d}", index);
+}
+
+inline std::uint64_t shard_hash_of(ShardHash hash, const std::string& key)
+{
+    if (hash == ShardHash::xxh3)
+        return XXH3_64bits(key.data(), key.size());
+    return std::hash<std::string> {}(key);
+}
+
 template <typename StoreType>
 class FanoutStore
 {
     std::vector<std::unique_ptr<StoreType>> _shards;
+    ShardHash _hash = ShardHash::xxh3;
 
     std::size_t _shard_for(const std::string& key) const
     {
-        return std::hash<std::string> {}(key) % _shards.size();
+        return shard_hash_of(_hash, key) % _shards.size();
     }
 
     StoreType& _shard(const std::string& key) { return *_shards[_shard_for(key)]; }
@@ -37,11 +74,12 @@ public:
                          std::size_t shard_count = 8,
                          std::size_t max_size = 0,
                          int busy_timeout_ms = 600'000)
+        : _hash { detect_shard_hash(path) }
     {
         _shards.reserve(shard_count);
         for (std::size_t i = 0; i < shard_count; ++i)
         {
-            auto shard_path = path / fmt::format("{:02d}", i);
+            auto shard_path = path / shard_dir_name(_hash, i);
             std::filesystem::create_directories(shard_path);
             _shards.push_back(std::make_unique<StoreType>(shard_path, max_size, busy_timeout_ms));
         }
