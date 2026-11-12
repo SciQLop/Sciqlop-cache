@@ -420,6 +420,7 @@ NB_MODULE(_pysciqlop_cache, m)
         .def("expire", &Cache::expire, nb::call_guard<nb::gil_scoped_release>())
         .def("evict", &Cache::evict, nb::call_guard<nb::gil_scoped_release>())
         .def("evict_tag", &Cache::evict_tag, doc::evict_tag, nb::arg("tag"), nb::call_guard<nb::gil_scoped_release>())
+        .def("_keys_with_tag", &Cache::keys_with_tag, nb::arg("tag"), nb::call_guard<nb::gil_scoped_release>())
         .def("incr", &Cache::incr, nb::arg("key"), nb::arg("delta") = 1,
              nb::arg("default_value") = 0,
              nb::call_guard<nb::gil_scoped_release>())
@@ -525,6 +526,7 @@ NB_MODULE(_pysciqlop_cache, m)
         .def("expire", &FanoutCache::expire, nb::call_guard<nb::gil_scoped_release>())
         .def("evict", &FanoutCache::evict, nb::call_guard<nb::gil_scoped_release>())
         .def("evict_tag", &FanoutCache::evict_tag, doc::evict_tag, nb::arg("tag"), nb::call_guard<nb::gil_scoped_release>())
+        .def("_keys_with_tag", &FanoutCache::keys_with_tag, nb::arg("tag"), nb::call_guard<nb::gil_scoped_release>())
         .def("incr", &FanoutCache::incr, nb::arg("key"), nb::arg("delta") = 1,
              nb::arg("default_value") = 0,
              nb::call_guard<nb::gil_scoped_release>())
