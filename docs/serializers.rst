@@ -11,7 +11,7 @@ A serializer turns your Python values into bytes and back. Each cache uses one:
     * - Serializer
       - Use it for
     * - :class:`~pysciqlop_cache.PickleSerializer` (default)
-      - Anything picklable. The safe default.
+      - Anything picklable. The default.
     * - :class:`~pysciqlop_cache.PickleOOBSerializer`
       - Values that carry big numpy arrays, especially in programs with several
         threads. See below.
@@ -42,8 +42,15 @@ one. Asking for a different one raises, instead of silently misreading your data
 The one exception is ``pickle`` → ``pickle-oob``: the new serializer reads plain pickle
 entries too, so an existing pickle cache can switch in place. The reverse still raises.
 
-Only load caches you wrote: unpickling runs code. ``MsgspecSerializer`` only builds plain
-data types.
+Security
+========
+
+Unpickling runs code. With a pickle serializer, anyone who can write to the cache
+folder can run code in every program that reads from it. Keep the folder writable
+only by you (a usual umask such as 022 does that), or use ``MsgspecSerializer``: it only
+builds plain data types, and its caches never unpickle anything else, not even keys.
+A key such as ``("sensor", 7)`` still works; a planted key that would run code raises
+:class:`pickle.UnpicklingError` instead.
 
 Big numpy arrays: ``PickleOOBSerializer``
 =========================================
