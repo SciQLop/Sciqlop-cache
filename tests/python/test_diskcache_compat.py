@@ -277,7 +277,7 @@ class TestTimeout(_Tmp):
     def test_timeout_on_fanout(self):
         d = self.tmp()
         f = FanoutCache(d, shard_count=1, timeout=0.05)
-        with _ForeignLock(os.path.join(d, "00")):
+        with _ForeignLock(os.path.join(d, "xxh3_00")):
             with self.assertRaises(Timeout):
                 f.set("k", 1)
 

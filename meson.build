@@ -36,6 +36,8 @@ fmt_dep = dependency('fmt')
 sqlite3_dep = subproject('sqlite3').get_variable('sqlite3_dep')
 cpp_utils = dependency('cpp_utils', required : true,  default_options : ['cpp_std=c++20', 'with_tests=false'])
 stduuid = dependency('stduuid', required : true)
+# Used with XXH_INLINE_ALL, so only the header is needed.
+xxhash_dep = dependency('libxxhash', default_options : ['default_library=static']).partial_dependency(includes : true, compile_args : true)
 optional_deps = []
 
 if build_machine.system() == 'windows'
@@ -87,7 +89,8 @@ sciqlop_cache_dep = declare_dependency(include_directories: sciqlop_cache_dep_in
                                                fmt_dep,
                                                sqlite3_dep,
                                                cpp_utils,
-                                               stduuid]
+                                               stduuid,
+                                               xxhash_dep]
                                                + optional_deps
                                 )
 
