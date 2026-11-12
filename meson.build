@@ -256,6 +256,11 @@ if not get_option('disable_python_wrapper')
         is_parallel : false,
         timeout : 60,
     )
+    test('test_portable_paths', python3,
+        args:files('tests/python/test_portable_paths.py'),
+        env : {'PYTHONPATH': meson.current_build_dir()},
+        timeout : 60,
+    )
     test('test_lru_batching', python3,
         args:files('tests/python/test_lru_batching.py'),
         env : {'PYTHONPATH': meson.current_build_dir()},
