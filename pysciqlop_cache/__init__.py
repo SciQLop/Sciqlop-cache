@@ -4,6 +4,7 @@ import base64
 import functools
 import hashlib
 import inspect
+import io
 import pickle
 import time
 import weakref
@@ -67,8 +68,9 @@ __all__ = [
     "PickleSerializer", "PickleOOBSerializer", "MsgspecSerializer", "Timeout",
 ]
 
-# pickle here only encodes/decodes keys this same process wrote to its own local
-# on-disk cache; it never deserializes data from another, untrusted source.
+# Keys that aren't str/int/float/bytes are pickled. A store whose serializer avoids
+# pickle decodes them with _PlainKeyUnpickler, so choosing msgspec keeps the whole
+# cache free of code-running unpickling.
 _KEY_MARK = "\x00"  # reserved prefix; a str key starting with it is not checked for on the hot path
 
 
@@ -82,18 +84,43 @@ def _typed_key(key):
     return "\x00p" + base64.b64encode(pickle.dumps(key, protocol=4)).decode("ascii")
 
 
+class _PlainKeyUnpickler(pickle.Unpickler):
+    """Unpickles keys of a store whose serializer avoids pickle: plain hashable
+    values only, never an arbitrary callable, so a key planted in the cache folder
+    can't run code (https://docs.python.org/3/library/pickle.html#restricting-globals)."""
+
+    _ALLOWED = frozenset({
+        ("builtins", "frozenset"), ("builtins", "set"), ("builtins", "complex"),
+        ("datetime", "datetime"), ("datetime", "date"), ("datetime", "time"),
+        ("datetime", "timedelta"), ("datetime", "timezone"),
+    })
+
+    def find_class(self, module, name):
+        if (module, name) in self._ALLOWED:
+            return super().find_class(module, name)
+        raise pickle.UnpicklingError(
+            f"key of type {module}.{name} refused: this store's serializer does not use "
+            "pickle, so its keys may only hold plain values (tuples, frozensets, dates, ...)"
+        )
+
+
+def _load_plain_key(data):
+    return _PlainKeyUnpickler(io.BytesIO(data)).load()
+
+
 _KEY_DECODERS = {
     "i": int,
     "f": float,
     "b": lambda s: s.encode("latin-1"),
     "p": lambda s: pickle.loads(base64.b64decode(s)),
 }
+_PLAIN_KEY_DECODERS = {**_KEY_DECODERS, "p": lambda s: _load_plain_key(base64.b64decode(s))}
 
 
-def _decode_key(raw):
+def _decode_key(raw, decoders=_KEY_DECODERS):
     if raw[:1] != _KEY_MARK:
         return raw
-    return _KEY_DECODERS[raw[1]](raw[2:])
+    return decoders[raw[1]](raw[2:])
 
 
 def _encode_key(store, key):
@@ -108,7 +135,9 @@ def _encode_key(store, key):
 def _decode_keys(store, raw):
     if store.get_meta("encoded_keys") is None:
         return raw
-    return [_decode_key(k) for k in raw] if isinstance(raw, list) else map(_decode_key, raw)
+    decoders = _KEY_DECODERS if store._serializer.name.startswith("pickle") else _PLAIN_KEY_DECODERS
+    decode = functools.partial(_decode_key, decoders=decoders)
+    return [decode(k) for k in raw] if isinstance(raw, list) else map(decode, raw)
 
 
 def _meta_result(value, meta, expire_time, tag):

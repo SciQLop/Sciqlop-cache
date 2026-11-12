@@ -299,5 +299,70 @@ class TestMsgspecOnDiskFormat(unittest.TestCase):
                 self.assertEqual(ser.dumps(value), self.GOLDEN[name])
 
 
+
+
+class _Exploit:
+    """Unpickling this calls ``record(...)``: stands in for os.system."""
+    def __reduce__(self):
+        return (_record_call, ("pwned",))
+
+
+_calls = []
+
+
+def _record_call(arg):
+    _calls.append(arg)
+    return arg
+
+
+def _plant_key(store, obj):
+    """Write a key the way a hostile process with access to the cache folder could:
+    an encoded key whose payload is an arbitrary pickle."""
+    import base64
+    import pickle
+    raw = "\x00p" + base64.b64encode(pickle.dumps(obj, protocol=4)).decode("ascii")
+    store.set_meta("encoded_keys", "1")
+    type(store).__mro__[1].set(store, raw, b"x")
+
+
+@unittest.skipUnless(_has_msgspec, "msgspec not installed")
+class KeysOfNonPickleStores(unittest.TestCase):
+    """A store that chose a serializer without pickle never unpickles arbitrary
+    objects, not even through its keys (pickle docs: "Restricting Globals")."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        _calls.clear()
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_plain_hashable_keys_still_round_trip(self):
+        import datetime
+        cache = Cache(self.tmp, serializer=MsgspecSerializer())
+        keys = [("sensor", 7), frozenset({1, 2}), (None, True, 2.5, b"b", ("nested",)),
+                datetime.datetime(2026, 1, 2, 3, 4, 5), datetime.date(2026, 1, 2),
+                datetime.timedelta(seconds=3), complex(1, 2)]
+        for k in keys:
+            cache[k] = 1
+        self.assertCountEqual(cache.keys(), keys)
+        self.assertCountEqual(list(cache), keys)
+
+    def test_planted_key_is_refused_not_executed(self):
+        import pickle
+        cache = Cache(self.tmp, serializer=MsgspecSerializer())
+        _plant_key(cache, _Exploit())
+        with self.assertRaises(pickle.UnpicklingError):
+            cache.keys()
+        with self.assertRaises(pickle.UnpicklingError):
+            list(cache)
+        self.assertEqual(_calls, [])
+
+    def test_pickle_stores_keep_full_key_unpickling(self):
+        cache = Cache(self.tmp, serializer=PickleSerializer())
+        _plant_key(cache, _Exploit())
+        self.assertEqual(cache.keys(), ["pwned"])
+
+
 if __name__ == "__main__":
     unittest.main()
