@@ -223,6 +223,9 @@ class _Store : private Policies..., private _ForkAware
     [[no_unique_address]] std::conditional_t<has_tags, CompiledStatement, NoStmt>
         EVICT_TAG_STMT { "DELETE FROM cache WHERE tag = ?;" };
 
+    [[no_unique_address]] std::conditional_t<has_tags, CompiledStatement, NoStmt>
+        KEYS_WITH_TAG_STMT { std::string("SELECT key FROM cache WHERE tag = ?") + _where_valid() + ";" };
+
     auto _all_statements()
     {
         std::vector<CompiledStatement*> stmts = {
@@ -245,7 +248,10 @@ class _Store : private Policies..., private _ForkAware
         if constexpr (has_expiration && has_tags)
             stmts.push_back(&EXPIRE_TAG_STMT);
         if constexpr (has_tags)
+        {
             stmts.push_back(&EVICT_TAG_STMT);
+            stmts.push_back(&KEYS_WITH_TAG_STMT);
+        }
         return stmts;
     }
 
@@ -1509,6 +1515,14 @@ public:
     }
 
     // --- Tag-specific ---
+
+    [[nodiscard]] inline std::vector<std::string> keys_with_tag(const std::string& tag)
+        requires (has_tags)
+    {
+        if (auto r = db()->template exec<std::vector<std::string>>(KEYS_WITH_TAG_STMT, tag))
+            return *r;
+        return {};
+    }
 
     inline std::size_t evict_tag(const std::string& tag)
         requires (has_tags)

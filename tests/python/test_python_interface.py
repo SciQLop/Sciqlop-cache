@@ -313,6 +313,17 @@ class TestCache(unittest.TestCase):
         evicted = self.cache.evict_tag("no_such_tag")
         self.assertEqual(evicted, 0)
 
+    def test_keys_by_tag(self):
+        self.cache.set("t1", "v1", tag="grp")
+        self.cache.set(("t", 2), "v2", tag="grp")
+        self.cache.set("t3", "v3", tag="other")
+        self.cache.set("t4", "v4")
+        self.cache.set("gone", "v", tag="grp", expire=-1)
+        self.assertCountEqual(self.cache.keys(tag="grp"), ["t1", ("t", 2)])
+        self.assertCountEqual(list(self.cache.iterkeys(tag="grp")), ["t1", ("t", 2)])
+        self.assertEqual(self.cache.keys(tag="missing"), [])
+        self.assertEqual(len(self.cache.keys()), 4)
+
     def test_clear(self):
         self.cache.set("a", 1)
         self.cache.set("b", 2)
@@ -680,6 +691,13 @@ class TestFanoutCache(unittest.TestCase):
         evicted = self.cache.evict_tag("group")
         self.assertEqual(evicted, 2)
         self.assertEqual(self.cache.count(), 1)
+
+    def test_keys_by_tag(self):
+        for i in range(20):
+            self.cache.set(f"k{i}", i, tag="even" if i % 2 == 0 else None)
+        expected = [f"k{i}" for i in range(0, 20, 2)]
+        self.assertCountEqual(self.cache.keys(tag="even"), expected)
+        self.assertCountEqual(list(self.cache.iterkeys(tag="even")), expected)
 
     def test_dict_interface(self):
         self.cache["dictkey"] = "dictval"

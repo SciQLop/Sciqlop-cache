@@ -43,11 +43,17 @@ Expiration and tags
     cache.touch("session/abc", expire=7200)             # new lifetime
     cache.touch("session/abc")                          # never expires anymore
 
+    print(sorted(cache.keys(tag="sensor")))             # keys stored with that tag
+    # ['sensor/hum', 'sensor/temp']
+
     print(cache.evict_tag("sensor"))                    # removes both sensor entries
     # 2
 
 ``expire`` takes seconds (int or float) or a :class:`datetime.timedelta`. Expired
 entries are invisible right away, and a background thread deletes them.
+
+``keys(tag=...)`` and ``iterkeys(tag=...)`` list only the keys stored with that tag.
+Tags are indexed, so this does not scan the whole cache.
 
 Bounded caches
 ==============

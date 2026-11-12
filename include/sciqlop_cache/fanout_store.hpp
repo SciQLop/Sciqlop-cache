@@ -345,6 +345,18 @@ public:
         return total;
     }
 
+    [[nodiscard]] std::vector<std::string> keys_with_tag(const std::string& tag)
+        requires requires(StoreType& s) { s.keys_with_tag(tag); }
+    {
+        std::vector<std::string> all;
+        _for_each_shard([&](auto& s) {
+            auto k = s.keys_with_tag(tag);
+            all.insert(all.end(), std::make_move_iterator(k.begin()),
+                       std::make_move_iterator(k.end()));
+        });
+        return all;
+    }
+
     // --- Stats ---
 
     struct Stats { uint64_t hits; uint64_t misses; };

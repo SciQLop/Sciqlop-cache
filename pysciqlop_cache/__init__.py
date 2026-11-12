@@ -532,12 +532,15 @@ class Cache(_Cache):
     def __iter__(self):
         return _decode_keys(self, super().iterkeys())
 
-    def keys(self):
-        """All keys, as a list."""
-        return _decode_keys(self, super().keys())
+    def keys(self, tag=None):
+        """All keys, as a list. With ``tag``, only the keys stored with that tag."""
+        raw = super().keys() if tag is None else super()._keys_with_tag(tag)
+        return _decode_keys(self, raw)
 
-    def iterkeys(self):
-        """Iterate over the keys without building a list."""
+    def iterkeys(self, tag=None):
+        """Iterate over the keys. With ``tag``, only the keys stored with that tag."""
+        if tag is not None:
+            return iter(self.keys(tag=tag))
         return _decode_keys(self, super().iterkeys())
 
     def __repr__(self) -> str:
@@ -931,10 +934,13 @@ class FanoutCache(_FanoutCache):
     def __iter__(self):
         return _decode_keys(self, super().iterkeys())
 
-    def keys(self):
-        return _decode_keys(self, super().keys())
+    def keys(self, tag=None):
+        raw = super().keys() if tag is None else super()._keys_with_tag(tag)
+        return _decode_keys(self, raw)
 
-    def iterkeys(self):
+    def iterkeys(self, tag=None):
+        if tag is not None:
+            return iter(self.keys(tag=tag))
         return _decode_keys(self, super().iterkeys())
 
     def __repr__(self) -> str:
