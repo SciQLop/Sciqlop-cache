@@ -13,11 +13,12 @@ Two sweeps:
 
 Outputs CSV to stdout. The datasets are downloaded on first use (~1.6 GB).
 Usage:
-    TMPDIR=/dev/shm PYTHONPATH=build python benchmark/bench_arrays.py > benchmark/arrays_results.csv
+    TMPDIR=~/.cache/sqc-bench-tmp PYTHONPATH=build python benchmark/bench_arrays.py > benchmark/arrays_results.csv
     ... bench_arrays.py --sweeps size --datasets images table
 
 The 1 GB point keeps about 6 GB on TMPDIR at its peak (values plus the trash's
 5 s grace period) and ~3 GB in the process, plus the dataset itself (up to 1.5 GB).
+Put TMPDIR on a local disk: on Linux, tmpfs writes slower than a disk's page cache.
 """
 
 import argparse
@@ -43,7 +44,7 @@ BACKENDS = {
 }
 SIZES = [100_000, 400_000, 1_600_000, 6_300_000, 25_000_000, 100_000_000, 400_000_000,
          1_000_000_000]
-# Above this, fewer rotating keys and repetitions keep RAM use bounded (TMPDIR is RAM).
+# Above this, fewer rotating keys and repetitions keep memory and TMPDIR use bounded.
 BIG_VALUE = 200_000_000
 THREAD_BYTES = 24_000_000
 THREADS = [1, 2, 4, 8, 16]

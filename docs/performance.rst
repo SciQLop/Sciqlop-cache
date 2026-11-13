@@ -9,8 +9,11 @@ settings**, so the gaps come from the implementations.
 **Held identical for both libraries:**
 
 - The same machine, Python interpreter and benchmark process.
-- The same storage: a RAM filesystem, so disk speed doesn't hide the library's own
-  cost (``tmpfs`` on Linux, an APFS RAM disk on macOS; see below for the one exception).
+- The same storage. On Linux, the NVMe disk (btrfs): with ``synchronous=NORMAL`` and no
+  ``fsync``, writes land in the page cache, so the disk's speed doesn't hide the
+  library's own cost. A RAM filesystem was tried and dropped: on this kernel ``tmpfs``
+  writes about 3x slower than the page cache (it takes memory 4 KB at a time). On
+  macOS, an APFS RAM disk (internal SSD for the large values).
 - The same keys, values and number of operations, through the public Python API.
 - SQLite in WAL mode with ``synchronous=NORMAL`` for both.
 
@@ -50,7 +53,7 @@ Every chart has a tab for each machine; switching one switches them all.
       - Fedora Linux 44
       - macOS 26.6
     * - Storage
-      - ``tmpfs``
+      - NVMe SSD, btrfs (page cache)
       - APFS RAM disk (``hdiutil``); internal SSD for the numpy arrays
     * - Python, diskcache
       - 3.14 (GIL build), 5.6.3
@@ -59,7 +62,9 @@ Every chart has a tab for each machine; switching one switches them all.
 Scaling with the number of entries
 ==================================
 
-100 to 1 M entries of 256 bytes. Latency stays flat as the cache grows:
+100 to 1 M entries of 256 bytes. SciQLop Cache's latency stays flat as the cache grows
+(``set``: 68 µs at 100 entries and at 1 M). diskcache's ``set`` is flat up to about
+500 k entries, then climbs to 200 µs (one run):
 
 .. tab-set::
     :sync-group: platform
@@ -119,12 +124,13 @@ thread writes them all once per second (see :doc:`internals`).
 Values from 8 KB to 32 KB are the one range where diskcache is faster. SciQLop Cache stores
 them as files, while diskcache keeps them in SQLite up to 32 KB.
 
-- **Writes:** 130 µs against 37 µs on the M2, 69–71 µs against 39–40 µs on the Ryzen. A file
-  costs ~100 µs more than a blob on the M2 (~40 µs on the Ryzen): on APFS, ``open`` with
-  ``O_CREAT`` alone takes 32 µs and ``close`` 10 µs.
-- **First read of a value:** 11 µs against 6–7 µs on the Ryzen, the cost of opening the
-  file. From 64 KB, where diskcache uses files too, both are level.
-- **Reading the same value again** is faster than diskcache from 8 KB up, 1.4x at 16 KB
+- **Writes:** 130 µs against 37 µs on the M2, 165–172 µs against 74–75 µs on the Ryzen.
+  Creating a file costs about 100 µs more than a blob, on APFS (``open`` with ``O_CREAT``
+  alone takes 32 µs, ``close`` 10 µs) as on btrfs. :ref:`max_blob_size <max-blob-size>`
+  moves this boundary.
+- **First read of a value:** 13–15 µs against 7–8 µs on the Ryzen, the cost of opening
+  the file. From 64 KB, where diskcache uses files too, both are level.
+- **Reading the same value again** is faster than diskcache from 8 KB up, 1.5x at 16 KB
   and 3x at 64 KB on the Ryzen: SciQLop Cache keeps the last 128 values it loaded from
   files in memory, so it doesn't open the file again.
 
@@ -165,12 +171,14 @@ and that cost changes between runs with the process's memory history (the 64 KB 
 ranged from 5 to 25 µs per key, for both). The Apple M2 charts predate ``set_many`` and
 ``get_many``.
 
+.. _max-blob-size:
+
 Choosing ``max_blob_size``
 ==========================
 
 Values up to ``max_blob_size`` are stored in the database, bigger ones as files (see
 :doc:`stores`). This sweep runs four thresholds over value sizes from 1 KB to 1 MB, on
-the Linux machine above (``tmpfs``). The fastest of three runs is kept per point.
+the Linux machine above. The fastest of three runs is kept per point.
 
 .. image:: ../benchmark/blob_size_chart.png
     :alt: set/get latency and disk space per byte stored vs value size, for max_blob_size 8 KB to 1 MB (Linux, AMD Ryzen 7 5800X)
@@ -178,9 +186,8 @@ the Linux machine above (``tmpfs``). The fastest of three runs is kept per point
 Filled markers are values stored in the database, hollow ones values stored as files.
 
 - **Writes**: a database blob beats a file creation for 16 and 32 KB values (16 KB:
-  44 µs vs 78 µs). At 64 KB it is even, and from 128 KB on a blob is slower (256 KB:
-  307 µs vs 167 µs). On a real disk, where creating a file costs more, blobs win up to
-  64 KB.
+  101 µs vs 171 µs). From 64 KB on a blob is slower, 2x to 4x from 128 KB (256 KB:
+  724 µs vs 197 µs): it goes through SQLite's write-ahead log.
 - **Repeated reads** favour files from 16 KB on: a file is memory-mapped once, a blob is
   copied out of SQLite on every read (64 KB: 6 µs vs 12 µs).
 - **First reads** are about even up to 64 KB; from 128 KB blobs are slower.
@@ -189,10 +196,11 @@ Filled markers are values stored in the database, hollow ones values stored as f
   unused end of its last 4 KB block: a 16 KB value uses 1.26 times its size as a file,
   1.05 times in the database. From 64 KB on, both are within 7 % of the data.
 
-So raising ``max_blob_size`` to 32 KB (64 KB on a real disk) makes writing such values
-cheaper and removes their files, at the price of slower repeated reads. The database
-grows by what the files held; the total disk space doesn't. Above about 128 KB, files win on every count. One point is unexplained: 1 MB
-values wrote twice as fast in the 32 KB run, though they are files in every run.
+So raising ``max_blob_size`` to 32 KB makes writing 16-32 KB values cheaper and removes
+their files, at the price of slower repeated reads. The database grows by what the files
+held; the total disk space doesn't. From 64 KB on, files win on every count. One point is
+unexplained: 1 MB values wrote over twice as fast in the 32 KB run, though they are files
+in every run (also on a second machine).
 
 Large values: public datasets
 =============================
@@ -217,11 +225,10 @@ the array bytes inside the pickle; :class:`~pysciqlop_cache.PickleOOBSerializer`
 them next to it, compressed when that pays off (see :doc:`serializers`). Median of
 three runs (five for threads); the datasets are downloaded on first use (~1.6 GB).
 
-These stores live on the NVMe disk (btrfs), not a RAM filesystem: without ``fsync`` a
-write only reaches the page cache, and on this machine ``tmpfs`` is the slower of the
-two (a plain 25 MB file write: 9.5 ms on ``tmpfs``, 3.1 ms on btrfs), because it takes
-memory 4 KB at a time. The disk column is what the library writes (file sizes);
-btrfs's own compression comes after.
+A plain 25 MB file write takes 3.1 ms on this disk's page cache and 9.5 ms on
+``tmpfs``, which is why these runs don't use a RAM filesystem (see the top of this
+page). The disk column is what the library writes (file sizes); btrfs's own compression
+comes after.
 
 .. image:: ../benchmark/arrays_chart.png
     :alt: get, set and disk use vs value size for five datasets: diskcache, pickle, pickle-oob (Linux, AMD Ryzen 7 5800X)
@@ -268,8 +275,8 @@ keys:
 On the Apple M2, an older version of this benchmark (random noise only, up to 100 MB)
 gives the same picture, with faster reads for every library: the M2's memory moves a
 100 MB value in 2.8 ms with pickle-oob (14.5 ms for diskcache). Its writes went to the
-internal SSD, at 0.9 to 1.7 GB/s for all three, so they can't be compared with
-``tmpfs``.
+internal SSD, at 0.9 to 1.7 GB/s for all three, so they can't be compared with the
+Linux page-cache ones.
 
 .. image:: ../benchmark/macos-m2/arrays_chart.png
     :alt: numpy arrays, random noise: diskcache vs pickle vs pickle-oob (macOS, Apple M2)
@@ -291,14 +298,15 @@ except for four thread points, which got five runs.
 Reproducing the benchmarks
 ==========================
 
-Use a release build and a RAM filesystem. ``TMPDIR`` decides where both libraries put
-their cache directories. ``-Db_ndebug=if-release`` builds like the wheels do: without it,
-macOS's libc++ checks the bounds of every ``std::span`` access.
+Use a release build. ``TMPDIR`` decides where both libraries put their cache
+directories: on Linux a folder on a local disk (not ``/tmp`` if it is a ``tmpfs``).
+``-Db_ndebug=if-release`` builds like the wheels do: without it, macOS's libc++ checks
+the bounds of every ``std::span`` access.
 
 .. code-block:: console
 
     $ meson setup build --buildtype=release -Db_ndebug=if-release && meson compile -C build
-    $ export TMPDIR=/dev/shm PYTHONPATH=build
+    $ mkdir -p ~/.cache/sqc-bench-tmp && export TMPDIR=~/.cache/sqc-bench-tmp PYTHONPATH=build
 
 On macOS, make a 2 GB RAM disk first, and run ``bench_arrays.py`` with ``TMPDIR`` on the
 internal SSD (it needs more space than that). Write the results and charts to

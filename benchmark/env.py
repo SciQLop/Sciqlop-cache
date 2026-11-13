@@ -2,7 +2,7 @@
 """Print the benchmark setup as a Markdown table (paste into README).
 
 Run with the same interpreter, PYTHONPATH and TMPDIR as the benchmarks:
-    TMPDIR=/dev/shm PYTHONPATH=build python benchmark/env.py
+    TMPDIR=~/.cache/sqc-bench-tmp PYTHONPATH=build python benchmark/env.py
 Works on Linux and macOS.
 """
 

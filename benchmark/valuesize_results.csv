@@ -1,262 +1,262 @@
 backend,operation,value_size,batch_size,latency_us
-sciqlop,single_set,64,1,22.39
-sciqlop,single_get,64,1,4.22
-sciqlop,first_get,64,1,3.37
-sciqlop (size limit),single_set,64,1,21.13
-sciqlop (size limit),single_get,64,1,4.14
-sciqlop (size limit),first_get,64,1,3.40
-diskcache,single_set,64,1,32.43
-diskcache,single_get,64,1,4.87
-diskcache,first_get,64,1,5.33
-sciqlop,single_set,200,1,21.31
-sciqlop,single_get,200,1,4.11
-sciqlop,first_get,200,1,3.51
-sciqlop (size limit),single_set,200,1,21.35
-sciqlop (size limit),single_get,200,1,4.11
-sciqlop (size limit),first_get,200,1,3.49
-diskcache,single_set,200,1,31.80
-diskcache,single_get,200,1,4.81
-diskcache,first_get,200,1,5.19
-sciqlop,single_set,1024,1,27.98
-sciqlop,single_get,1024,1,5.57
-sciqlop,first_get,1024,1,4.87
-sciqlop (size limit),single_set,1024,1,27.62
-sciqlop (size limit),single_get,1024,1,5.60
-sciqlop (size limit),first_get,1024,1,4.99
-diskcache,single_set,1024,1,32.03
-diskcache,single_get,1024,1,4.91
-diskcache,first_get,1024,1,5.44
-sciqlop,single_set,4096,1,30.82
-sciqlop,single_get,4096,1,6.22
-sciqlop,first_get,4096,1,5.34
-sciqlop (size limit),single_set,4096,1,31.25
-sciqlop (size limit),single_get,4096,1,6.22
-sciqlop (size limit),first_get,4096,1,5.38
-diskcache,single_set,4096,1,36.04
-diskcache,single_get,4096,1,5.37
-diskcache,first_get,4096,1,5.86
-sciqlop,single_set,8192,1,69.20
-sciqlop,single_get,8192,1,3.90
-sciqlop,first_get,8192,1,10.53
-sciqlop (size limit),single_set,8192,1,70.80
-sciqlop (size limit),single_get,8192,1,3.90
-sciqlop (size limit),first_get,8192,1,10.64
-diskcache,single_set,8192,1,40.42
-diskcache,single_get,8192,1,5.64
-diskcache,first_get,8192,1,6.23
-sciqlop,single_set,16384,1,70.99
-sciqlop,single_get,16384,1,4.10
-sciqlop,first_get,16384,1,11.43
-sciqlop (size limit),single_set,16384,1,71.29
-sciqlop (size limit),single_get,16384,1,4.28
-sciqlop (size limit),first_get,16384,1,11.02
-diskcache,single_set,16384,1,39.31
-diskcache,single_get,16384,1,5.84
-diskcache,first_get,16384,1,7.19
-sciqlop,single_set,65536,1,87.52
-sciqlop,single_get,65536,1,5.62
-sciqlop,first_get,65536,1,18.57
-sciqlop (size limit),single_set,65536,1,90.31
-sciqlop (size limit),single_get,65536,1,5.71
-sciqlop (size limit),first_get,65536,1,19.14
-diskcache,single_set,65536,1,171.32
-diskcache,single_get,65536,1,17.07
-diskcache,first_get,65536,1,19.33
-sciqlop,single_set,262144,1,161.37
-sciqlop,single_get,262144,1,10.50
-sciqlop,first_get,262144,1,35.63
-sciqlop (size limit),single_set,262144,1,160.59
-sciqlop (size limit),single_get,262144,1,10.37
-sciqlop (size limit),first_get,262144,1,31.49
-diskcache,single_set,262144,1,344.44
-diskcache,single_get,262144,1,26.18
-diskcache,first_get,262144,1,30.50
-sciqlop,single_set,1048576,1,810.86
-sciqlop,single_get,1048576,1,30.82
-sciqlop,first_get,1048576,1,105.69
-sciqlop (size limit),single_set,1048576,1,809.71
-sciqlop (size limit),single_get,1048576,1,27.92
-sciqlop (size limit),first_get,1048576,1,96.60
-diskcache,single_set,1048576,1,1000.63
-diskcache,single_get,1048576,1,60.73
-diskcache,first_get,1048576,1,112.48
-sciqlop,batch_set,200,1,24.77
-sciqlop,batch_set_per_op,200,1,24.77
-sciqlop (set_many),batch_set,200,1,25.68
-sciqlop (set_many),batch_set_per_op,200,1,25.68
-sciqlop,batch_get,200,1,3.99
-sciqlop,batch_get_per_op,200,1,3.99
-sciqlop (get_many),batch_get,200,1,5.20
-sciqlop (get_many),batch_get_per_op,200,1,5.20
-diskcache,batch_set,200,1,55.91
-diskcache,batch_set_per_op,200,1,55.91
-diskcache,batch_get,200,1,5.94
-diskcache,batch_get_per_op,200,1,5.94
-sciqlop,batch_set,200,10,73.48
-sciqlop,batch_set_per_op,200,10,7.35
-sciqlop (set_many),batch_set,200,10,70.88
-sciqlop (set_many),batch_set_per_op,200,10,7.09
-sciqlop,batch_get,200,10,41.81
-sciqlop,batch_get_per_op,200,10,4.18
-sciqlop (get_many),batch_get,200,10,20.29
-sciqlop (get_many),batch_get_per_op,200,10,2.03
-diskcache,batch_set,200,10,338.92
-diskcache,batch_set_per_op,200,10,33.89
-diskcache,batch_get,200,10,55.42
-diskcache,batch_get_per_op,200,10,5.54
-sciqlop,batch_set,200,50,318.04
-sciqlop,batch_set_per_op,200,50,6.36
-sciqlop (set_many),batch_set,200,50,288.20
-sciqlop (set_many),batch_set_per_op,200,50,5.76
-sciqlop,batch_get,200,50,195.83
-sciqlop,batch_get_per_op,200,50,3.92
-sciqlop (get_many),batch_get,200,50,68.38
-sciqlop (get_many),batch_get_per_op,200,50,1.37
-diskcache,batch_set,200,50,1411.21
-diskcache,batch_set_per_op,200,50,28.22
-diskcache,batch_get,200,50,284.05
-diskcache,batch_get_per_op,200,50,5.68
-sciqlop,batch_set,200,100,636.33
-sciqlop,batch_set_per_op,200,100,6.36
-sciqlop (set_many),batch_set,200,100,589.25
-sciqlop (set_many),batch_set_per_op,200,100,5.89
-sciqlop,batch_get,200,100,360.95
-sciqlop,batch_get_per_op,200,100,3.61
-sciqlop (get_many),batch_get,200,100,113.93
-sciqlop (get_many),batch_get_per_op,200,100,1.14
-diskcache,batch_set,200,100,2819.02
-diskcache,batch_set_per_op,200,100,28.19
-diskcache,batch_get,200,100,610.55
-diskcache,batch_get_per_op,200,100,6.11
-sciqlop,batch_set,200,500,3425.13
-sciqlop,batch_set_per_op,200,500,6.85
-sciqlop (set_many),batch_set,200,500,2939.25
-sciqlop (set_many),batch_set_per_op,200,500,5.88
-sciqlop,batch_get,200,500,1821.08
-sciqlop,batch_get_per_op,200,500,3.64
-sciqlop (get_many),batch_get,200,500,541.28
-sciqlop (get_many),batch_get_per_op,200,500,1.08
-diskcache,batch_set,200,500,14354.21
-diskcache,batch_set_per_op,200,500,28.71
-diskcache,batch_get,200,500,2890.25
-diskcache,batch_get_per_op,200,500,5.78
-sciqlop,batch_set,16384,1,90.73
-sciqlop,batch_set_per_op,16384,1,90.73
-sciqlop (set_many),batch_set,16384,1,102.68
-sciqlop (set_many),batch_set_per_op,16384,1,102.68
-sciqlop,batch_get,16384,1,4.26
-sciqlop,batch_get_per_op,16384,1,4.26
-sciqlop (get_many),batch_get,16384,1,5.53
-sciqlop (get_many),batch_get_per_op,16384,1,5.53
-diskcache,batch_set,16384,1,65.33
-diskcache,batch_set_per_op,16384,1,65.33
-diskcache,batch_get,16384,1,10.10
-diskcache,batch_get_per_op,16384,1,10.10
-sciqlop,batch_set,16384,10,531.69
-sciqlop,batch_set_per_op,16384,10,53.17
-sciqlop (set_many),batch_set,16384,10,640.83
-sciqlop (set_many),batch_set_per_op,16384,10,64.08
-sciqlop,batch_get,16384,10,43.13
-sciqlop,batch_get_per_op,16384,10,4.31
-sciqlop (get_many),batch_get,16384,10,20.61
-sciqlop (get_many),batch_get_per_op,16384,10,2.06
-diskcache,batch_set,16384,10,337.68
-diskcache,batch_set_per_op,16384,10,33.77
-diskcache,batch_get,16384,10,67.99
-diskcache,batch_get_per_op,16384,10,6.80
-sciqlop,batch_set,16384,50,3033.97
-sciqlop,batch_set_per_op,16384,50,60.68
-sciqlop (set_many),batch_set,16384,50,2180.42
-sciqlop (set_many),batch_set_per_op,16384,50,43.61
-sciqlop,batch_get,16384,50,211.07
-sciqlop,batch_get_per_op,16384,50,4.22
-sciqlop (get_many),batch_get,16384,50,89.60
-sciqlop (get_many),batch_get_per_op,16384,50,1.79
-diskcache,batch_set,16384,50,1518.39
-diskcache,batch_set_per_op,16384,50,30.37
-diskcache,batch_get,16384,50,321.38
-diskcache,batch_get_per_op,16384,50,6.43
-sciqlop,batch_set,16384,100,5079.79
-sciqlop,batch_set_per_op,16384,100,50.80
-sciqlop (set_many),batch_set,16384,100,4531.76
-sciqlop (set_many),batch_set_per_op,16384,100,45.32
-sciqlop,batch_get,16384,100,428.31
-sciqlop,batch_get_per_op,16384,100,4.28
-sciqlop (get_many),batch_get,16384,100,174.06
-sciqlop (get_many),batch_get_per_op,16384,100,1.74
-diskcache,batch_set,16384,100,2941.24
-diskcache,batch_set_per_op,16384,100,29.41
-diskcache,batch_get,16384,100,648.68
-diskcache,batch_get_per_op,16384,100,6.49
-sciqlop,batch_set,16384,500,24796.28
-sciqlop,batch_set_per_op,16384,500,49.59
-sciqlop (set_many),batch_set,16384,500,24126.35
-sciqlop (set_many),batch_set_per_op,16384,500,48.25
-sciqlop,batch_get,16384,500,7212.91
-sciqlop,batch_get_per_op,16384,500,14.43
-sciqlop (get_many),batch_get,16384,500,7540.19
-sciqlop (get_many),batch_get_per_op,16384,500,15.08
-diskcache,batch_set,16384,500,15906.23
-diskcache,batch_set_per_op,16384,500,31.81
-diskcache,batch_get,16384,500,7568.61
-diskcache,batch_get_per_op,16384,500,15.14
-sciqlop,batch_set,65536,1,101.96
-sciqlop,batch_set_per_op,65536,1,101.96
-sciqlop (set_many),batch_set,65536,1,109.65
-sciqlop (set_many),batch_set_per_op,65536,1,109.65
-sciqlop,batch_get,65536,1,5.14
-sciqlop,batch_get_per_op,65536,1,5.14
-sciqlop (get_many),batch_get,65536,1,6.54
-sciqlop (get_many),batch_get_per_op,65536,1,6.54
-diskcache,batch_set,65536,1,215.30
-diskcache,batch_set_per_op,65536,1,215.30
-diskcache,batch_get,65536,1,20.92
-diskcache,batch_get_per_op,65536,1,20.92
-sciqlop,batch_set,65536,10,818.36
-sciqlop,batch_set_per_op,65536,10,81.84
-sciqlop (set_many),batch_set,65536,10,710.66
-sciqlop (set_many),batch_set_per_op,65536,10,71.07
-sciqlop,batch_get,65536,10,52.92
-sciqlop,batch_get_per_op,65536,10,5.29
-sciqlop (get_many),batch_get,65536,10,30.40
-sciqlop (get_many),batch_get_per_op,65536,10,3.04
-diskcache,batch_set,65536,10,1873.18
-diskcache,batch_set_per_op,65536,10,187.32
-diskcache,batch_get,65536,10,199.26
-diskcache,batch_get_per_op,65536,10,19.93
-sciqlop,batch_set,65536,50,3429.21
-sciqlop,batch_set_per_op,65536,50,68.58
-sciqlop (set_many),batch_set,65536,50,4083.44
-sciqlop (set_many),batch_set_per_op,65536,50,81.67
-sciqlop,batch_get,65536,50,1287.80
-sciqlop,batch_get_per_op,65536,50,25.76
-sciqlop (get_many),batch_get,65536,50,1141.85
-sciqlop (get_many),batch_get_per_op,65536,50,22.84
-diskcache,batch_set,65536,50,9329.21
-diskcache,batch_set_per_op,65536,50,186.58
-diskcache,batch_get,65536,50,2273.03
-diskcache,batch_get_per_op,65536,50,45.46
-sciqlop,batch_set,65536,100,6707.92
-sciqlop,batch_set_per_op,65536,100,67.08
-sciqlop (set_many),batch_set,65536,100,8408.19
-sciqlop (set_many),batch_set_per_op,65536,100,84.08
-sciqlop,batch_get,65536,100,2899.71
-sciqlop,batch_get_per_op,65536,100,29.00
-sciqlop (get_many),batch_get,65536,100,2588.84
-sciqlop (get_many),batch_get_per_op,65536,100,25.89
-diskcache,batch_set,65536,100,19180.69
-diskcache,batch_set_per_op,65536,100,191.81
-diskcache,batch_get,65536,100,5411.84
-diskcache,batch_get_per_op,65536,100,54.12
-sciqlop,batch_set,65536,500,34705.97
-sciqlop,batch_set_per_op,65536,500,69.41
-sciqlop (set_many),batch_set,65536,500,36648.33
-sciqlop (set_many),batch_set_per_op,65536,500,73.30
-sciqlop,batch_get,65536,500,14064.30
-sciqlop,batch_get_per_op,65536,500,28.13
-sciqlop (get_many),batch_get,65536,500,11752.03
-sciqlop (get_many),batch_get_per_op,65536,500,23.50
-diskcache,batch_set,65536,500,92202.35
-diskcache,batch_set_per_op,65536,500,184.40
-diskcache,batch_get,65536,500,27154.71
-diskcache,batch_get_per_op,65536,500,54.31
+sciqlop,single_set,64,1,48.68
+sciqlop,single_get,64,1,4.65
+sciqlop,first_get,64,1,3.48
+sciqlop (size limit),single_set,64,1,47.77
+sciqlop (size limit),single_get,64,1,4.58
+sciqlop (size limit),first_get,64,1,3.64
+diskcache,single_set,64,1,81.66
+diskcache,single_get,64,1,5.47
+diskcache,first_get,64,1,5.70
+sciqlop,single_set,200,1,49.05
+sciqlop,single_get,200,1,4.31
+sciqlop,first_get,200,1,3.65
+sciqlop (size limit),single_set,200,1,51.64
+sciqlop (size limit),single_get,200,1,4.29
+sciqlop (size limit),first_get,200,1,3.90
+diskcache,single_set,200,1,80.65
+diskcache,single_get,200,1,5.60
+diskcache,first_get,200,1,5.89
+sciqlop,single_set,1024,1,71.08
+sciqlop,single_get,1024,1,5.80
+sciqlop,first_get,1024,1,5.65
+sciqlop (size limit),single_set,1024,1,70.22
+sciqlop (size limit),single_get,1024,1,5.80
+sciqlop (size limit),first_get,1024,1,6.08
+diskcache,single_set,1024,1,84.74
+diskcache,single_get,1024,1,5.73
+diskcache,first_get,1024,1,6.16
+sciqlop,single_set,4096,1,69.74
+sciqlop,single_get,4096,1,6.43
+sciqlop,first_get,4096,1,5.63
+sciqlop (size limit),single_set,4096,1,67.99
+sciqlop (size limit),single_get,4096,1,6.40
+sciqlop (size limit),first_get,4096,1,5.59
+diskcache,single_set,4096,1,84.09
+diskcache,single_get,4096,1,5.94
+diskcache,first_get,4096,1,6.92
+sciqlop,single_set,8192,1,164.61
+sciqlop,single_get,8192,1,4.30
+sciqlop,first_get,8192,1,13.33
+sciqlop (size limit),single_set,8192,1,168.69
+sciqlop (size limit),single_get,8192,1,4.33
+sciqlop (size limit),first_get,8192,1,14.68
+diskcache,single_set,8192,1,73.72
+diskcache,single_get,8192,1,6.13
+diskcache,first_get,8192,1,7.16
+sciqlop,single_set,16384,1,171.97
+sciqlop,single_get,16384,1,4.54
+sciqlop,first_get,16384,1,15.01
+sciqlop (size limit),single_set,16384,1,165.82
+sciqlop (size limit),single_get,16384,1,4.43
+sciqlop (size limit),first_get,16384,1,13.51
+diskcache,single_set,16384,1,75.38
+diskcache,single_get,16384,1,6.66
+diskcache,first_get,16384,1,7.58
+sciqlop,single_set,65536,1,174.88
+sciqlop,single_get,65536,1,6.15
+sciqlop,first_get,65536,1,23.16
+sciqlop (size limit),single_set,65536,1,200.66
+sciqlop (size limit),single_get,65536,1,7.65
+sciqlop (size limit),first_get,65536,1,22.17
+diskcache,single_set,65536,1,376.26
+diskcache,single_get,65536,1,19.36
+diskcache,first_get,65536,1,23.61
+sciqlop,single_set,262144,1,196.57
+sciqlop,single_get,262144,1,11.12
+sciqlop,first_get,262144,1,33.48
+sciqlop (size limit),single_set,262144,1,192.42
+sciqlop (size limit),single_get,262144,1,10.79
+sciqlop (size limit),first_get,262144,1,29.22
+diskcache,single_set,262144,1,545.26
+diskcache,single_get,262144,1,26.42
+diskcache,first_get,262144,1,39.27
+sciqlop,single_set,1048576,1,280.36
+sciqlop,single_get,1048576,1,25.93
+sciqlop,first_get,1048576,1,72.25
+sciqlop (size limit),single_set,1048576,1,287.21
+sciqlop (size limit),single_get,1048576,1,26.64
+sciqlop (size limit),first_get,1048576,1,75.80
+diskcache,single_set,1048576,1,1125.98
+diskcache,single_get,1048576,1,50.47
+diskcache,first_get,1048576,1,91.16
+sciqlop,batch_set,200,1,49.46
+sciqlop,batch_set_per_op,200,1,49.46
+sciqlop (set_many),batch_set,200,1,47.86
+sciqlop (set_many),batch_set_per_op,200,1,47.86
+sciqlop,batch_get,200,1,3.90
+sciqlop,batch_get_per_op,200,1,3.90
+sciqlop (get_many),batch_get,200,1,5.13
+sciqlop (get_many),batch_get_per_op,200,1,5.13
+diskcache,batch_set,200,1,80.75
+diskcache,batch_set_per_op,200,1,80.75
+diskcache,batch_get,200,1,5.79
+diskcache,batch_get_per_op,200,1,5.79
+sciqlop,batch_set,200,10,94.60
+sciqlop,batch_set_per_op,200,10,9.46
+sciqlop (set_many),batch_set,200,10,91.11
+sciqlop (set_many),batch_set_per_op,200,10,9.11
+sciqlop,batch_get,200,10,38.77
+sciqlop,batch_get_per_op,200,10,3.88
+sciqlop (get_many),batch_get,200,10,18.36
+sciqlop (get_many),batch_get_per_op,200,10,1.84
+diskcache,batch_set,200,10,304.15
+diskcache,batch_set_per_op,200,10,30.41
+diskcache,batch_get,200,10,56.63
+diskcache,batch_get_per_op,200,10,5.66
+sciqlop,batch_set,200,50,348.74
+sciqlop,batch_set_per_op,200,50,6.97
+sciqlop (set_many),batch_set,200,50,328.38
+sciqlop (set_many),batch_set_per_op,200,50,6.57
+sciqlop,batch_get,200,50,180.93
+sciqlop,batch_get_per_op,200,50,3.62
+sciqlop (get_many),batch_get,200,50,66.46
+sciqlop (get_many),batch_get_per_op,200,50,1.33
+diskcache,batch_set,200,50,1310.18
+diskcache,batch_set_per_op,200,50,26.20
+diskcache,batch_get,200,50,279.22
+diskcache,batch_get_per_op,200,50,5.58
+sciqlop,batch_set,200,100,692.69
+sciqlop,batch_set_per_op,200,100,6.93
+sciqlop (set_many),batch_set,200,100,633.39
+sciqlop (set_many),batch_set_per_op,200,100,6.33
+sciqlop,batch_get,200,100,352.51
+sciqlop,batch_get_per_op,200,100,3.53
+sciqlop (get_many),batch_get,200,100,114.52
+sciqlop (get_many),batch_get_per_op,200,100,1.15
+diskcache,batch_set,200,100,2569.13
+diskcache,batch_set_per_op,200,100,25.69
+diskcache,batch_get,200,100,553.05
+diskcache,batch_get_per_op,200,100,5.53
+sciqlop,batch_set,200,500,3504.83
+sciqlop,batch_set_per_op,200,500,7.01
+sciqlop (set_many),batch_set,200,500,3201.79
+sciqlop (set_many),batch_set_per_op,200,500,6.40
+sciqlop,batch_get,200,500,1720.45
+sciqlop,batch_get_per_op,200,500,3.44
+sciqlop (get_many),batch_get,200,500,509.50
+sciqlop (get_many),batch_get_per_op,200,500,1.02
+diskcache,batch_set,200,500,12817.60
+diskcache,batch_set_per_op,200,500,25.64
+diskcache,batch_get,200,500,2838.49
+diskcache,batch_get_per_op,200,500,5.68
+sciqlop,batch_set,16384,1,182.72
+sciqlop,batch_set_per_op,16384,1,182.72
+sciqlop (set_many),batch_set,16384,1,170.17
+sciqlop (set_many),batch_set_per_op,16384,1,170.17
+sciqlop,batch_get,16384,1,4.41
+sciqlop,batch_get_per_op,16384,1,4.41
+sciqlop (get_many),batch_get,16384,1,5.71
+sciqlop (get_many),batch_get_per_op,16384,1,5.71
+diskcache,batch_set,16384,1,89.16
+diskcache,batch_set_per_op,16384,1,89.16
+diskcache,batch_get,16384,1,6.66
+diskcache,batch_get_per_op,16384,1,6.66
+sciqlop,batch_set,16384,10,1181.15
+sciqlop,batch_set_per_op,16384,10,118.12
+sciqlop (set_many),batch_set,16384,10,1162.76
+sciqlop (set_many),batch_set_per_op,16384,10,116.28
+sciqlop,batch_get,16384,10,42.12
+sciqlop,batch_get_per_op,16384,10,4.21
+sciqlop (get_many),batch_get,16384,10,22.01
+sciqlop (get_many),batch_get_per_op,16384,10,2.20
+diskcache,batch_set,16384,10,339.23
+diskcache,batch_set_per_op,16384,10,33.92
+diskcache,batch_get,16384,10,68.70
+diskcache,batch_get_per_op,16384,10,6.87
+sciqlop,batch_set,16384,50,5205.26
+sciqlop,batch_set_per_op,16384,50,104.11
+sciqlop (set_many),batch_set,16384,50,4938.82
+sciqlop (set_many),batch_set_per_op,16384,50,98.78
+sciqlop,batch_get,16384,50,217.06
+sciqlop,batch_get_per_op,16384,50,4.34
+sciqlop (get_many),batch_get,16384,50,93.75
+sciqlop (get_many),batch_get_per_op,16384,50,1.87
+diskcache,batch_set,16384,50,1506.08
+diskcache,batch_set_per_op,16384,50,30.12
+diskcache,batch_get,16384,50,331.34
+diskcache,batch_get_per_op,16384,50,6.63
+sciqlop,batch_set,16384,100,10432.78
+sciqlop,batch_set_per_op,16384,100,104.33
+sciqlop (set_many),batch_set,16384,100,9795.84
+sciqlop (set_many),batch_set_per_op,16384,100,97.96
+sciqlop,batch_get,16384,100,434.90
+sciqlop,batch_get_per_op,16384,100,4.35
+sciqlop (get_many),batch_get,16384,100,187.73
+sciqlop (get_many),batch_get_per_op,16384,100,1.88
+diskcache,batch_set,16384,100,2769.30
+diskcache,batch_set_per_op,16384,100,27.69
+diskcache,batch_get,16384,100,648.23
+diskcache,batch_get_per_op,16384,100,6.48
+sciqlop,batch_set,16384,500,53343.90
+sciqlop,batch_set_per_op,16384,500,106.69
+sciqlop (set_many),batch_set,16384,500,53471.16
+sciqlop (set_many),batch_set_per_op,16384,500,106.94
+sciqlop,batch_get,16384,500,6270.30
+sciqlop,batch_get_per_op,16384,500,12.54
+sciqlop (get_many),batch_get,16384,500,6951.16
+sciqlop (get_many),batch_get_per_op,16384,500,13.90
+diskcache,batch_set,16384,500,14125.87
+diskcache,batch_set_per_op,16384,500,28.25
+diskcache,batch_get,16384,500,6362.80
+diskcache,batch_get_per_op,16384,500,12.73
+sciqlop,batch_set,65536,1,180.87
+sciqlop,batch_set_per_op,65536,1,180.87
+sciqlop (set_many),batch_set,65536,1,188.06
+sciqlop (set_many),batch_set_per_op,65536,1,188.06
+sciqlop,batch_get,65536,1,5.26
+sciqlop,batch_get_per_op,65536,1,5.26
+sciqlop (get_many),batch_get,65536,1,6.69
+sciqlop (get_many),batch_get_per_op,65536,1,6.69
+diskcache,batch_set,65536,1,406.44
+diskcache,batch_set_per_op,65536,1,406.44
+diskcache,batch_get,65536,1,20.25
+diskcache,batch_get_per_op,65536,1,20.25
+sciqlop,batch_set,65536,10,1378.14
+sciqlop,batch_set_per_op,65536,10,137.81
+sciqlop (set_many),batch_set,65536,10,1154.74
+sciqlop (set_many),batch_set_per_op,65536,10,115.47
+sciqlop,batch_get,65536,10,54.16
+sciqlop,batch_get_per_op,65536,10,5.42
+sciqlop (get_many),batch_get,65536,10,32.05
+sciqlop (get_many),batch_get_per_op,65536,10,3.21
+diskcache,batch_set,65536,10,3652.63
+diskcache,batch_set_per_op,65536,10,365.26
+diskcache,batch_get,65536,10,187.74
+diskcache,batch_get_per_op,65536,10,18.77
+sciqlop,batch_set,65536,50,5472.74
+sciqlop,batch_set_per_op,65536,50,109.45
+sciqlop (set_many),batch_set,65536,50,5333.98
+sciqlop (set_many),batch_set_per_op,65536,50,106.68
+sciqlop,batch_get,65536,50,277.86
+sciqlop,batch_get_per_op,65536,50,5.56
+sciqlop (get_many),batch_get,65536,50,144.61
+sciqlop (get_many),batch_get_per_op,65536,50,2.89
+diskcache,batch_set,65536,50,18432.74
+diskcache,batch_set_per_op,65536,50,368.65
+diskcache,batch_get,65536,50,923.86
+diskcache,batch_get_per_op,65536,50,18.48
+sciqlop,batch_set,65536,100,10771.95
+sciqlop,batch_set_per_op,65536,100,107.72
+sciqlop (set_many),batch_set,65536,100,11071.37
+sciqlop (set_many),batch_set_per_op,65536,100,110.71
+sciqlop,batch_get,65536,100,573.01
+sciqlop,batch_get_per_op,65536,100,5.73
+sciqlop (get_many),batch_get,65536,100,294.33
+sciqlop (get_many),batch_get_per_op,65536,100,2.94
+diskcache,batch_set,65536,100,35702.66
+diskcache,batch_set_per_op,65536,100,357.03
+diskcache,batch_get,65536,100,1831.19
+diskcache,batch_get_per_op,65536,100,18.31
+sciqlop,batch_set,65536,500,55940.54
+sciqlop,batch_set_per_op,65536,500,111.88
+sciqlop (set_many),batch_set,65536,500,67662.33
+sciqlop (set_many),batch_set_per_op,65536,500,135.32
+sciqlop,batch_get,65536,500,21959.57
+sciqlop,batch_get_per_op,65536,500,43.92
+sciqlop (get_many),batch_get,65536,500,18469.22
+sciqlop (get_many),batch_get_per_op,65536,500,36.94
+diskcache,batch_set,65536,500,153013.66
+diskcache,batch_set_per_op,65536,500,306.03
+diskcache,batch_get,65536,500,20764.79
+diskcache,batch_get_per_op,65536,500,41.53

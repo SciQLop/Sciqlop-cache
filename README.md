@@ -103,9 +103,10 @@ python -m pysciqlop_cache.migrate /path/to/diskcache /path/to/sciqlop-cache
 - **Bounded**: optional size limit with LRU eviction, per-key expiration, tags.
 - **Fast**: small values live in SQLite, large ones in memory-mapped files (the split is
   [configurable](https://sciqlop-cache.readthedocs.io/en/latest/stores.html)). Compared
-  with diskcache: writes 1.1 to 2x faster, repeated reads of values above 8 KB up to 3x,
-  batched small writes 4x, and it stays fast up to a million entries. diskcache is faster
-  for writes of 8 to 32 KB values ([benchmarks](https://sciqlop-cache.readthedocs.io/en/latest/performance.html)).
+  with diskcache: writes 1.2 to 1.7x faster for small values and 2 to 4x from 64 KB,
+  repeated reads of values above 8 KB up to 3x, batched small writes 3.7x, and write
+  latency stays flat up to a million entries. diskcache writes 8 to 32 KB values about 2x
+  faster; `max_blob_size` closes that gap ([benchmarks](https://sciqlop-cache.readthedocs.io/en/latest/performance.html)).
 - **Crash-, fork- and race-tested**: interrupted writes and crashed processes leave no
   half-written values; `cache.check(fix=True)` repairs what an external hand broke.
 - **Typed**: ships type information for mypy and pyright.
@@ -131,7 +132,7 @@ unpickling runs code: keep the folder private, or use the msgspec serializer
 
 ## Performance
 
-Measured against diskcache, both with their default settings, on a RAM filesystem.
+Measured against diskcache, both with their default settings, on an NVMe disk.
 Values from public datasets (CIFAR-10 images, NYC taxi trips as a DataFrame, Hurricane
 ISABEL simulation fields, household power readings) and random noise, from 100 KB to
 1 GB, on Linux:
