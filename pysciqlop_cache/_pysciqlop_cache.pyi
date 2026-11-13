@@ -110,6 +110,12 @@ class Cache:
 
     def __setitem__(self, key: str, value: object) -> None: ...
 
+    def max_blob_size(self) -> int:
+        """
+        Values up to this many bytes are stored in the database, bigger ones as
+        files. Set with the ``max_blob_size`` constructor argument (default 8192).
+        """
+
     def get(self, key: str) -> Buffer | None: ...
 
     def __getitem__(self, key: str) -> Buffer | None: ...
@@ -206,6 +212,12 @@ class Index:
 
     def __setitem__(self, key: str, value: object) -> None: ...
 
+    def max_blob_size(self) -> int:
+        """
+        Values up to this many bytes are stored in the database, bigger ones as
+        files. Set with the ``max_blob_size`` constructor argument (default 8192).
+        """
+
     def get(self, key: str) -> Buffer | None: ...
 
     def __getitem__(self, key: str) -> Buffer | None: ...
@@ -277,6 +289,12 @@ class FanoutCache:
     def set(self, key: str, value: object, expire: datetime.timedelta | float | None = None, tag: str | None = None) -> None: ...
 
     def __setitem__(self, key: str, value: object) -> None: ...
+
+    def max_blob_size(self) -> int:
+        """
+        Values up to this many bytes are stored in the database, bigger ones as
+        files. Set with the ``max_blob_size`` constructor argument (default 8192).
+        """
 
     def get(self, key: str) -> Buffer | None: ...
 
@@ -376,6 +394,12 @@ class FanoutIndex:
     def set(self, key: str, value: object) -> None: ...
 
     def __setitem__(self, key: str, value: object) -> None: ...
+
+    def max_blob_size(self) -> int:
+        """
+        Values up to this many bytes are stored in the database, bigger ones as
+        files. Set with the ``max_blob_size`` constructor argument (default 8192).
+        """
 
     def get(self, key: str) -> Buffer | None: ...
 
