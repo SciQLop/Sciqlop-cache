@@ -1274,3 +1274,61 @@ SCENARIO("File values on both sides of the read/map threshold load intact", "[ca
         }
     }
 }
+
+static void reject_writes_of(const std::filesystem::path& db_file, const std::string& key)
+{
+    sqlite3* raw = nullptr;
+    REQUIRE(sqlite3_open(db_file.string().c_str(), &raw) == SQLITE_OK);
+    auto sql = "CREATE TRIGGER reject_" + key + " BEFORE INSERT ON cache WHEN NEW.key = '" + key
+        + "' BEGIN SELECT RAISE(ABORT, 'rejected'); END;";
+    REQUIRE(sqlite3_exec(raw, sql.c_str(), nullptr, nullptr, nullptr) == SQLITE_OK);
+    sqlite3_close(raw);
+}
+
+TEMPLATE_TEST_CASE("set_many() stores every item", "[set_many]", Cache, Index)
+{
+    AutoCleanDirectory db_path { "SetMany" };
+    TestType store(db_path.path());
+    std::vector<std::pair<std::string, std::vector<char>>> items;
+    for (int i = 0; i < 50; ++i)
+        items.emplace_back("k" + std::to_string(i), std::vector<char>(i % 2 ? 10 : 20000, char('a' + i % 26)));
+
+    store.set_many(items);
+    REQUIRE(store.count() == 50);
+    for (const auto& [key, value] : items)
+        REQUIRE(store.get(key)->to_vector() == value);
+    REQUIRE(store.check().ok);
+}
+
+TEST_CASE("Cache::set_many() applies expire and tag to every item", "[set_many]")
+{
+    AutoCleanDirectory db_path { "SetManyExpireTag" };
+    Cache cache(db_path.path());
+    std::vector<std::pair<std::string, std::vector<char>>> items { { "a", { 'a' } }, { "b", { 'b' } } };
+    cache.set_many(items, std::chrono::seconds { 3600 }, std::string { "batch" });
+    REQUIRE(cache.get("a"));
+    REQUIRE(cache.evict_tag("batch") == 2);
+
+    cache.set_many(items, std::chrono::seconds { -1 }, std::nullopt);
+    REQUIRE_FALSE(cache.get("a"));
+}
+
+// One transaction: an item rejected midway rolls back the items before it, and
+// the value files already written for them are removed, not orphaned.
+TEMPLATE_TEST_CASE("set_many() failing midway stores nothing and leaves no file",
+                   "[set_many][failure]", Cache, Index)
+{
+    AutoCleanDirectory db_path { "SetManyRejected" };
+    TestType store(db_path.path());
+    reject_writes_of(db_path.path() / TestType::db_fname, "boom");
+    std::vector<char> big(20000, 'x'); // file-backed
+    std::vector<std::pair<std::string, std::vector<char>>> items { { "small", { 's' } },
+        { "big", big }, { "boom", big }, { "after", big } };
+
+    REQUIRE_THROWS(store.set_many(items));
+
+    REQUIRE(store.count() == 0);
+    auto result = store.check();
+    REQUIRE(result.orphaned_files == 0);
+    REQUIRE(result.ok);
+}

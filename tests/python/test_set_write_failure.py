@@ -69,6 +69,19 @@ class SetWriteFailure(unittest.TestCase):
                     self._assert_raises_and_stores_nothing(store, lambda s: op(s, "k", chunks))
                     self.assertEqual(store.check().orphaned_files, 0)
 
+    def test_set_many_failing_midway_stores_nothing(self):
+        """The whole batch is one transaction: a value file the disk refuses rolls
+        back the items before it, and their files don't stay behind."""
+        items = {"a": b"a", "b": b"B" * (LIMIT // 2), "k": VALUE}
+        for cls in (Cache, Index):
+            with self.subTest(cls=cls.__name__):
+                store = cls(os.path.join(self.tmp, cls.__name__ + "many"))
+                with _FileSizeLimit():
+                    with self.assertRaises(OSError):
+                        store.set_many(items)
+                self.assertEqual([k for k in items if k in store], [])
+                self.assertEqual(store.check().orphaned_files, 0)
+
     def test_store_still_usable_after_failure(self):
         cache = Cache(os.path.join(self.tmp, "c"))
         with _FileSizeLimit():

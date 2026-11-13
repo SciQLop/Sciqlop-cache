@@ -1,11 +1,14 @@
 #pragma once
 
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <fmt/format.h>
 #include <functional>
 #include <memory>
+#include <optional>
+#include <ranges>
 #include <string>
 #include <vector>
 
@@ -127,6 +130,18 @@ public:
         return values;
     }
 
+    template <typename Items>
+    void _for_each_shard_batch(const Items& items, auto&& write)
+    {
+        using Item = std::ranges::range_value_t<Items>;
+        std::vector<std::vector<std::reference_wrapper<const Item>>> batches(_shards.size());
+        for (const auto& item : items)
+            batches[_shard_for(std::get<0>(item))].push_back(std::cref(item));
+        for (std::size_t s = 0; s < _shards.size(); ++s)
+            if (!batches[s].empty())
+                write(*_shards[s], batches[s] | std::views::transform([](const Item& i) -> const Item& { return i; }));
+    }
+
     [[nodiscard]] inline std::optional<Buffer> pop(const std::string& key)
     {
         return _shard(key).pop(key);
@@ -156,6 +171,22 @@ public:
         requires requires(StoreType& s, const std::string& k, const decltype(value)& v, decltype(expire) e, const std::string& t) { s.set(k, v, e, t); }
     {
         return _shard(key).set(key, value, expire, tag);
+    }
+
+    // --- set_many(): one transaction per shard. Shards share none, so a failing
+    // batch may leave the items of shards already written. ---
+
+    void set_many(const auto& items)
+    {
+        _for_each_shard_batch(items, [](StoreType& shard, const auto& batch) { shard.set_many(batch); });
+    }
+
+    void set_many(const auto& items, std::optional<std::chrono::seconds> expire,
+                  const std::optional<std::string>& tag)
+        requires requires(StoreType& s) { s.set_many(std::vector<std::pair<std::string, std::string>> {}, expire, tag); }
+    {
+        _for_each_shard_batch(items, [&](StoreType& shard, const auto& batch)
+                             { shard.set_many(batch, expire, tag); });
     }
 
     // --- add() overloads ---

@@ -5,6 +5,7 @@
 #include <nanobind/ndarray.h>
 #include <nanobind/stl/chrono.h>
 #include <nanobind/stl/optional.h>
+#include <nanobind/stl/pair.h>
 #include <nanobind/stl/string.h>
 #include <nanobind/stl/tuple.h>
 #include <nanobind/stl/vector.h>
@@ -12,6 +13,7 @@
 #include <fmt/ranges.h>
 
 #include <cstring>
+#include <deque>
 #include <span>
 #include <tuple>
 
@@ -176,6 +178,41 @@ inline void _set_item_impl(T& c, const std::string& key, nb::handle value,
         else
             c.set(key, data);
     });
+}
+
+// (key, payload) pairs, each payload bytes or a list of buffers (see
+// PyPayload). A deque: PyPayload can't move, and emplace_back never moves.
+using PyItems = std::deque<std::pair<std::string, PyPayload>>;
+
+static PyItems _py_items(nb::handle items)
+{
+    PyItems out;
+    for (nb::handle item : nb::borrow<nb::sequence>(items))
+    {
+        auto [key, value] = nb::cast<std::pair<std::string, nb::handle>>(item);
+        out.emplace_back(std::piecewise_construct, std::forward_as_tuple(std::move(key)),
+                         std::forward_as_tuple(value));
+    }
+    return out;
+}
+
+// One store call and one GIL release for the whole batch: a Python loop over
+// set() paid both per item (~8 vs ~4 us/item for 100k small values).
+template <typename T>
+inline void _set_many_impl(T& c, nb::handle items, OptDuration expire = std::nullopt,
+                           OptString tag = std::nullopt)
+{
+    auto batch = _py_items(items);
+    nb::gil_scoped_release release;
+    if constexpr (requires { c.set_many(batch, std::optional<std::chrono::seconds> {}, tag); })
+    {
+        std::optional<std::chrono::seconds> secs;
+        if (expire)
+            secs = std::chrono::duration_cast<std::chrono::seconds>(*expire);
+        c.set_many(batch, secs, tag);
+    }
+    else
+        c.set_many(batch);
 }
 
 template <typename T>
@@ -404,6 +441,8 @@ NB_MODULE(_pysciqlop_cache, m)
         .def("_set_max_blob_size", &Cache::set_file_size_threshold, nb::arg("bytes"))
         .def("get", &Cache::get, nb::arg("key"),
              nb::call_guard<nb::gil_scoped_release>())
+        .def("_set_many", _set_many_impl<Cache>, nb::arg("items"),
+             nb::arg("expire") = nb::none(), nb::arg("tag") = nb::none())
         .def("_get_many", &Cache::get_many, nb::arg("keys"),
              nb::call_guard<nb::gil_scoped_release>())
         .def("__getitem__", &Cache::get, nb::arg("key"),
@@ -464,6 +503,7 @@ NB_MODULE(_pysciqlop_cache, m)
         .def("_set_max_blob_size", &Index::set_file_size_threshold, nb::arg("bytes"))
         .def("get", &Index::get, nb::arg("key"),
              nb::call_guard<nb::gil_scoped_release>())
+        .def("_set_many", [](Index& s, nb::handle items) { _set_many_impl(s, items); }, nb::arg("items"))
         .def("_get_many", &Index::get_many, nb::arg("keys"),
              nb::call_guard<nb::gil_scoped_release>())
         .def("__getitem__", &Index::get, nb::arg("key"),
@@ -518,6 +558,8 @@ NB_MODULE(_pysciqlop_cache, m)
         .def("_set_max_blob_size", &FanoutCache::set_file_size_threshold, nb::arg("bytes"))
         .def("get", &FanoutCache::get, nb::arg("key"),
              nb::call_guard<nb::gil_scoped_release>())
+        .def("_set_many", _set_many_impl<FanoutCache>, nb::arg("items"),
+             nb::arg("expire") = nb::none(), nb::arg("tag") = nb::none())
         .def("_get_many", &FanoutCache::get_many, nb::arg("keys"),
              nb::call_guard<nb::gil_scoped_release>())
         .def("__getitem__", &FanoutCache::get, nb::arg("key"),
@@ -580,6 +622,7 @@ NB_MODULE(_pysciqlop_cache, m)
         .def("_set_max_blob_size", &FanoutIndex::set_file_size_threshold, nb::arg("bytes"))
         .def("get", &FanoutIndex::get, nb::arg("key"),
              nb::call_guard<nb::gil_scoped_release>())
+        .def("_set_many", [](FanoutIndex& s, nb::handle items) { _set_many_impl(s, items); }, nb::arg("items"))
         .def("_get_many", &FanoutIndex::get_many, nb::arg("keys"),
              nb::call_guard<nb::gil_scoped_release>())
         .def("__getitem__", &FanoutIndex::get, nb::arg("key"),

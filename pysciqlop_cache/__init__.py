@@ -690,9 +690,7 @@ class Cache(_Cache):
         items = _encoded_items(self, mapping)
         if type(expire) in (int, float):
             expire = timedelta(seconds=expire)
-        with self.transact():
-            for key, payload in items:
-                super().set(key, payload, expire=expire, tag=tag)
+        super()._set_many(items, expire, tag)
 
     def delete_many(self, keys) -> int:
         """Remove ``keys`` in one transaction. Returns how many were there."""
@@ -854,10 +852,7 @@ class Index(_Index):
 
     def set_many(self, mapping) -> None:
         """Store every item of ``mapping`` in one transaction: all or nothing."""
-        items = _encoded_items(self, mapping)
-        with self.transact():
-            for key, payload in items:
-                super().set(key, payload)
+        super()._set_many(_encoded_items(self, mapping))
 
     def delete_many(self, keys) -> int:
         """Remove ``keys`` in one transaction. Returns how many were there."""
@@ -1128,13 +1123,13 @@ class FanoutCache(_FanoutCache):
         return _get_many(self, keys)
 
     def set_many(self, mapping, expire=None, tag=None) -> None:
-        """Store every item of ``mapping``. Shards have no common transaction, so
-        each item is written on its own (each one atomically)."""
+        """Store every item of ``mapping``, in one transaction per shard. Shards
+        share none, so a failing batch may keep the items of shards already
+        written."""
         items = _encoded_items(self, mapping)
         if type(expire) in (int, float):
             expire = timedelta(seconds=expire)
-        for key, payload in items:
-            super().set(key, payload, expire=expire, tag=tag)
+        super()._set_many(items, expire, tag)
 
     def delete_many(self, keys) -> int:
         """Remove ``keys``, each on its own. Returns how many were there."""
@@ -1280,10 +1275,10 @@ class FanoutIndex(_FanoutIndex):
         return _get_many(self, keys)
 
     def set_many(self, mapping) -> None:
-        """Store every item of ``mapping``. Shards have no common transaction, so
-        each item is written on its own (each one atomically)."""
-        for key, payload in _encoded_items(self, mapping):
-            super().set(key, payload)
+        """Store every item of ``mapping``, in one transaction per shard. Shards
+        share none, so a failing batch may keep the items of shards already
+        written."""
+        super()._set_many(_encoded_items(self, mapping))
 
     def delete_many(self, keys) -> int:
         """Remove ``keys``, each on its own. Returns how many were there."""

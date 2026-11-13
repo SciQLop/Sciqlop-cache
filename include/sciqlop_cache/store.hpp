@@ -13,6 +13,8 @@
 #include <span>
 #include <sqlite3.h>
 #include <atomic>
+#include <chrono>
+#include <vector>
 #include <condition_variable>
 #include <mutex>
 #include <string>
@@ -973,14 +975,17 @@ private:
             throw std::runtime_error("SQLite write rejected by a constraint");
     }
 
+    // `new_files`, when given, collects the value files written, so a batch
+    // that rolls back can remove them (see _set_many_impl).
     inline bool _set_impl(const std::string& key, const Payload auto& value,
                            [[maybe_unused]] std::optional<double> expires_secs,
-                           [[maybe_unused]] std::optional<std::string> tag = std::nullopt)
+                           [[maybe_unused]] std::optional<std::string> tag = std::nullopt,
+                           std::vector<std::filesystem::path>* new_files = nullptr)
     {
         // A blob is bound as one contiguous SQLite value.
         if constexpr (!Bytes<decltype(value)>)
             if (std::size(value) <= _file_size_threshold.load(std::memory_order_relaxed))
-                return _set_impl(key, value.flatten(), expires_secs, tag);
+                return _set_impl(key, value.flatten(), expires_secs, tag, new_files);
         auto db = this->db();
         std::size_t seq = 0;
         if constexpr (has_eviction)
@@ -1027,7 +1032,42 @@ private:
             storage->remove(new_filepath);
             throw;
         }
+        if (new_files)
+            new_files->push_back(std::move(new_filepath));
         return true;
+    }
+
+    // Items are (key, value) pairs; a value is a Payload or anything with
+    // visit(fn) handing one to fn (the bindings' Python payload).
+    void _set_many_impl(const auto& items, std::optional<double> expires_secs,
+                        const std::optional<std::string>& tag)
+    {
+        auto db = this->db();
+        _NestedTxn txn(*this);
+        std::vector<std::filesystem::path> new_files;
+        try
+        {
+            for (const auto& [key, value] : items)
+            {
+                if constexpr (Payload<std::remove_cvref_t<decltype(value)>>)
+                    _set_impl(key, value, expires_secs, tag, &new_files);
+                else
+                    value.visit([&](const auto& data)
+                                { _set_impl(key, data, expires_secs, tag, &new_files); });
+            }
+            txn.commit();
+        }
+        catch (...)
+        {
+            // Inside a user transact() the rows may still commit (the caller
+            // can catch and carry on), so their files must stay.
+            const bool outermost = txn.outermost;
+            txn.rollback();
+            if (outermost)
+                for (const auto& file : new_files)
+                    storage->remove(file);
+            throw;
+        }
     }
 
     inline bool _add_impl(const std::string& key, const Payload auto& value,
@@ -1294,6 +1334,22 @@ public:
             std::optional<double> { static_cast<double>(
                 std::chrono::duration_cast<std::chrono::seconds>(expire).count()) },
             std::optional<std::string> { tag });
+    }
+
+    // --- set_many(): every item in one write transaction, all or nothing ---
+    // Value files written for a batch that fails are removed again: their
+    // rows never committed, so no reader saw them.
+
+    void set_many(const auto& items) { _set_many_impl(items, std::nullopt, std::nullopt); }
+
+    void set_many(const auto& items, std::optional<std::chrono::seconds> expire,
+                  const std::optional<std::string>& tag)
+        requires (has_expiration && has_tags)
+    {
+        _set_many_impl(items,
+                       expire ? std::optional<double> { static_cast<double>(expire->count()) }
+                              : std::nullopt,
+                       tag);
     }
 
     // --- get() ---
