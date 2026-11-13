@@ -135,7 +135,8 @@ Batched transactions
 ====================
 
 Writing many values in one ``transact()`` block spreads the commit cost over the batch.
-The per-operation cost drops sharply, especially for small values:
+The per-operation cost drops sharply, especially for small values. ``set_many`` (dashed)
+does the same in one call and serializes every value before taking the lock:
 
 .. tab-set::
     :sync-group: platform
@@ -151,6 +152,18 @@ The per-operation cost drops sharply, especially for small values:
 
         .. image:: ../benchmark/macos-m2/batch_per_op_chart.png
             :alt: per-operation latency vs batch size (macOS, Apple M2)
+
+Reading many keys: ``get_many`` (dashed) reads them all in one call, from one snapshot,
+against a loop of ``get()`` that keeps the values in a dict, as ``get_many`` does:
+
+.. image:: ../benchmark/batch_get_chart.png
+    :alt: per-key read latency vs batch size, get() loop vs get_many (Linux, AMD Ryzen 7 5800X)
+
+Up to a hundred keys, ``get_many`` costs a third to half of the loop. With hundreds of
+values stored as files, both spend most of their time allocating the values they return,
+and that cost changes between runs with the process's memory history (the 64 KB panel
+ranged from 5 to 25 µs per key, for both). The Apple M2 charts predate ``set_many`` and
+``get_many``.
 
 numpy arrays
 ============

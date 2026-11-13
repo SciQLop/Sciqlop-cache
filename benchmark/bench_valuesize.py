@@ -71,8 +71,33 @@ def bench_single_ops(writer):
         print(f"  single ops: value_size={sz:>10,} bytes done", file=sys.stderr)
 
 
+def batch_ways(cache, keys, value):
+    """(backend suffix, operation, batch function) for each way `cache` can do a batch.
+    Sets come first: the gets read the keys they wrote."""
+    items = {k: value for k in keys}
+
+    def set_loop():
+        with cache.transact():
+            for k in keys:
+                cache.set(k, value)
+
+    def get_loop():
+        # Keeps the values, like get_many and like real code: a loop that drops each
+        # value reuses one buffer and skips the allocations a caller really pays for.
+        return {k: cache.get(k) for k in keys}
+
+    ways = [("", "batch_set", set_loop)]
+    if hasattr(cache, "set_many"):
+        ways.append((" (set_many)", "batch_set", lambda: cache.set_many(items)))
+    ways.append(("", "batch_get", get_loop))
+    if hasattr(cache, "get_many"):
+        ways.append((" (get_many)", "batch_get", lambda: cache.get_many(keys)))
+    return ways
+
+
 def bench_batch_ops(writer):
-    """Benchmark batched set inside a transaction across batch and value sizes."""
+    """Benchmark batched set (loop in a transaction vs set_many) and batched get
+    (loop vs get_many) across batch and value sizes."""
     for sz in BATCH_VALUE_SIZES:
         value = os.urandom(sz)
 
@@ -83,20 +108,15 @@ def bench_batch_ops(writer):
             for name, factory in [("sciqlop", SciqlopCache), ("diskcache", DiskCache)]:
                 with TemporaryDirectory() as tmp:
                     cache = factory(tmp)
-
-                    def do_batch():
-                        with cache.transact():
-                            for k in keys:
-                                cache.set(k, value)
-
-                    # warmup
-                    for _ in range(min(10, iterations)):
-                        do_batch()
-
-                    t = measure(do_batch, iterations)
-                    per_op = t / batch_n
-                    writer.writerow([name, "batch_set", sz, batch_n, f"{t:.2f}"])
-                    writer.writerow([name, "batch_set_per_op", sz, batch_n, f"{per_op:.2f}"])
+                    for suffix, operation, do_batch in batch_ways(cache, keys, value):
+                        # Reads are cheap: few iterations of a big batch are too noisy.
+                        n = iterations if operation == "batch_set" else max(50, iterations)
+                        for _ in range(min(10, n)):  # warmup
+                            do_batch()
+                        t = measure(do_batch, n)
+                        writer.writerow([name + suffix, operation, sz, batch_n, f"{t:.2f}"])
+                        writer.writerow([name + suffix, f"{operation}_per_op", sz, batch_n,
+                                         f"{t / batch_n:.2f}"])
 
                     if hasattr(cache, 'close'):
                         cache.close()
