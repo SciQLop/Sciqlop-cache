@@ -462,6 +462,42 @@ class KeyEncodingOnDisk(_TempDir):
             self.assertEqual(cache[key], repr(key))
 
 
+
+class GetManyIsOneSnapshot(_TempDir):
+    """get_many reads every key from one snapshot: a writer updating two keys in
+    one transaction is never seen half done (no exclusive lock taken)."""
+
+    def test_never_sees_half_a_transaction(self):
+        import threading
+        for cls in (Cache, Index):
+            with self.subTest(cls.__name__):
+                store = cls(f"{self.tmp}/{cls.__name__}")
+                store.set_many({"a": 0, "b": 0})
+                stop = threading.Event()
+
+                def writer():
+                    i = 0
+                    while not stop.is_set():
+                        i += 1
+                        with store.transact():
+                            store["a"] = i
+                            store["b"] = i
+
+                t = threading.Thread(target=writer)
+                t.start()
+                torn = []
+                try:
+                    deadline = time.monotonic() + 3
+                    while time.monotonic() < deadline and not torn:
+                        got = store.get_many(["a", "b"])
+                        if got["a"] != got["b"]:
+                            torn.append(got)
+                finally:
+                    stop.set()
+                    t.join()
+                self.assertEqual(torn, [])
+
+
 class FanoutDocstrings(unittest.TestCase):
     def test_fanout_methods_share_the_documentation(self):
         self.assertEqual(FanoutCache.get.__doc__, Cache.get.__doc__)

@@ -33,10 +33,10 @@ _MISSING = object()
 
 
 def _get_many(store, keys):
-    # simplify: one get() per key. Inside a transact() the batch reads ~2x faster
-    # (one read snapshot), but transact() takes the write lock and would block every
-    # writer for the whole batch. Upgrade: a C++ get_many in one deferred read txn.
-    return {k: v for k in keys if (v := store.get(k, _MISSING)) is not _MISSING}
+    keys = list(keys)
+    raw = store._get_many([k if type(k) is str else _encode_key(store, k) for k in keys])
+    loads = store._serializer.loads
+    return {k: loads(v.memoryview()) for k, v in zip(keys, raw) if v is not None}
 
 
 def _encoded_items(store, mapping):
@@ -653,7 +653,11 @@ class Cache(_Cache):
 
     def get_many(self, keys) -> dict:
         """The values of the ``keys`` that are present, as a dict. Missing and
-        expired keys are left out."""
+        expired keys are left out.
+
+        All values come from one snapshot, without blocking writers: a write that
+        changes several keys at once is seen entirely or not at all.
+        """
         return _get_many(self, keys)
 
     def set_many(self, mapping, expire=None, tag=None) -> None:
@@ -820,7 +824,8 @@ class Index(_Index):
         return f"Index({str(super().path())!r}, count={len(self)})"
 
     def get_many(self, keys) -> dict:
-        """The values of the ``keys`` that are present, as a dict."""
+        """The values of the ``keys`` that are present, as a dict, all from one
+        snapshot, without blocking writers."""
         return _get_many(self, keys)
 
     def set_many(self, mapping) -> None:
@@ -1090,6 +1095,9 @@ class FanoutCache(_FanoutCache):
         return Lock(self, key, expire=expire, tag=tag)
 
     def get_many(self, keys) -> dict:
+        """The values of the ``keys`` that are present, as a dict. Each shard is
+        read from one snapshot; shards share none, so keys on different shards may
+        come from different moments."""
         return _get_many(self, keys)
 
     def set_many(self, mapping, expire=None, tag=None) -> None:
@@ -1237,6 +1245,9 @@ class FanoutIndex(_FanoutIndex):
         return f"FanoutIndex({str(super().path())!r}, shards={self.shard_count()}, count={len(self)})"
 
     def get_many(self, keys) -> dict:
+        """The values of the ``keys`` that are present, as a dict. Each shard is
+        read from one snapshot; shards share none, so keys on different shards may
+        come from different moments."""
         return _get_many(self, keys)
 
     def set_many(self, mapping) -> None:

@@ -401,6 +401,8 @@ NB_MODULE(_pysciqlop_cache, m)
             { _set_item_impl(c, key, buffer); }, nb::arg("key"), nb::arg("value"))
         .def("get", &Cache::get, nb::arg("key"),
              nb::call_guard<nb::gil_scoped_release>())
+        .def("_get_many", &Cache::get_many, nb::arg("keys"),
+             nb::call_guard<nb::gil_scoped_release>())
         .def("__getitem__", &Cache::get, nb::arg("key"),
              nb::call_guard<nb::gil_scoped_release>())
         .def("keys", &Cache::keys, nb::call_guard<nb::gil_scoped_release>())
@@ -457,6 +459,8 @@ NB_MODULE(_pysciqlop_cache, m)
         .def("__setitem__", _simple_set_item<Index>, nb::arg("key"), nb::arg("value"))
         .def("get", &Index::get, nb::arg("key"),
              nb::call_guard<nb::gil_scoped_release>())
+        .def("_get_many", &Index::get_many, nb::arg("keys"),
+             nb::call_guard<nb::gil_scoped_release>())
         .def("__getitem__", &Index::get, nb::arg("key"),
              nb::call_guard<nb::gil_scoped_release>())
         .def("keys", &Index::keys, nb::call_guard<nb::gil_scoped_release>())
@@ -506,6 +510,8 @@ NB_MODULE(_pysciqlop_cache, m)
             "__setitem__", [](FanoutCache& c, const std::string& key, nb::handle buffer)
             { _set_item_impl(c, key, buffer); }, nb::arg("key"), nb::arg("value"))
         .def("get", &FanoutCache::get, nb::arg("key"),
+             nb::call_guard<nb::gil_scoped_release>())
+        .def("_get_many", &FanoutCache::get_many, nb::arg("keys"),
              nb::call_guard<nb::gil_scoped_release>())
         .def("__getitem__", &FanoutCache::get, nb::arg("key"),
              nb::call_guard<nb::gil_scoped_release>())
@@ -564,6 +570,8 @@ NB_MODULE(_pysciqlop_cache, m)
         .def("set", _simple_set_item<FanoutIndex>, nb::arg("key"), nb::arg("value"))
         .def("__setitem__", _simple_set_item<FanoutIndex>, nb::arg("key"), nb::arg("value"))
         .def("get", &FanoutIndex::get, nb::arg("key"),
+             nb::call_guard<nb::gil_scoped_release>())
+        .def("_get_many", &FanoutIndex::get_many, nb::arg("keys"),
              nb::call_guard<nb::gil_scoped_release>())
         .def("__getitem__", &FanoutIndex::get, nb::arg("key"),
              nb::call_guard<nb::gil_scoped_release>())

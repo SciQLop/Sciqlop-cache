@@ -96,6 +96,30 @@ public:
         return _shard(key).get(key);
     }
 
+    // One snapshot per shard; shards share no transaction, so two keys on
+    // different shards may come from different moments.
+    [[nodiscard]] std::vector<std::optional<Buffer>> get_many(const std::vector<std::string>& keys)
+    {
+        std::vector<std::vector<std::size_t>> positions(_shards.size());
+        for (std::size_t i = 0; i < keys.size(); ++i)
+            positions[_shard_for(keys[i])].push_back(i);
+
+        std::vector<std::optional<Buffer>> values(keys.size());
+        for (std::size_t s = 0; s < _shards.size(); ++s)
+        {
+            if (positions[s].empty())
+                continue;
+            std::vector<std::string> shard_keys;
+            shard_keys.reserve(positions[s].size());
+            for (auto i : positions[s])
+                shard_keys.push_back(keys[i]);
+            auto shard_values = _shards[s]->get_many(shard_keys);
+            for (std::size_t j = 0; j < positions[s].size(); ++j)
+                values[positions[s][j]] = std::move(shard_values[j]);
+        }
+        return values;
+    }
+
     [[nodiscard]] inline std::optional<Buffer> pop(const std::string& key)
     {
         return _shard(key).pop(key);

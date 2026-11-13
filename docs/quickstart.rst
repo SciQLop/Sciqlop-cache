@@ -158,10 +158,11 @@ Many keys at once
     print(cache.delete_many(["a", "b", "missing"]))
     # 2
 
-``get_many`` leaves out missing and expired keys. On ``Cache`` and ``Index``,
-``set_many`` and ``delete_many`` run in one transaction: all items or none. A
-``FanoutCache`` or ``FanoutIndex`` writes each item on its own, because its shards share
-no transaction.
+``get_many`` leaves out missing and expired keys, and reads every value from one
+snapshot without blocking writers: a write that changes several keys at once is seen
+entirely or not at all. On ``Cache`` and ``Index``, ``set_many`` and ``delete_many`` run
+in one transaction: all items or none. A ``FanoutCache`` or ``FanoutIndex`` gives these
+guarantees per shard only, because its shards share no transaction.
 
 Keeping an eye on it
 ====================
