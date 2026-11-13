@@ -198,7 +198,7 @@ numpy arrays
 ============
 
 Here the values are measurement series: float32 samples (4 per row) plus a datetime64
-time axis, from 100 KB to 100 MB each. All three store them with pickle protocol 5.
+time axis, from 100 KB to 1 GB each. All three store them with pickle protocol 5.
 diskcache and the default serializer keep the array bytes inside the pickle;
 :class:`~pysciqlop_cache.PickleOOBSerializer` stores them next to it, compressed when that
 pays off (see :doc:`serializers`).
@@ -218,14 +218,23 @@ pays off (see :doc:`serializers`).
         .. image:: ../benchmark/macos-m2/arrays_chart.png
             :alt: numpy arrays: diskcache vs pickle vs pickle-oob (macOS, Apple M2)
 
-- **Writes:** pickle-oob is the fastest from 400 KB up, and ~5x faster than diskcache at
-  100 MB. The arrays go to disk with no copy into a pickle buffer.
+- **Writes:** pickle-oob is the fastest from 400 KB up, and ~5x faster than diskcache
+  from 100 MB to 1 GB (1 GB: 0.33 s vs 1.75 s). The arrays go to disk with no copy into
+  a pickle buffer.
 - **Reads, one thread:** below 1 MB, both SciQLop Cache serializers are 3x to 14x faster
   than diskcache. The benchmark reads the same key again, and SciQLop Cache keeps the
   last 128 files it loaded open, so only the unpickling is left. Between 1 and 10 MB,
   pickle-oob is a little slower than the default serializer: decompressing the time axis
-  costs more than copying it. From 25 MB it is the fastest, 3.4x at 100 MB.
-  ``PickleOOBSerializer(compress=False)`` skips the decompression.
+  costs more than copying it. From 100 MB it is the fastest: 3x the default serializer
+  at 100 MB, 2.2x at 1 GB (0.30 s, vs 0.65 s, and 0.52 s for diskcache). From 100 MB the
+  default serializer reads slower than diskcache: its copy into the pickle runs with the
+  GIL held. ``PickleOOBSerializer(compress=False)`` skips the decompression.
+- **Very large reads and huge pages:** a decoded array is fresh memory, and numpy asks
+  the kernel for 2 MB pages for it. When free memory is fragmented, the kernel tries to
+  compact it on every page fault, fails, and falls back to 4 KB pages: on this machine,
+  with 24 GB of stale files in a RAM ``/tmp``, a 1 GB pickle-oob read took 1 s instead of
+  0.24 s (``/proc/vmstat``: ``compact_fail``). Any large numpy allocation pays this, not
+  only the cache; ``NUMPY_MADVISE_HUGEPAGE=0`` trades the fast case for a steady 0.5 s.
 - **Reads, many threads:** the array bytes are copied without the GIL, so throughput
   keeps growing with the thread count: 9.6 GB/s at 16 threads, against 7.9 GB/s for
   diskcache (its file reads release the GIL) and 4.8 GB/s for the default serializer (it
@@ -245,7 +254,9 @@ On the Apple M2 the picture is the same, with two differences:
   RAM disk on a 16 GB machine can hold. All three libraries then write at 0.9 to 1.7 GB/s,
   the speed of the SSD, so these numbers can't be compared with the Linux ``tmpfs`` ones.
 
-Both runs were on lightly loaded machines (load average 2–4), not idle ones.
+The M2 charts stop at 100 MB. Both runs were on lightly loaded machines (load average
+2–4; about 1 for the Linux size sweep up to 1 GB, the median of three runs), not idle
+ones.
 
 Reproducing the benchmarks
 ==========================

@@ -132,7 +132,7 @@ unpickling runs code: keep the folder private, or use the msgspec serializer
 ## Performance
 
 Measured against diskcache, both with their default settings, on a RAM filesystem, on
-Linux (x86-64) and macOS (Apple M2). Numpy measurement arrays from 100 KB to 100 MB, and 1
+Linux (x86-64) and macOS (Apple M2). Numpy measurement arrays from 100 KB to 1 GB, and 1
 to 16 threads, on Linux:
 
 ![numpy array benchmark](benchmark/arrays_chart.png)
