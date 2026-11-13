@@ -498,6 +498,67 @@ class GetManyIsOneSnapshot(_TempDir):
                 self.assertEqual(torn, [])
 
 
+def _value_files(directory):
+    """How many values are stored as files (anything but the SQLite files)."""
+    import os
+    return sum(1 for root, _, files in os.walk(directory) for f in files
+               if not f.startswith("sciqlop-cache.db"))
+
+
+class MaxBlobSize(_TempDir):
+    """max_blob_size: values up to it stay in the database, bigger ones go to files.
+    Recorded in the store, like max_size."""
+    STORES = (Cache, Index, FanoutCache, FanoutIndex)
+
+    def _path(self, cls, name):
+        return f"{self.tmp}/{cls.__name__}-{name}"
+
+    def test_threshold_decides_database_or_file(self):
+        mid = b"m" * 100_000
+        for cls in self.STORES:
+            with self.subTest(cls.__name__):
+                default = cls(self._path(cls, "default"))
+                default["small"] = b"s" * 100
+                default["mid"] = mid
+                self.assertEqual(_value_files(self._path(cls, "default")), 1)
+
+                roomy = cls(self._path(cls, "roomy"), max_blob_size=1 << 20)
+                roomy["mid"] = mid
+                self.assertEqual(_value_files(self._path(cls, "roomy")), 0)
+                self.assertEqual(roomy["mid"], mid)
+                self.assertEqual(roomy.max_blob_size(), 1 << 20)
+
+                files_only = cls(self._path(cls, "files"), max_blob_size=0)
+                files_only["small"] = b"s"
+                self.assertEqual(_value_files(self._path(cls, "files")), 1)
+                self.assertEqual(files_only["small"], b"s")
+
+    def test_recorded_and_reused_on_reopen(self):
+        for cls in self.STORES:
+            with self.subTest(cls.__name__):
+                path = self._path(cls, "reopen")
+                cls(path, max_blob_size=1 << 20).close()
+                reopened = cls(path)
+                self.assertEqual(reopened.max_blob_size(), 1 << 20)
+                reopened["mid"] = b"m" * 100_000
+                self.assertEqual(_value_files(path), 0)
+                self.assertEqual(cls(path, max_blob_size=10).max_blob_size(), 10)
+
+    def test_default_and_validation(self):
+        for cls in self.STORES:
+            with self.subTest(cls.__name__):
+                self.assertEqual(cls(self._path(cls, "d")).max_blob_size(), 8192)
+                with self.assertRaises(ValueError):
+                    cls(self._path(cls, "neg"), max_blob_size=-1)
+
+    def test_diskcache_min_file_size_is_honoured(self):
+        # diskcache stores a value as a file from disk_min_file_size bytes on.
+        for cls in (Cache, FanoutCache):
+            with self.subTest(cls.__name__):
+                store = cls(self._path(cls, "dc"), disk_min_file_size=1 << 20)
+                self.assertEqual(store.max_blob_size(), (1 << 20) - 1)
+
+
 class FanoutDocstrings(unittest.TestCase):
     def test_fanout_methods_share_the_documentation(self):
         self.assertEqual(FanoutCache.get.__doc__, Cache.get.__doc__)

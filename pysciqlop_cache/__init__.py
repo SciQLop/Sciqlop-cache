@@ -46,6 +46,7 @@ def _encoded_items(store, mapping):
             for k, v in mapping.items()]
 _META_SERIALIZER = "serializer"
 _META_MAX_SIZE = "max_size"
+_META_MAX_BLOB_SIZE = "max_blob_size"
 _SENTINEL = object()
 
 
@@ -74,7 +75,7 @@ def _resolve_serializer(store, requested):
 _IGNORED_SETTINGS = frozenset({
     "statistics", "tag_index", "eviction_policy", "cull_limit", "sqlite_auto_vacuum",
     "sqlite_cache_size", "sqlite_journal_mode", "sqlite_mmap_size", "sqlite_synchronous",
-    "disk_min_file_size", "disk_pickle_protocol",
+    "disk_pickle_protocol",
 })
 
 __all__ = [
@@ -255,6 +256,24 @@ def _reject_disk(disk):
         raise TypeError("disk= is not supported, use serializer= instead")
 
 
+def _apply_max_blob_size(store, requested, disk_min_file_size=None):
+    """An explicit max_blob_size replaces the recorded one; without one the recorded
+    value applies, else the default (8 KB). diskcache's disk_min_file_size is the
+    smallest value stored as a file, so it maps to one byte less."""
+    if requested is None and disk_min_file_size is not None:
+        requested = max(0, int(disk_min_file_size) - 1)
+    if requested is None:
+        stored = store.get_meta(_META_MAX_BLOB_SIZE)
+        if stored is None:
+            return
+        requested = int(stored)
+    elif requested < 0:
+        raise ValueError(f"max_blob_size must be >= 0, got {requested}")
+    else:
+        store.set_meta(_META_MAX_BLOB_SIZE, str(requested))
+    store._set_max_blob_size(requested)
+
+
 def _reject_unknown_settings(cls_name, settings):
     for name in settings:
         if name not in _IGNORED_SETTINGS:
@@ -344,9 +363,11 @@ class Cache(_Cache):
         size_limit: int | None = None,
         timeout: float | None = None,
         disk=None,
+        max_blob_size: int | None = None,
         **settings,
     ):
         _reject_disk(disk)
+        disk_min_file_size = settings.pop("disk_min_file_size", None)
         _reject_unknown_settings("Cache", settings)
         path = directory if directory is not None else (cache_path if cache_path is not None else ".cache/")
         if size_limit is not None:
@@ -355,6 +376,7 @@ class Cache(_Cache):
         _open_stores.add(self)
         self._keys_encoded = False
         self._serializer = _resolve_serializer(self, serializer)
+        _apply_max_blob_size(self, max_blob_size, disk_min_file_size)
         effective_max_size = self._resolve_max_size(max_size if max_size is not _SENTINEL else None)
         if effective_max_size != 0:
             super().set_max_cache_size(effective_max_size)
@@ -700,6 +722,7 @@ class Index(_Index):
         *mappings,
         serializer: Serializer | None = None,
         path: str | None = None,
+        max_blob_size: int | None = None,
         **items,
     ):
         effective_path = directory if directory is not None else (path if path is not None else ".index/")
@@ -707,6 +730,7 @@ class Index(_Index):
         _open_stores.add(self)
         self._keys_encoded = False
         self._serializer = _resolve_serializer(self, serializer)
+        _apply_max_blob_size(self, max_blob_size)
         for mapping in mappings:
             self.update(mapping)
         self.update(items)
@@ -893,9 +917,11 @@ class FanoutCache(_FanoutCache):
         size_limit: int | None = None,
         timeout: float | None = None,
         disk=None,
+        max_blob_size: int | None = None,
         **settings,
     ):
         _reject_disk(disk)
+        disk_min_file_size = settings.pop("disk_min_file_size", None)
         _reject_unknown_settings("FanoutCache", settings)
         path = directory if directory is not None else (cache_path if cache_path is not None else ".cache/")
         effective_shard_count = shards if shards is not None else shard_count
@@ -907,6 +933,7 @@ class FanoutCache(_FanoutCache):
         _open_stores.add(self)
         self._keys_encoded = False
         self._serializer = _resolve_serializer(self, serializer)
+        _apply_max_blob_size(self, max_blob_size, disk_min_file_size)
 
     @property
     def serializer(self) -> Serializer:
@@ -1140,6 +1167,7 @@ class FanoutIndex(_FanoutIndex):
         serializer: Serializer | None = None,
         path: str | None = None,
         shards: int | None = None,
+        max_blob_size: int | None = None,
         **items,
     ):
         effective_path = directory if directory is not None else (path if path is not None else ".index/")
@@ -1148,6 +1176,7 @@ class FanoutIndex(_FanoutIndex):
         _open_stores.add(self)
         self._keys_encoded = False
         self._serializer = _resolve_serializer(self, serializer)
+        _apply_max_blob_size(self, max_blob_size)
         for mapping in mappings:
             self.update(mapping)
         self.update(items)

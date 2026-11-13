@@ -23,7 +23,7 @@ The big picture
         end
         subgraph DISK["On disk (one directory per store)"]
             DB[("SQLite database, WAL mode<br/>keys, metadata, small values")]
-            BLOBS["ab/cd/&lt;uuid&gt;-&lt;pid&gt;<br/>value files (values &gt; 8 KB)"]
+            BLOBS["ab/cd/&lt;uuid&gt;-&lt;pid&gt;<br/>value files (values &gt; max_blob_size)"]
         end
         API --> NB --> STORE --> DB
         STORE --> BLOBS
@@ -43,13 +43,13 @@ Values take one of two paths, chosen by size:
 .. mermaid::
 
     flowchart LR
-        S["set(key, value)"] --> Q{value ≤ 8 KB?}
+        S["set(key, value)"] --> Q{value ≤ max_blob_size?<br/>(8 KB by default)}
         Q -->|yes| B["stored inside the<br/>database row"]
         Q -->|no| F["written to a new value file<br/>(exclusive create, uuid+pid name)"]
         F --> R["the row stores the file's<br/>relative path and size"]
 
-- **Small values (≤ 8 KB)** live inside the SQLite row: one transaction, nothing else
-  on disk.
+- **Small values (up to** ``max_blob_size``, **8 KB by default)** live inside the SQLite
+  row: one transaction, nothing else on disk.
 - **Large values** get their own file, named ``<uuid>-<pid>`` and spread over a
   two-level directory tree (``ab/cd/…``). The row keeps the *relative* path, so the
   whole cache directory can be moved or copied.

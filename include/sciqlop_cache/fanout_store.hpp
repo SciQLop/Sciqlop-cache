@@ -87,6 +87,13 @@ public:
 
     [[nodiscard]] std::size_t shard_count() const { return _shards.size(); }
 
+    [[nodiscard]] std::size_t file_size_threshold() const { return _shards[0]->file_size_threshold(); }
+
+    void set_file_size_threshold(std::size_t bytes)
+    {
+        _for_each_shard([bytes](auto& s) { s.set_file_size_threshold(bytes); });
+    }
+
     [[nodiscard]] bool exists(const std::string& key) { return _shard(key).exists(key); }
 
     inline bool del(const std::string& key) { return _shard(key).del(key); }

@@ -270,6 +270,7 @@ namespace doc
 static constexpr const char* count = "Number of entries (O(1): a counter kept in the database).";
 static constexpr const char* size = "Total size of the stored values, in bytes.";
 static constexpr const char* volume = "Bytes used on disk: the database plus the value files.";
+static constexpr const char* max_blob_size = "Values up to this many bytes are stored in the database, bigger ones as\nfiles. Set with the ``max_blob_size`` constructor argument (default 8192).";
 static constexpr const char* evict_tag = "Remove every entry stored with ``tag``. Returns how many were removed.";
 static constexpr const char* expire_and_tag = "The (expire_time, tag) of ``key``, or None if it is missing.";
 static constexpr const char* get_meta = "A value from the store's own metadata table (not a cache entry), or None.";
@@ -399,6 +400,8 @@ NB_MODULE(_pysciqlop_cache, m)
         .def(
             "__setitem__", [](Cache& c, const std::string& key, nb::handle buffer)
             { _set_item_impl(c, key, buffer); }, nb::arg("key"), nb::arg("value"))
+        .def("max_blob_size", &Cache::file_size_threshold, doc::max_blob_size)
+        .def("_set_max_blob_size", &Cache::set_file_size_threshold, nb::arg("bytes"))
         .def("get", &Cache::get, nb::arg("key"),
              nb::call_guard<nb::gil_scoped_release>())
         .def("_get_many", &Cache::get_many, nb::arg("keys"),
@@ -457,6 +460,8 @@ NB_MODULE(_pysciqlop_cache, m)
         .def("__len__", &Index::count, nb::call_guard<nb::gil_scoped_release>())
         .def("set", _simple_set_item<Index>, nb::arg("key"), nb::arg("value"))
         .def("__setitem__", _simple_set_item<Index>, nb::arg("key"), nb::arg("value"))
+        .def("max_blob_size", &Index::file_size_threshold, doc::max_blob_size)
+        .def("_set_max_blob_size", &Index::set_file_size_threshold, nb::arg("bytes"))
         .def("get", &Index::get, nb::arg("key"),
              nb::call_guard<nb::gil_scoped_release>())
         .def("_get_many", &Index::get_many, nb::arg("keys"),
@@ -509,6 +514,8 @@ NB_MODULE(_pysciqlop_cache, m)
         .def(
             "__setitem__", [](FanoutCache& c, const std::string& key, nb::handle buffer)
             { _set_item_impl(c, key, buffer); }, nb::arg("key"), nb::arg("value"))
+        .def("max_blob_size", &FanoutCache::file_size_threshold, doc::max_blob_size)
+        .def("_set_max_blob_size", &FanoutCache::set_file_size_threshold, nb::arg("bytes"))
         .def("get", &FanoutCache::get, nb::arg("key"),
              nb::call_guard<nb::gil_scoped_release>())
         .def("_get_many", &FanoutCache::get_many, nb::arg("keys"),
@@ -569,6 +576,8 @@ NB_MODULE(_pysciqlop_cache, m)
         .def("__len__", &FanoutIndex::count, nb::call_guard<nb::gil_scoped_release>())
         .def("set", _simple_set_item<FanoutIndex>, nb::arg("key"), nb::arg("value"))
         .def("__setitem__", _simple_set_item<FanoutIndex>, nb::arg("key"), nb::arg("value"))
+        .def("max_blob_size", &FanoutIndex::file_size_threshold, doc::max_blob_size)
+        .def("_set_max_blob_size", &FanoutIndex::set_file_size_threshold, nb::arg("bytes"))
         .def("get", &FanoutIndex::get, nb::arg("key"),
              nb::call_guard<nb::gil_scoped_release>())
         .def("_get_many", &FanoutIndex::get_many, nb::arg("keys"),
