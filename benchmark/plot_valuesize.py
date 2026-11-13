@@ -43,8 +43,9 @@ def fmt_size(n):
     return f"{n}B"
 
 
-COLORS = {"sciqlop": "#e74c3c", "sciqlop (size limit)": "#e74c3c", "diskcache": "#3498db"}
-LINESTYLES = {"sciqlop (size limit)": "--"}
+COLORS = {"sciqlop": "#e74c3c", "sciqlop (size limit)": "#e74c3c", "diskcache": "#3498db",
+          "sciqlop (set_many)": "#e74c3c", "sciqlop (get_many)": "#e74c3c"}
+LINESTYLES = {"sciqlop (size limit)": "--", "sciqlop (set_many)": "--", "sciqlop (get_many)": "--"}
 
 # Blob-to-file storage thresholds
 SCIQLOP_FILE_THRESHOLD = 8192       # 8 KB
@@ -117,34 +118,30 @@ def plot_single_ops(rows, output):
     print(f"Wrote {output}", file=sys.stderr)
 
 
-def plot_batch(rows, output):
-    batch_value_sizes = sorted(set(
-        r["value_size"] for r in rows if r["operation"] == "batch_set"
-    ))
+BATCH_BACKENDS = ["sciqlop", "sciqlop (set_many)", "sciqlop (get_many)", "diskcache"]
 
-    fig, axes = plt.subplots(1, len(batch_value_sizes), figsize=(5 * len(batch_value_sizes), 5),
-                              sharey=False)
-    if len(batch_value_sizes) == 1:
+
+def _plot_batch_chart(rows, operation, title, xlabel, ylabel, output):
+    value_sizes = sorted(set(r["value_size"] for r in rows if r["operation"] == operation))
+    if not value_sizes:
+        return  # a CSV from before this measurement existed
+    fig, axes = plt.subplots(1, len(value_sizes), figsize=(5 * len(value_sizes), 5), sharey=False)
+    if len(value_sizes) == 1:
         axes = [axes]
+    fig.suptitle(titled(title), fontsize=14)
 
-    fig.suptitle(titled("Batch set() Latency: Transaction of N ops"), fontsize=14)
-
-    for ax, vsz in zip(axes, batch_value_sizes):
-        for backend in ["sciqlop", "diskcache"]:
-            data = [(r["batch_size"], r["latency_us"])
-                    for r in rows
-                    if r["operation"] == "batch_set"
-                    and r["backend"] == backend
-                    and r["value_size"] == vsz]
+    for ax, vsz in zip(axes, value_sizes):
+        for backend in BATCH_BACKENDS:
+            data = sorted((r["batch_size"], r["latency_us"]) for r in rows
+                          if r["operation"] == operation and r["backend"] == backend
+                          and r["value_size"] == vsz)
             if not data:
                 continue
-            data.sort()
             batch_sizes, latencies = zip(*data)
             ax.plot(batch_sizes, latencies, marker="o", color=COLORS[backend],
-                    label=backend, markersize=5)
-
-        ax.set_xlabel("Batch size (ops per transaction)")
-        ax.set_ylabel("Transaction latency (μs)")
+                    linestyle=LINESTYLES.get(backend, "-"), label=backend, markersize=5)
+        ax.set_xlabel(xlabel)
+        ax.set_ylabel(ylabel)
         _annotate_storage_modes(ax, vsz)
         ax.legend()
         ax.grid(True, alpha=0.3)
@@ -152,43 +149,21 @@ def plot_batch(rows, output):
     fig.tight_layout()
     fig.savefig(output, dpi=150, bbox_inches="tight")
     print(f"Wrote {output}", file=sys.stderr)
+
+
+def plot_batch(rows, output):
+    _plot_batch_chart(rows, "batch_set", "Batch set() Latency: Transaction of N ops",
+                      "Batch size (ops per transaction)", "Transaction latency (μs)", output)
 
 
 def plot_batch_per_op(rows, output):
-    batch_value_sizes = sorted(set(
-        r["value_size"] for r in rows if r["operation"] == "batch_set_per_op"
-    ))
+    _plot_batch_chart(rows, "batch_set_per_op", "Per-op Cost in Batched Transactions",
+                      "Batch size (ops per transaction)", "Per-op latency (μs)", output)
 
-    fig, axes = plt.subplots(1, len(batch_value_sizes), figsize=(5 * len(batch_value_sizes), 5),
-                              sharey=False)
-    if len(batch_value_sizes) == 1:
-        axes = [axes]
 
-    fig.suptitle(titled("Per-op Cost in Batched Transactions"), fontsize=14)
-
-    for ax, vsz in zip(axes, batch_value_sizes):
-        for backend in ["sciqlop", "diskcache"]:
-            data = [(r["batch_size"], r["latency_us"])
-                    for r in rows
-                    if r["operation"] == "batch_set_per_op"
-                    and r["backend"] == backend
-                    and r["value_size"] == vsz]
-            if not data:
-                continue
-            data.sort()
-            batch_sizes, latencies = zip(*data)
-            ax.plot(batch_sizes, latencies, marker="o", color=COLORS[backend],
-                    label=backend, markersize=5)
-
-        ax.set_xlabel("Batch size (ops per transaction)")
-        ax.set_ylabel("Per-op latency (μs)")
-        _annotate_storage_modes(ax, vsz)
-        ax.legend()
-        ax.grid(True, alpha=0.3)
-
-    fig.tight_layout()
-    fig.savefig(output, dpi=150, bbox_inches="tight")
-    print(f"Wrote {output}", file=sys.stderr)
+def plot_batch_get_per_key(rows, output):
+    _plot_batch_chart(rows, "batch_get_per_op", "Per-key Cost of Batched Reads",
+                      "Batch size (keys)", "Per-key latency (μs)", output)
 
 
 def main():
@@ -208,6 +183,7 @@ def main():
     plot_single_ops(rows, f"{d}/valuesize_chart.png")
     plot_batch(rows, f"{d}/batch_chart.png")
     plot_batch_per_op(rows, f"{d}/batch_per_op_chart.png")
+    plot_batch_get_per_key(rows, f"{d}/batch_get_chart.png")
 
 
 if __name__ == "__main__":
