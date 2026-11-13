@@ -1,103 +1,391 @@
-backend,sweep,operation,x,value
-diskcache,size,disk,98304,0.0659
-diskcache,size,get,98304,0.1713
-diskcache,size,set,98304,0.2466
-sciqlop pickle,size,disk,98304,-0.0497
-sciqlop pickle,size,get,98304,0.0134
-sciqlop pickle,size,set,98304,0.1262
-sciqlop pickle-oob,size,disk,98304,-0.0496
-sciqlop pickle-oob,size,get,98304,0.0187
-sciqlop pickle-oob,size,set,98304,0.1392
-diskcache,size,disk,393216,0.3608
-diskcache,size,get,393216,0.3141
-diskcache,size,set,393216,0.6535
-sciqlop pickle,size,disk,393216,0.2453
-sciqlop pickle,size,get,393216,0.0218
-sciqlop pickle,size,set,393216,0.3983
-sciqlop pickle-oob,size,disk,393216,0.2453
-sciqlop pickle-oob,size,get,393216,0.0267
-sciqlop pickle-oob,size,set,393216,0.2410
-diskcache,size,disk,1572864,1.5405
-diskcache,size,get,1572864,0.1239
-diskcache,size,set,1572864,2.0169
-sciqlop pickle,size,disk,1572864,1.4249
-sciqlop pickle,size,get,1572864,0.0428
-sciqlop pickle,size,set,1572864,1.1997
-sciqlop pickle-oob,size,disk,1572864,0.9687
-sciqlop pickle-oob,size,get,1572864,0.0955
-sciqlop pickle-oob,size,set,1572864,0.5814
-diskcache,size,disk,6291456,6.2591
-diskcache,size,get,6291456,0.3629
-diskcache,size,set,6291456,9.5143
-sciqlop pickle,size,disk,6291456,6.1435
-sciqlop pickle,size,get,6291456,0.1365
-sciqlop pickle,size,set,6291456,5.1438
-sciqlop pickle-oob,size,disk,6291456,4.3166
-sciqlop pickle-oob,size,get,6291456,0.2857
-sciqlop pickle-oob,size,set,6291456,1.7645
-diskcache,size,disk,25165824,25.1334
-diskcache,size,get,25165824,2.3969
-diskcache,size,set,25165824,32.9756
-sciqlop pickle,size,disk,25165824,25.0179
-sciqlop pickle,size,get,25165824,1.8340
-sciqlop pickle,size,set,25165824,21.9690
-sciqlop pickle-oob,size,disk,25165824,17.7107
-sciqlop pickle-oob,size,get,25165824,1.8515
-sciqlop pickle-oob,size,set,25165824,6.7830
-diskcache,size,disk,100663296,100.6309
-diskcache,size,get,100663296,37.5246
-diskcache,size,set,100663296,140.8908
-sciqlop pickle,size,disk,100663296,100.5153
-sciqlop pickle,size,get,100663296,45.9658
-sciqlop pickle,size,set,100663296,105.0348
-sciqlop pickle-oob,size,disk,100663296,71.2841
-sciqlop pickle-oob,size,get,100663296,15.2580
-sciqlop pickle-oob,size,set,100663296,26.7816
-diskcache,size,disk,402653184,402.6208
-diskcache,size,get,402653184,209.6645
-diskcache,size,set,402653184,743.5617
-sciqlop pickle,size,disk,402653184,402.5052
-sciqlop pickle,size,get,402653184,252.9377
-sciqlop pickle,size,set,402653184,551.1516
-sciqlop pickle-oob,size,disk,402653184,285.5824
-sciqlop pickle-oob,size,get,402653184,74.9302
-sciqlop pickle-oob,size,set,402653184,134.5149
-diskcache,size,disk,1000000008,999.9676
-diskcache,size,get,1000000008,524.9259
-diskcache,size,set,1000000008,1746.1000
-sciqlop pickle,size,disk,1000000008,999.8521
-sciqlop pickle,size,get,1000000008,651.0275
-sciqlop pickle,size,set,1000000008,1238.4872
-sciqlop pickle-oob,size,disk,1000000008,709.4729
-sciqlop pickle-oob,size,get,1000000008,298.1932
-sciqlop pickle-oob,size,set,1000000008,330.2296
-diskcache,threads,get,1,2.4852
-diskcache,threads,set,1,1.0481
-diskcache,threads,get,2,4.3962
-diskcache,threads,set,2,1.4676
-diskcache,threads,get,4,6.5364
-diskcache,threads,set,4,1.3507
-diskcache,threads,get,8,7.8880
-diskcache,threads,set,8,1.1714
-diskcache,threads,get,16,7.9065
-diskcache,threads,set,16,1.0108
-sciqlop pickle,threads,get,1,2.3496
-sciqlop pickle,threads,set,1,2.4334
-sciqlop pickle,threads,get,2,2.3258
-sciqlop pickle,threads,set,2,1.6668
-sciqlop pickle,threads,get,4,2.5214
-sciqlop pickle,threads,set,4,2.2460
-sciqlop pickle,threads,get,8,3.6556
-sciqlop pickle,threads,set,8,2.5120
-sciqlop pickle,threads,get,16,4.8421
-sciqlop pickle,threads,set,16,1.8849
-sciqlop pickle-oob,threads,get,1,5.6000
-sciqlop pickle-oob,threads,set,1,3.9416
-sciqlop pickle-oob,threads,get,2,7.8239
-sciqlop pickle-oob,threads,set,2,3.8502
-sciqlop pickle-oob,threads,get,4,8.4860
-sciqlop pickle-oob,threads,set,4,3.7210
-sciqlop pickle-oob,threads,get,8,9.4270
-sciqlop pickle-oob,threads,set,8,2.5835
-sciqlop pickle-oob,threads,get,16,9.5520
-sciqlop pickle-oob,threads,set,16,3.6685
+dataset,backend,sweep,operation,x,value
+images,diskcache,size,disk,101376,0.1015
+images,sciqlop pickle,size,disk,101376,0.1015
+images,sciqlop pickle-oob,size,disk,101376,0.1015
+images,diskcache,size,disk,399360,0.3995
+images,sciqlop pickle,size,disk,399360,0.3995
+images,sciqlop pickle-oob,size,disk,399360,0.3995
+images,diskcache,size,disk,1600512,1.6007
+images,sciqlop pickle,size,disk,1600512,1.6007
+images,sciqlop pickle-oob,size,disk,1600512,1.6007
+images,diskcache,size,disk,6300672,6.3008
+images,sciqlop pickle,size,disk,6300672,6.3008
+images,sciqlop pickle-oob,size,disk,6300672,6.3008
+images,diskcache,size,disk,24999936,25.0001
+images,sciqlop pickle,size,disk,24999936,25.0001
+images,sciqlop pickle-oob,size,disk,24999936,25.0001
+images,diskcache,size,disk,99999744,99.9999
+images,sciqlop pickle,size,disk,99999744,99.9999
+images,sciqlop pickle-oob,size,disk,99999744,99.9999
+images,diskcache,size,disk,399998976,399.9991
+images,sciqlop pickle,size,disk,399998976,399.9991
+images,sciqlop pickle-oob,size,disk,399998976,399.9991
+images,diskcache,size,disk,1000000512,1000.0007
+images,sciqlop pickle,size,disk,1000000512,1000.0007
+images,sciqlop pickle-oob,size,disk,1000000512,1000.0007
+images,diskcache,size,get,101376,0.0344
+images,sciqlop pickle,size,get,101376,0.0095
+images,sciqlop pickle-oob,size,get,101376,0.0129
+images,diskcache,size,get,399360,0.0527
+images,sciqlop pickle,size,get,399360,0.0159
+images,sciqlop pickle-oob,size,get,399360,0.0229
+images,diskcache,size,get,1600512,0.1042
+images,sciqlop pickle,size,get,1600512,0.0370
+images,sciqlop pickle-oob,size,get,1600512,0.0414
+images,diskcache,size,get,6300672,0.3145
+images,sciqlop pickle,size,get,6300672,0.1220
+images,sciqlop pickle-oob,size,get,6300672,0.1315
+images,diskcache,size,get,24999936,2.6651
+images,sciqlop pickle,size,get,24999936,1.9592
+images,sciqlop pickle-oob,size,get,24999936,1.8430
+images,diskcache,size,get,99999744,48.3908
+images,sciqlop pickle,size,get,99999744,58.2029
+images,sciqlop pickle-oob,size,get,99999744,17.9650
+images,diskcache,size,get,399998976,195.3703
+images,sciqlop pickle,size,get,399998976,244.7686
+images,sciqlop pickle-oob,size,get,399998976,76.2666
+images,diskcache,size,get,1000000512,489.0054
+images,sciqlop pickle,size,get,1000000512,614.3850
+images,sciqlop pickle-oob,size,get,1000000512,194.6353
+images,diskcache,size,set,101376,0.2206
+images,sciqlop pickle,size,set,101376,0.1154
+images,sciqlop pickle-oob,size,set,101376,0.1242
+images,diskcache,size,set,399360,0.4228
+images,sciqlop pickle,size,set,399360,0.2138
+images,sciqlop pickle-oob,size,set,399360,0.2444
+images,diskcache,size,set,1600512,1.2529
+images,sciqlop pickle,size,set,1600512,0.6004
+images,sciqlop pickle-oob,size,set,1600512,0.6058
+images,diskcache,size,set,6300672,4.2137
+images,sciqlop pickle,size,set,6300672,2.2012
+images,sciqlop pickle-oob,size,set,6300672,2.2172
+images,diskcache,size,set,24999936,27.0306
+images,sciqlop pickle,size,set,24999936,19.8280
+images,sciqlop pickle-oob,size,set,24999936,8.5428
+images,diskcache,size,set,99999744,146.6519
+images,sciqlop pickle,size,set,99999744,117.8947
+images,sciqlop pickle-oob,size,set,99999744,34.6789
+images,diskcache,size,set,399998976,616.3192
+images,sciqlop pickle,size,set,399998976,471.6084
+images,sciqlop pickle-oob,size,set,399998976,132.8129
+images,diskcache,size,set,1000000512,1527.3046
+images,sciqlop pickle,size,set,1000000512,1164.9272
+images,sciqlop pickle-oob,size,set,1000000512,319.1107
+table,diskcache,size,disk,100101,0.1019
+table,sciqlop pickle,size,disk,100101,0.1019
+table,sciqlop pickle-oob,size,disk,100101,0.1020
+table,diskcache,size,disk,400290,0.4021
+table,sciqlop pickle,size,disk,400290,0.4021
+table,sciqlop pickle-oob,size,disk,400290,0.4022
+table,diskcache,size,disk,1600764,1.6026
+table,sciqlop pickle,size,disk,1600764,1.6026
+table,sciqlop pickle-oob,size,disk,1600764,1.4331
+table,diskcache,size,disk,6302409,6.3043
+table,sciqlop pickle,size,disk,6302409,6.3043
+table,sciqlop pickle-oob,size,disk,6302409,5.0618
+table,diskcache,size,disk,25008879,25.0108
+table,sciqlop pickle,size,disk,25008879,25.0108
+table,sciqlop pickle-oob,size,disk,25008879,19.4472
+table,diskcache,size,disk,100035402,100.0373
+table,sciqlop pickle,size,disk,100035402,100.0373
+table,sciqlop pickle-oob,size,disk,100035402,76.9272
+table,diskcache,size,disk,400220385,400.4844
+table,sciqlop pickle,size,disk,400220385,400.4844
+table,sciqlop pickle-oob,size,disk,400220385,307.2086
+table,diskcache,size,disk,1000249291,1000.9158
+table,sciqlop pickle,size,disk,1000249291,1000.9158
+table,sciqlop pickle-oob,size,disk,1000249291,767.4148
+table,diskcache,size,get,100101,0.1451
+table,sciqlop pickle,size,get,100101,0.1128
+table,sciqlop pickle-oob,size,get,100101,0.1132
+table,diskcache,size,get,400290,0.1802
+table,sciqlop pickle,size,get,400290,0.1211
+table,sciqlop pickle-oob,size,get,400290,0.1314
+table,diskcache,size,get,1600764,0.2610
+table,sciqlop pickle,size,get,1600764,0.1474
+table,sciqlop pickle-oob,size,get,1600764,0.2145
+table,diskcache,size,get,6302409,0.5020
+table,sciqlop pickle,size,get,6302409,0.2495
+table,sciqlop pickle-oob,size,get,6302409,0.5238
+table,diskcache,size,get,25008879,3.0312
+table,sciqlop pickle,size,get,25008879,2.0085
+table,sciqlop pickle-oob,size,get,25008879,2.5612
+table,diskcache,size,get,100035402,30.1882
+table,sciqlop pickle,size,get,100035402,41.2374
+table,sciqlop pickle-oob,size,get,100035402,22.4016
+table,diskcache,size,get,400220385,191.5387
+table,sciqlop pickle,size,get,400220385,255.5007
+table,sciqlop pickle-oob,size,get,400220385,95.1064
+table,diskcache,size,get,1000249291,487.4082
+table,sciqlop pickle,size,get,1000249291,597.1869
+table,sciqlop pickle-oob,size,get,1000249291,244.5222
+table,diskcache,size,set,100101,0.3277
+table,sciqlop pickle,size,set,100101,0.2062
+table,sciqlop pickle-oob,size,set,100101,0.2293
+table,diskcache,size,set,400290,0.6078
+table,sciqlop pickle,size,set,400290,0.3212
+table,sciqlop pickle-oob,size,set,400290,0.3449
+table,diskcache,size,set,1600764,1.6202
+table,sciqlop pickle,size,set,1600764,0.7433
+table,sciqlop pickle-oob,size,set,1600764,0.8394
+table,diskcache,size,set,6302409,5.7656
+table,sciqlop pickle,size,set,6302409,3.1717
+table,sciqlop pickle-oob,size,set,6302409,2.8145
+table,diskcache,size,set,25008879,37.6408
+table,sciqlop pickle,size,set,25008879,24.0894
+table,sciqlop pickle-oob,size,set,25008879,9.7529
+table,diskcache,size,set,100035402,147.3484
+table,sciqlop pickle,size,set,100035402,100.7709
+table,sciqlop pickle-oob,size,set,100035402,63.9110
+table,diskcache,size,set,400220385,675.6515
+table,sciqlop pickle,size,set,400220385,434.3809
+table,sciqlop pickle-oob,size,set,400220385,266.6092
+table,diskcache,size,set,1000249291,1805.0794
+table,sciqlop pickle,size,set,1000249291,1093.2923
+table,sciqlop pickle-oob,size,set,1000249291,686.5786
+fields,diskcache,size,disk,100000,0.1001
+fields,sciqlop pickle,size,disk,100000,0.1001
+fields,sciqlop pickle-oob,size,disk,100000,0.1002
+fields,diskcache,size,disk,400000,0.4001
+fields,sciqlop pickle,size,disk,400000,0.4001
+fields,sciqlop pickle-oob,size,disk,400000,0.0000
+fields,diskcache,size,disk,1600000,1.6001
+fields,sciqlop pickle,size,disk,1600000,1.6001
+fields,sciqlop pickle-oob,size,disk,1600000,0.0082
+fields,diskcache,size,disk,6300000,6.3001
+fields,sciqlop pickle,size,disk,6300000,6.3001
+fields,sciqlop pickle-oob,size,disk,6300000,0.9974
+fields,diskcache,size,disk,25000000,25.0001
+fields,sciqlop pickle,size,disk,25000000,25.0001
+fields,sciqlop pickle-oob,size,disk,25000000,4.0934
+fields,diskcache,size,disk,100000000,100.0001
+fields,sciqlop pickle,size,disk,100000000,100.0001
+fields,sciqlop pickle-oob,size,disk,100000000,15.3254
+fields,diskcache,size,disk,400000000,400.0001
+fields,sciqlop pickle,size,disk,400000000,400.0001
+fields,sciqlop pickle-oob,size,disk,400000000,179.4307
+fields,diskcache,size,disk,1000000000,1000.0001
+fields,sciqlop pickle,size,disk,1000000000,1000.0001
+fields,sciqlop pickle-oob,size,disk,1000000000,1000.0002
+fields,diskcache,size,get,100000,0.0338
+fields,sciqlop pickle,size,get,100000,0.0092
+fields,sciqlop pickle-oob,size,get,100000,0.0131
+fields,diskcache,size,get,400000,0.0520
+fields,sciqlop pickle,size,get,400000,0.0154
+fields,sciqlop pickle-oob,size,get,400000,0.0265
+fields,diskcache,size,get,1600000,0.1054
+fields,sciqlop pickle,size,get,1600000,0.0349
+fields,sciqlop pickle-oob,size,get,1600000,0.0693
+fields,diskcache,size,get,6300000,0.5051
+fields,sciqlop pickle,size,get,6300000,0.1210
+fields,sciqlop pickle-oob,size,get,6300000,0.7933
+fields,diskcache,size,get,25000000,2.5680
+fields,sciqlop pickle,size,get,25000000,1.7794
+fields,sciqlop pickle-oob,size,get,25000000,1.1323
+fields,diskcache,size,get,100000000,48.9459
+fields,sciqlop pickle,size,get,100000000,60.9853
+fields,sciqlop pickle-oob,size,get,100000000,11.2859
+fields,diskcache,size,get,400000000,200.0072
+fields,sciqlop pickle,size,get,400000000,249.0541
+fields,sciqlop pickle-oob,size,get,400000000,54.6353
+fields,diskcache,size,get,1000000000,509.4037
+fields,sciqlop pickle,size,get,1000000000,636.7546
+fields,sciqlop pickle-oob,size,get,1000000000,206.6028
+fields,diskcache,size,set,100000,0.1936
+fields,sciqlop pickle,size,set,100000,0.1154
+fields,sciqlop pickle-oob,size,set,100000,0.1274
+fields,diskcache,size,set,400000,0.3104
+fields,sciqlop pickle,size,set,400000,0.2137
+fields,sciqlop pickle-oob,size,set,400000,0.0884
+fields,diskcache,size,set,1600000,0.8520
+fields,sciqlop pickle,size,set,1600000,0.6182
+fields,sciqlop pickle-oob,size,set,1600000,0.1374
+fields,diskcache,size,set,6300000,3.4810
+fields,sciqlop pickle,size,set,6300000,2.3718
+fields,sciqlop pickle-oob,size,set,6300000,0.8610
+fields,diskcache,size,set,25000000,22.5260
+fields,sciqlop pickle,size,set,25000000,19.7433
+fields,sciqlop pickle-oob,size,set,25000000,3.1504
+fields,diskcache,size,set,100000000,131.2847
+fields,sciqlop pickle,size,set,100000000,119.4676
+fields,sciqlop pickle-oob,size,set,100000000,30.4352
+fields,diskcache,size,set,400000000,641.4556
+fields,sciqlop pickle,size,set,400000000,475.6376
+fields,sciqlop pickle-oob,size,set,400000000,175.8806
+fields,diskcache,size,set,1000000000,1630.0957
+fields,sciqlop pickle,size,set,1000000000,1184.9626
+fields,sciqlop pickle-oob,size,set,1000000000,911.8229
+sensor,diskcache,size,disk,99968,0.1003
+sensor,sciqlop pickle,size,disk,99968,0.1003
+sensor,sciqlop pickle-oob,size,disk,99968,0.1004
+sensor,diskcache,size,disk,400000,0.4003
+sensor,sciqlop pickle,size,disk,400000,0.4003
+sensor,sciqlop pickle-oob,size,disk,400000,0.4004
+sensor,diskcache,size,disk,1600000,1.6003
+sensor,sciqlop pickle,size,disk,1600000,1.6003
+sensor,sciqlop pickle-oob,size,disk,1600000,1.6005
+sensor,diskcache,size,disk,6300032,6.3004
+sensor,sciqlop pickle,size,disk,6300032,6.3004
+sensor,sciqlop pickle-oob,size,disk,6300032,5.5918
+sensor,diskcache,size,disk,25000000,25.0003
+sensor,sciqlop pickle,size,disk,25000000,25.0003
+sensor,sciqlop pickle-oob,size,disk,25000000,22.1858
+sensor,diskcache,size,disk,100000000,100.0003
+sensor,sciqlop pickle,size,disk,100000000,100.0003
+sensor,sciqlop pickle-oob,size,disk,100000000,88.7390
+sensor,diskcache,size,disk,400000000,400.0003
+sensor,sciqlop pickle,size,disk,400000000,400.0003
+sensor,sciqlop pickle-oob,size,disk,400000000,354.8947
+sensor,diskcache,size,disk,1000000000,1000.0003
+sensor,sciqlop pickle,size,disk,1000000000,1000.0003
+sensor,sciqlop pickle-oob,size,disk,1000000000,887.2388
+sensor,diskcache,size,get,99968,0.0371
+sensor,sciqlop pickle,size,get,99968,0.0113
+sensor,sciqlop pickle-oob,size,get,99968,0.0146
+sensor,diskcache,size,get,400000,0.0559
+sensor,sciqlop pickle,size,get,400000,0.0177
+sensor,sciqlop pickle-oob,size,get,400000,0.0212
+sensor,diskcache,size,get,1600000,0.1119
+sensor,sciqlop pickle,size,get,1600000,0.0373
+sensor,sciqlop pickle-oob,size,get,1600000,0.0487
+sensor,diskcache,size,get,6300032,0.3371
+sensor,sciqlop pickle,size,get,6300032,0.1253
+sensor,sciqlop pickle-oob,size,get,6300032,0.1823
+sensor,diskcache,size,get,25000000,2.5183
+sensor,sciqlop pickle,size,get,25000000,1.8724
+sensor,sciqlop pickle-oob,size,get,25000000,2.2248
+sensor,diskcache,size,get,100000000,44.8685
+sensor,sciqlop pickle,size,get,100000000,57.6782
+sensor,sciqlop pickle-oob,size,get,100000000,54.8025
+sensor,diskcache,size,get,400000000,206.3620
+sensor,sciqlop pickle,size,get,400000000,253.5579
+sensor,sciqlop pickle-oob,size,get,400000000,226.4242
+sensor,diskcache,size,get,1000000000,505.3800
+sensor,sciqlop pickle,size,get,1000000000,620.7625
+sensor,sciqlop pickle-oob,size,get,1000000000,577.8869
+sensor,diskcache,size,set,99968,0.2841
+sensor,sciqlop pickle,size,set,99968,0.1341
+sensor,sciqlop pickle-oob,size,set,99968,0.1471
+sensor,diskcache,size,set,400000,0.6209
+sensor,sciqlop pickle,size,set,400000,0.2524
+sensor,sciqlop pickle-oob,size,set,400000,0.2624
+sensor,diskcache,size,set,1600000,1.9156
+sensor,sciqlop pickle,size,set,1600000,0.7314
+sensor,sciqlop pickle-oob,size,set,1600000,0.7772
+sensor,diskcache,size,set,6300032,6.9374
+sensor,sciqlop pickle,size,set,6300032,2.8913
+sensor,sciqlop pickle-oob,size,set,6300032,2.9269
+sensor,diskcache,size,set,25000000,38.1102
+sensor,sciqlop pickle,size,set,25000000,22.8854
+sensor,sciqlop pickle-oob,size,set,25000000,40.0441
+sensor,diskcache,size,set,100000000,192.8605
+sensor,sciqlop pickle,size,set,100000000,133.3701
+sensor,sciqlop pickle-oob,size,set,100000000,209.4255
+sensor,diskcache,size,set,400000000,885.8583
+sensor,sciqlop pickle,size,set,400000000,609.5247
+sensor,sciqlop pickle-oob,size,set,400000000,835.9866
+sensor,diskcache,size,set,1000000000,2107.2354
+sensor,sciqlop pickle,size,set,1000000000,1407.1294
+sensor,sciqlop pickle-oob,size,set,1000000000,2109.1868
+noise,diskcache,size,disk,100008,0.1003
+noise,sciqlop pickle,size,disk,100008,0.1003
+noise,sciqlop pickle-oob,size,disk,100008,0.1004
+noise,diskcache,size,disk,400008,0.4003
+noise,sciqlop pickle,size,disk,400008,0.4003
+noise,sciqlop pickle-oob,size,disk,400008,0.4004
+noise,diskcache,size,disk,1600008,1.6003
+noise,sciqlop pickle,size,disk,1600008,1.6003
+noise,sciqlop pickle-oob,size,disk,1600008,1.1384
+noise,diskcache,size,disk,6300000,6.3003
+noise,sciqlop pickle,size,disk,6300000,6.3003
+noise,sciqlop pickle-oob,size,disk,6300000,4.4718
+noise,diskcache,size,disk,25000008,25.0003
+noise,sciqlop pickle,size,disk,25000008,25.0003
+noise,sciqlop pickle-oob,size,disk,25000008,17.7437
+noise,diskcache,size,disk,100000008,100.0003
+noise,sciqlop pickle,size,disk,100000008,100.0003
+noise,sciqlop pickle-oob,size,disk,100000008,70.9638
+noise,diskcache,size,disk,400000008,400.0003
+noise,sciqlop pickle,size,disk,400000008,400.0003
+noise,sciqlop pickle-oob,size,disk,400000008,283.8503
+noise,diskcache,size,disk,1000000008,1000.0003
+noise,sciqlop pickle,size,disk,1000000008,1000.0003
+noise,sciqlop pickle-oob,size,disk,1000000008,709.6211
+noise,diskcache,size,get,100008,0.0388
+noise,sciqlop pickle,size,get,100008,0.0125
+noise,sciqlop pickle-oob,size,get,100008,0.0173
+noise,diskcache,size,get,400008,0.0654
+noise,sciqlop pickle,size,get,400008,0.0192
+noise,sciqlop pickle-oob,size,get,400008,0.0240
+noise,diskcache,size,get,1600008,0.1210
+noise,sciqlop pickle,size,get,1600008,0.0406
+noise,sciqlop pickle-oob,size,get,1600008,0.0893
+noise,diskcache,size,get,6300000,0.3303
+noise,sciqlop pickle,size,get,6300000,0.1228
+noise,sciqlop pickle-oob,size,get,6300000,0.2746
+noise,diskcache,size,get,25000008,2.7374
+noise,sciqlop pickle,size,get,25000008,1.8057
+noise,sciqlop pickle-oob,size,get,25000008,1.8569
+noise,diskcache,size,get,100000008,35.6732
+noise,sciqlop pickle,size,get,100000008,46.9435
+noise,sciqlop pickle-oob,size,get,100000008,14.3893
+noise,diskcache,size,get,400000008,205.4333
+noise,sciqlop pickle,size,get,400000008,248.1413
+noise,sciqlop pickle-oob,size,get,400000008,71.8553
+noise,diskcache,size,get,1000000008,507.0213
+noise,sciqlop pickle,size,get,1000000008,636.6958
+noise,sciqlop pickle-oob,size,get,1000000008,261.7297
+noise,diskcache,size,set,100008,0.2449
+noise,sciqlop pickle,size,set,100008,0.1240
+noise,sciqlop pickle-oob,size,set,100008,0.1363
+noise,diskcache,size,set,400008,0.4786
+noise,sciqlop pickle,size,set,400008,0.2249
+noise,sciqlop pickle-oob,size,set,400008,0.2320
+noise,diskcache,size,set,1600008,1.4170
+noise,sciqlop pickle,size,set,1600008,0.6118
+noise,sciqlop pickle-oob,size,set,1600008,0.5436
+noise,diskcache,size,set,6300000,6.7111
+noise,sciqlop pickle,size,set,6300000,2.1822
+noise,sciqlop pickle-oob,size,set,6300000,1.6710
+noise,diskcache,size,set,25000008,32.1346
+noise,sciqlop pickle,size,set,25000008,21.1978
+noise,sciqlop pickle-oob,size,set,25000008,6.8115
+noise,diskcache,size,set,100000008,140.6421
+noise,sciqlop pickle,size,set,100000008,104.5198
+noise,sciqlop pickle-oob,size,set,100000008,26.0908
+noise,diskcache,size,set,400000008,708.1304
+noise,sciqlop pickle,size,set,400000008,518.3223
+noise,sciqlop pickle-oob,size,set,400000008,132.6630
+noise,diskcache,size,set,1000000008,1724.1468
+noise,sciqlop pickle,size,set,1000000008,1226.7942
+noise,sciqlop pickle-oob,size,set,1000000008,325.4473
+fields,diskcache,threads,get,1,1.9801
+fields,sciqlop pickle,threads,get,1,1.9461
+fields,sciqlop pickle-oob,threads,get,1,7.6479
+fields,diskcache,threads,get,2,3.4343
+fields,sciqlop pickle,threads,get,2,1.9143
+fields,sciqlop pickle-oob,threads,get,2,8.3170
+fields,diskcache,threads,get,4,5.1209
+fields,sciqlop pickle,threads,get,4,2.0724
+fields,sciqlop pickle-oob,threads,get,4,9.0417
+fields,diskcache,threads,get,8,6.1263
+fields,sciqlop pickle,threads,get,8,2.2110
+fields,sciqlop pickle-oob,threads,get,8,9.2029
+fields,diskcache,threads,get,16,7.8722
+fields,sciqlop pickle,threads,get,16,2.7941
+fields,sciqlop pickle-oob,threads,get,16,10.6338
+fields,diskcache,threads,set,1,0.9980
+fields,sciqlop pickle,threads,set,1,1.3276
+fields,sciqlop pickle-oob,threads,set,1,8.0325
+fields,diskcache,threads,set,2,1.6785
+fields,sciqlop pickle,threads,set,2,1.5782
+fields,sciqlop pickle-oob,threads,set,2,11.2080
+fields,diskcache,threads,set,4,1.3993
+fields,sciqlop pickle,threads,set,4,1.8322
+fields,sciqlop pickle-oob,threads,set,4,10.6619
+fields,diskcache,threads,set,8,1.3980
+fields,sciqlop pickle,threads,set,8,1.8699
+fields,sciqlop pickle-oob,threads,set,8,9.2403
+fields,diskcache,threads,set,16,1.3048
+fields,sciqlop pickle,threads,set,16,1.8222
+fields,sciqlop pickle-oob,threads,set,16,9.0545

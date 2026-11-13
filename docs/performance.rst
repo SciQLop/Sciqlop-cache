@@ -194,69 +194,90 @@ cheaper and removes their files, at the price of slower repeated reads. The data
 grows by what the files held; the total disk space doesn't. Above about 128 KB, files win on every count. One point is unexplained: 1 MB
 values wrote twice as fast in the 32 KB run, though they are files in every run.
 
-numpy arrays
-============
+Large values: public datasets
+=============================
 
-Here the values are measurement series: float32 samples (4 per row) plus a datetime64
-time axis, from 100 KB to 1 GB each. All three store them with pickle protocol 5.
-diskcache and the default serializer keep the array bytes inside the pickle;
-:class:`~pysciqlop_cache.PickleOOBSerializer` stores them next to it, compressed when that
-pays off (see :doc:`serializers`).
+Here each value comes from a public dataset, sliced or tiled to sizes from 100 KB to
+1 GB, so compression meets real data:
 
-.. tab-set::
-    :sync-group: platform
+- **images**: CIFAR-10 [#cifar]_, a uint8 array of 32x32 colour images, the batch an ML
+  pipeline caches;
+- **table**: NYC taxi trips [#taxi]_, January to March 2024, a pandas DataFrame with
+  timestamps, floats, integers and strings;
+- **fields**: Hurricane ISABEL from SDRBench [#sdrbench]_, float32 simulation fields
+  (100x500x500 each, 13 of them);
+- **sensor**: household power readings [#uci]_, a datetime64 axis with 7 float64
+  channels, one sample a minute;
+- **noise**: random float32 with a datetime64 axis, the incompressible worst case.
 
-    .. tab-item:: Linux, x86-64
-        :sync: linux
+A value bigger than its dataset is the dataset repeated (images above 184 MB, sensor
+above 133 MB): repeated data can compress better than unique data of that size. All
+three store values with pickle protocol 5. diskcache and the default serializer keep
+the array bytes inside the pickle; :class:`~pysciqlop_cache.PickleOOBSerializer` stores
+them next to it, compressed when that pays off (see :doc:`serializers`). Median of
+three runs; the datasets are downloaded on first use (~1.6 GB).
 
-        .. image:: ../benchmark/arrays_chart.png
-            :alt: numpy arrays: diskcache vs pickle vs pickle-oob (Linux, AMD Ryzen 7 5800X)
+.. image:: ../benchmark/arrays_chart.png
+    :alt: get, set and disk use vs value size for five datasets: diskcache, pickle, pickle-oob (Linux, AMD Ryzen 7 5800X)
 
-    .. tab-item:: macOS, Apple M2
-        :sync: macos
-
-        .. image:: ../benchmark/macos-m2/arrays_chart.png
-            :alt: numpy arrays: diskcache vs pickle vs pickle-oob (macOS, Apple M2)
-
-- **Writes:** pickle-oob is the fastest from 400 KB up, and ~5x faster than diskcache
-  from 100 MB to 1 GB (1 GB: 0.33 s vs 1.75 s). The arrays go to disk with no copy into
-  a pickle buffer.
-- **Reads, one thread:** below 1 MB, both SciQLop Cache serializers are 3x to 14x faster
-  than diskcache. The benchmark reads the same key again, and SciQLop Cache keeps the
-  last 128 files it loaded open, so only the unpickling is left. Between 1 and 10 MB,
-  pickle-oob is a little slower than the default serializer: decompressing the time axis
-  costs more than copying it. From 100 MB it is the fastest: 3x the default serializer
-  at 100 MB, 2.2x at 1 GB (0.30 s, vs 0.65 s, and 0.52 s for diskcache). From 100 MB the
-  default serializer reads slower than diskcache: its copy into the pickle runs with the
-  GIL held. ``PickleOOBSerializer(compress=False)`` skips the decompression.
+- **Writes:** pickle-oob is the fastest from a few MB up on images, tables, fields and
+  noise: 1 GB of images in 0.32 s, against 1.2 s for the default serializer and 1.5 s
+  for diskcache. The arrays go to disk with no copy into a pickle buffer. The sensor
+  data is the exception: pickle-oob writes it slower than the default serializer
+  (1 GB: 2.1 s vs 1.4 s), see the next point.
+- **Disk:** what compresses is what has structure: simulation fields (6x up to 100 MB),
+  time axes (noise: 29 % saved, all of it from the time axis), tables (23 %). Images and
+  the sensor's float64 channels barely compress. pickle-oob decides per array, from its
+  first 64 KB: an array whose start compresses is compressed whole, and kept only if the
+  whole array shrinks 2x. A 1 GB value of ten Hurricane fields starts with a mostly empty
+  one, so it is compressed, then stored raw because the other fields compress less; the
+  sensor's float64 channels start compressible too, and the wasted attempt costs about
+  a second per GB.
+- **Reads, one thread:** below a few MB the default serializer is the fastest: the
+  benchmark reads the same key again, and SciQLop Cache keeps the last loaded files open,
+  so only unpickling is left. From 100 MB, pickle-oob is the fastest on every dataset but
+  the sensor one, 1.8x to 5x the default serializer (1 GB of images: 0.19 s, vs 0.61 s,
+  and 0.49 s for diskcache). From 100 MB the default serializer reads slower than
+  diskcache: its copy into the pickle runs with the GIL held.
 - **Very large reads and huge pages:** a decoded array is fresh memory, and numpy asks
   the kernel for 2 MB pages for it. When free memory is fragmented, the kernel tries to
-  compact it on every page fault, fails, and falls back to 4 KB pages: on this machine,
-  with 24 GB of stale files in a RAM ``/tmp``, a 1 GB pickle-oob read took 1 s instead of
-  0.24 s (``/proc/vmstat``: ``compact_fail``). Any large numpy allocation pays this, not
-  only the cache; ``NUMPY_MADVISE_HUGEPAGE=0`` trades the fast case for a steady 0.5 s.
-- **Reads, many threads:** the array bytes are copied without the GIL, so throughput
-  keeps growing with the thread count: 9.6 GB/s at 16 threads, against 7.9 GB/s for
-  diskcache (its file reads release the GIL) and 4.8 GB/s for the default serializer (it
-  copies with the GIL held).
-- **Writes, many threads:** SQLite takes one writer at a time, so no library scales
-  here. pickle-oob sustains 2.6 to 3.9 GB/s, 2.2x to 3.8x diskcache.
-- **Disk:** noisy float values don't compress, but the time axis does. From 1.6 MB up,
-  each value takes ~29 % less space with pickle-oob.
+  compact it on every page fault, fails, and falls back to 4 KB pages: with 24 GB of
+  stale files in a RAM ``/tmp``, a 1 GB pickle-oob read took 1 s instead of 0.24 s
+  (``/proc/vmstat``: ``compact_fail``). Any large numpy allocation pays this, not only
+  the cache; ``NUMPY_MADVISE_HUGEPAGE=0`` trades the fast case for a steady 0.5 s.
 
-On the Apple M2 the picture is the same, with two differences:
+Threads, on 24 MB of Hurricane fields, 1 to 16 threads each reading or writing its own
+keys:
 
-- **Reads are much faster**, for every library: the M2's memory moves a 100 MB value in
-  2.8 ms with pickle-oob (14.5 ms for diskcache), and 8 threads read 36 GB/s with
-  pickle-oob, against 16 GB/s for diskcache (11 and 7 GB/s on the Ryzen).
-- **Writes go to the internal SSD.** The thread sweep overwrites 768 MB per round, and
-  replaced files are deleted 5 s later, so it needs several GB of free space: more than a
-  RAM disk on a 16 GB machine can hold. All three libraries then write at 0.9 to 1.7 GB/s,
-  the speed of the SSD, so these numbers can't be compared with the Linux ``tmpfs`` ones.
+.. image:: ../benchmark/arrays_chart_threads.png
+    :alt: get and set throughput vs threads on Hurricane ISABEL fields (Linux, AMD Ryzen 7 5800X)
 
-The M2 charts stop at 100 MB. Both runs were on lightly loaded machines (load average
-2–4; about 1 for the Linux size sweep up to 1 GB, the median of three runs), not idle
-ones.
+- **Reads:** pickle-oob copies array bytes without the GIL: 7.7 GB/s on one thread,
+  10.6 GB/s on 16, against 2.0 to 7.9 GB/s for diskcache (its file reads release the
+  GIL) and 2.0 to 2.8 GB/s for the default serializer (it copies with the GIL held).
+- **Writes:** SQLite takes one writer at a time, so no library scales. pickle-oob
+  sustains 8 to 11 GB/s, because these fields compress 6x; the others stay below
+  2 GB/s.
+
+On the Apple M2, an older version of this benchmark (random noise only, up to 100 MB)
+gives the same picture, with faster reads for every library: the M2's memory moves a
+100 MB value in 2.8 ms with pickle-oob (14.5 ms for diskcache). Its writes went to the
+internal SSD, at 0.9 to 1.7 GB/s for all three, so they can't be compared with
+``tmpfs``.
+
+.. image:: ../benchmark/macos-m2/arrays_chart.png
+    :alt: numpy arrays, random noise: diskcache vs pickle vs pickle-oob (macOS, Apple M2)
+
+The Linux runs were on a lightly loaded machine (load average 2 to 3), not an idle one.
+
+.. [#cifar] A. Krizhevsky, *Learning Multiple Layers of Features from Tiny Images*,
+   2009, https://www.cs.toronto.edu/~kriz/cifar.html
+.. [#taxi] NYC Taxi & Limousine Commission trip record data,
+   https://www.nyc.gov/site/tlc/about/tlc-trip-record-data.page
+.. [#sdrbench] SDRBench, https://sdrbench.github.io; K. Zhao et al., IEEE Big Data 2020.
+   Hurricane ISABEL data from the IEEE Visualization 2004 contest (NCAR).
+.. [#uci] G. Hebrail and A. Berard, *Individual household electric power consumption*,
+   UCI Machine Learning Repository, 2006, https://doi.org/10.24432/C58K54 (CC BY 4.0)
 
 Reproducing the benchmarks
 ==========================
@@ -293,5 +314,5 @@ scripts:
     $ python benchmark/bench_blob_size.py > benchmark/blob_size_results.csv
     $ python benchmark/plot_blob_size.py benchmark/blob_size_results.csv -o benchmark/blob_size_chart.png
 
-    $ python benchmark/bench_arrays.py > benchmark/arrays_results.csv
+    $ python benchmark/bench_arrays.py > benchmark/arrays_results.csv   # downloads ~1.6 GB once
     $ python benchmark/plot_arrays.py benchmark/arrays_results.csv -o benchmark/arrays_chart.png

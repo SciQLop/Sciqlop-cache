@@ -131,11 +131,12 @@ unpickling runs code: keep the folder private, or use the msgspec serializer
 
 ## Performance
 
-Measured against diskcache, both with their default settings, on a RAM filesystem, on
-Linux (x86-64) and macOS (Apple M2). Numpy measurement arrays from 100 KB to 1 GB, and 1
-to 16 threads, on Linux:
+Measured against diskcache, both with their default settings, on a RAM filesystem.
+Values from public datasets (CIFAR-10 images, NYC taxi trips as a DataFrame, Hurricane
+ISABEL simulation fields, household power readings) and random noise, from 100 KB to
+1 GB, on Linux:
 
-![numpy array benchmark](benchmark/arrays_chart.png)
+![large-value benchmark](benchmark/arrays_chart.png)
 
 More charts and the methodology are in the [performance page](https://sciqlop-cache.readthedocs.io/en/latest/performance.html).
 
