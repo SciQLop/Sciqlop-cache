@@ -173,21 +173,25 @@ Values up to ``max_blob_size`` are stored in the database, bigger ones as files 
 the Linux machine above (``tmpfs``). The fastest of three runs is kept per point.
 
 .. image:: ../benchmark/blob_size_chart.png
-    :alt: set/get latency and database bytes per value vs value size, for max_blob_size 8 KB to 1 MB (Linux, AMD Ryzen 7 5800X)
+    :alt: set/get latency and disk space per byte stored vs value size, for max_blob_size 8 KB to 1 MB (Linux, AMD Ryzen 7 5800X)
+
+Filled markers are values stored in the database, hollow ones values stored as files.
 
 - **Writes**: a database blob beats a file creation for 16 and 32 KB values (16 KB:
-  44 µs vs 75 µs). At 64 KB it is even, and from 128 KB on a blob is slower (256 KB:
-  277 µs vs 156 µs). On a real disk, where creating a file costs more, blobs win up to
+  44 µs vs 78 µs). At 64 KB it is even, and from 128 KB on a blob is slower (256 KB:
+  307 µs vs 167 µs). On a real disk, where creating a file costs more, blobs win up to
   64 KB.
 - **Repeated reads** favour files from 16 KB on: a file is memory-mapped once, a blob is
-  copied out of SQLite on every read (64 KB: 5.6 µs vs 11.8 µs).
+  copied out of SQLite on every read (64 KB: 6 µs vs 12 µs).
 - **First reads** are about even up to 64 KB; from 128 KB blobs are slower.
-- **Size**: a blob grows the database by its whole size; a file costs about 250 bytes
-  of database plus one file.
+- **Disk space**: a value of 1 to 4 KB takes a whole 4 KB page of the database, so a
+  1 KB value uses 4.7 times its size on disk, whatever the threshold. A file wastes the
+  unused end of its last 4 KB block: a 16 KB value uses 1.26 times its size as a file,
+  1.05 times in the database. From 64 KB on, both are within 7 % of the data.
 
 So raising ``max_blob_size`` to 32 KB (64 KB on a real disk) makes writing such values
-cheaper and removes their files, at the price of slower repeated reads and a bigger
-database. Above about 128 KB, files win on every count. One point is unexplained: 1 MB
+cheaper and removes their files, at the price of slower repeated reads. The database
+grows by what the files held; the total disk space doesn't. Above about 128 KB, files win on every count. One point is unexplained: 1 MB
 values wrote twice as fast in the 32 KB run, though they are files in every run.
 
 numpy arrays

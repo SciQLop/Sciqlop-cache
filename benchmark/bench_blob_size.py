@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """max_blob_size sweep, for several thresholds and value sizes: set/get latency, and the
-footprint of 200 stored values (database bytes and value files per value).
+footprint of 200 stored values (database bytes, value files and allocated disk space
+per value).
 
 Values up to max_blob_size are stored in the database, bigger ones as files.
 Outputs CSV to stdout.
@@ -41,21 +42,25 @@ def bench_one(writer, max_blob_size, sz):
 
 
 def footprint(max_blob_size, value, count=200):
-    """Database bytes (with its WAL) and value files per stored value."""
+    """Per stored value: database bytes, value files, and disk space allocated for
+    both (st_blocks, so a file's partly used last block counts in full)."""
     with TemporaryDirectory() as tmp:
         cache = Cache(tmp, max_blob_size=max_blob_size)
         with cache.transact():
             for i in range(count):
                 cache.set(f"k{i}", value)
         cache.close()
-        db = files = 0
+        db = files = allocated = 0
         for root, _, names in os.walk(tmp):
             for name in names:
+                st = os.stat(os.path.join(root, name))
+                allocated += st.st_blocks * 512
                 if name.startswith("sciqlop-cache.db"):
-                    db += os.path.getsize(os.path.join(root, name))
+                    db += st.st_size
                 else:
                     files += 1
-    return {"db_bytes_per_value": db / count, "files_per_value": files / count}
+    return {"db_bytes_per_value": db / count, "files_per_value": files / count,
+            "disk_bytes_per_value": allocated / count}
 
 
 def main():
