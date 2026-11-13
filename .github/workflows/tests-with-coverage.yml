@@ -42,9 +42,9 @@ jobs:
       - name: Generate Coverage report
         run: |
           lcov --capture  --ignore-errors=inconsistent,mismatch --directory . --output-file coverage.info
-          lcov --remove coverage.info '/usr/*' --ignore-errors=unused --output-file coverage.info
-          lcov --remove coverage.info '*/catch*' --ignore-errors=unused --output-file coverage.info
-          lcov --list coverage.info
+          lcov --remove coverage.info '/usr/*' --ignore-errors=unused,inconsistent --output-file coverage.info
+          lcov --remove coverage.info '*/catch*' --ignore-errors=unused,inconsistent --output-file coverage.info
+          lcov --list coverage.info --ignore-errors=inconsistent
       - name: Generate Python coverage report
         run: |
           python3 -m coverage combine
