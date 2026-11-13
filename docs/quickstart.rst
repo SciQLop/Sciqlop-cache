@@ -147,6 +147,22 @@ A ``transact()`` block commits when it ends and rolls back if it raises. Other t
 and processes never see half of it. See :doc:`concurrency` for locks and for what runs
 in parallel.
 
+Many keys at once
+=================
+
+.. code-block:: python
+
+    cache.set_many({"a": 1, "b": 2, ("c", 3): 3}, expire=600)
+    print(cache.get_many(["a", ("c", 3), "missing"]))
+    # {'a': 1, ('c', 3): 3}
+    print(cache.delete_many(["a", "b", "missing"]))
+    # 2
+
+``get_many`` leaves out missing and expired keys. On ``Cache`` and ``Index``,
+``set_many`` and ``delete_many`` run in one transaction: all items or none. A
+``FanoutCache`` or ``FanoutIndex`` writes each item on its own, because its shards share
+no transaction.
+
 Keeping an eye on it
 ====================
 

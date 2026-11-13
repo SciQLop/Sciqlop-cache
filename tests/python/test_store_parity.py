@@ -165,6 +165,31 @@ class CacheContract(_TempDir):
             self.assertEqual(calls, [3, 4])
             self.assertEqual(store.evict_tag("async"), 2)
 
+    def test_get_set_delete_many(self):
+        for store in self._each():
+            items = {f"k{i}": i for i in range(50)}
+            items[("tuple", 1)] = "t"
+            self.assertIsNone(store.set_many(items, expire=3600, tag="batch"))
+            store.set("old", 1, expire=-1)
+            wanted = ["k0", "k49", ("tuple", 1), "missing", "old"]
+            self.assertEqual(store.get_many(wanted), {"k0": 0, "k49": 49, ("tuple", 1): "t"})
+            self.assertEqual(store.get_many([]), {})
+            self.assertEqual(store.delete_many(["k0", "k1", "missing", ("tuple", 1)]), 3)
+            self.assertNotIn("k0", store)
+            self.assertEqual(len(store.get_many(list(items))), 48)
+            self.assertEqual(store.evict_tag("batch"), 48)
+
+    def test_set_many_is_atomic_on_failure(self):
+        for store in self._each():
+            if isinstance(store, FanoutCache):
+                continue  # one transaction per shard, documented
+            class Unpicklable:
+                def __reduce__(self):
+                    raise TypeError("nope")
+            with self.assertRaises(TypeError):
+                store.set_many({"a": 1, "b": Unpicklable()})
+            self.assertNotIn("a", store)
+
     def test_lock_with_tag_and_expire(self):
         for store in self._each():
             lock = store.lock(("resource", 1), expire=30, tag="locks")
@@ -220,6 +245,13 @@ class IndexContract(_TempDir):
         for cls in self.STORES:
             with self.subTest(cls.__name__):
                 yield cls(f"{self.tmp}/{cls.__name__}", *mappings, **items)
+
+    def test_get_set_delete_many(self):
+        for store in self._each():
+            store.set_many({"a": 1, "b": 2, ("c",): 3})
+            self.assertEqual(store.get_many(["a", ("c",), "zz"]), {"a": 1, ("c",): 3})
+            self.assertEqual(store.delete_many(["a", "zz"]), 1)
+            self.assertEqual(sorted(map(str, store.keys())), ["('c',)", "b"])
 
     def test_seeded_from_mappings_and_items(self):
         for store in self._each({"a": 1}, {"b": 2}, c=3):
