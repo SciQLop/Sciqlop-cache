@@ -261,6 +261,11 @@ if not get_option('disable_python_wrapper')
         env : {'PYTHONPATH': meson.current_build_dir()},
         timeout : 60,
     )
+    test('test_typing', python3,
+        args:files('tests/python/test_typing.py'),
+        env : {'PYTHONPATH': meson.current_build_dir()},
+        timeout : 120,
+    )
     test('test_lru_batching', python3,
         args:files('tests/python/test_lru_batching.py'),
         env : {'PYTHONPATH': meson.current_build_dir()},

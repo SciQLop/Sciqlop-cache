@@ -2,6 +2,9 @@
 API reference
 =============
 
+The package is typed: it ships ``py.typed`` and a stub of its compiled part, so mypy
+and pyright check calls to every method below.
+
 .. currentmodule:: pysciqlop_cache
 
 This page lists everything ``pysciqlop_cache`` offers. For explanations and examples,
