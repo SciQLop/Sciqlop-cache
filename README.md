@@ -1,25 +1,23 @@
 [![GitHub License](https://img.shields.io/github/license/SciQLop/Sciqlop-cache)](https://mit-license.org/)
-[![CPP20](https://img.shields.io/badge/Language-C++20-blue.svg)]()
 [![PyPi](https://img.shields.io/pypi/v/pysciqlop-cache.svg)](https://pypi.org/project/pysciqlop-cache/)
+[![Python versions](https://img.shields.io/pypi/pyversions/pysciqlop-cache.svg)](https://pypi.org/project/pysciqlop-cache/)
 [![Coverage](https://codecov.io/gh/SciQLop/Sciqlop-cache/coverage.svg?branch=main)](https://codecov.io/gh/SciQLop/Sciqlop-cache/branch/main)
 [![Documentation Status](https://readthedocs.org/projects/sciqlop-cache/badge/?version=latest)](https://sciqlop-cache.readthedocs.io/en/latest/?badge=latest)
 
 # SciQLop Cache
 
-**A fast, persistent, process-safe key-value cache for Python (with a C++20 core).**
+**A fast, persistent, process-safe key-value cache for Python, with a C++20 core.**
 
-Think of it as a tiny local database for expensive-to-recompute things: you store
-Python objects under string keys, and any thread or process on the machine can
-read them back — safely, even at the same time. It stays flat from 100 to 1M+
-entries, is **2x faster than diskcache on writes** and **up to 6x faster in
-batched transactions**, and it never corrupts your data when processes crash,
-fork, or race each other.
+Store Python objects under keys on disk; any thread or process on the machine reads
+them back, safely, even at the same time. It speaks diskcache's API, so most code
+switches by changing the import.
 
 ```bash
 pip install pysciqlop-cache
 ```
 
-📖 **[Documentation](https://sciqlop-cache.readthedocs.io/en/latest/)**: quickstart, guides for threads and processes, big numpy arrays and diskcache migration, API reference, C++ guide and internals.
+Wheels for Linux, macOS and Windows, x86-64 and ARM64, Python 3.10 to 3.15 (free-threaded
+builds included). 📖 **[Documentation](https://sciqlop-cache.readthedocs.io/en/latest/)**
 
 ```python
 from pysciqlop_cache import Cache
@@ -31,23 +29,98 @@ print(cache["sensor/temperature"])
 # {'ts': 1710000000, 'values': [21.3, 21.5, 21.4]}
 ```
 
-Any picklable Python object works out of the box.
+## What people use it for
+
+**Cache slow functions and API calls.** Results survive restarts and are shared by every
+process. `ignore` keeps sessions and clients out of the key; `async def` works too.
+
+```python
+@cache.memoize(expire=3600, ignore={"session"})
+def fetch(url, session):
+    return session.get(url).json()
+```
+
+**Share results between worker processes.** Workers of a `multiprocessing` pool share
+one cache, whatever the start method (fork, forkserver, spawn); no server, no lock files.
+
+```python
+from multiprocessing import Pool
+
+@cache.memoize()
+def square(i):
+    return i * i
+
+if __name__ == "__main__":
+    with Pool(4) as pool:
+        print(sum(pool.map(square, range(100))))   # computed once, then read back
+# 328350
+```
+
+**Keep big numpy arrays or data products on disk.** `PickleOOBSerializer` moves array
+bytes in C++ without holding the GIL, compressing them when it pays off, so threads
+loading data don't block each other.
+
+```python
+import numpy as np
+from pysciqlop_cache import Cache, PickleOOBSerializer
+
+arrays = Cache("/tmp/arrays", serializer=PickleOOBSerializer())
+arrays["day/2026-01-01"] = np.random.random((1_000_000, 4))
+```
+
+**A dict bigger than memory.** `Index` is a persistent `MutableMapping` with no
+expiration or eviction overhead.
+
+```python
+from pysciqlop_cache import Index
+
+catalog = Index("/tmp/catalog")
+catalog.update({"run-1": {"status": "done"}, "run-2": {"status": "failed"}})
+print(catalog.get_many(["run-1", "run-3"]))   # one consistent snapshot
+# {'run-1': {'status': 'done'}}
+```
+
+**Coordinate processes.** Atomic counters and a cross-process lock.
+
+```python
+cache.incr("downloads")
+with cache.lock("refresh-token"):
+    ...  # one process at a time
+```
+
+**Coming from diskcache?** One command copies a `Cache`, `FanoutCache` or `Index` over,
+and the [compatibility page](https://sciqlop-cache.readthedocs.io/en/latest/diskcache.html)
+lists the few differences.
+
+```bash
+python -m pysciqlop_cache.migrate /path/to/diskcache /path/to/sciqlop-cache
+```
 
 ## Why use it?
 
-- **Persistent** — data survives process restarts; open the same directory and it's all there.
-- **Safe to share** — multiple threads *and* multiple processes (including forked worker pools) can hit the same cache concurrently. No corruption, no lock files, no setup.
-- **Bounded** — optional size limit with automatic LRU eviction, optional per-key expiration, and tag-based bulk eviction.
-- **Fast** — small values live inside SQLite; large values are memory-mapped files, so reading a 100 MB array costs ~zero copies.
-- **Built for big arrays** — the `PickleOOBSerializer` moves numpy array bytes in C++ without holding the GIL, and compresses them when it pays off, so threads loading data don't block each other ([details](https://sciqlop-cache.readthedocs.io/en/latest/serializers.html)).
-- **Self-healing** — crashes, races and interrupted writes are detected and repaired automatically or via `cache.check(fix=True)`.
+- **Persistent and shareable**: threads and processes, including forked pools, share one
+  cache directory; it can be copied to another machine, even another OS.
+- **Bounded**: optional size limit with LRU eviction, per-key expiration, tags.
+- **Fast**: small values live in SQLite, large ones in memory-mapped files (the split is
+  [configurable](https://sciqlop-cache.readthedocs.io/en/latest/stores.html)). Compared
+  with diskcache: writes 1.1 to 2x faster, repeated reads of values above 8 KB up to 3x,
+  batched small writes 4x, and it stays fast up to a million entries. diskcache is faster
+  for writes of 8 to 32 KB values ([benchmarks](https://sciqlop-cache.readthedocs.io/en/latest/performance.html)).
+- **Crash-, fork- and race-tested**: interrupted writes and crashed processes leave no
+  half-written values; `cache.check(fix=True)` repairs what an external hand broke.
+- **Typed**: ships type information for mypy and pyright.
+
+**Not for:** network filesystems (NFS, SMB), or processes on different machines sharing
+one cache: SQLite's locking needs a local disk. Values are pickled by default, and
+unpickling runs code: keep the folder private, or use the msgspec serializer
+([security](https://sciqlop-cache.readthedocs.io/en/latest/serializers.html)).
 
 ## Learn more
 
 | | |
 |---|---|
 | [Quickstart](https://sciqlop-cache.readthedocs.io/en/latest/quickstart.html) | dict API, expiration and tags, size limits, memoization, transactions |
-| [Choosing a store](https://sciqlop-cache.readthedocs.io/en/latest/stores.html) | `Cache`, `Index`, `FanoutCache`, `FanoutIndex` |
+| [Choosing a store](https://sciqlop-cache.readthedocs.io/en/latest/stores.html) | `Cache`, `Index`, `FanoutCache`, `FanoutIndex`, `max_blob_size` |
 | [Threads, processes and transactions](https://sciqlop-cache.readthedocs.io/en/latest/concurrency.html) | what is safe, what runs in parallel, locks |
 | [Serializers](https://sciqlop-cache.readthedocs.io/en/latest/serializers.html) | pickle, msgspec, and `PickleOOBSerializer` for big numpy arrays |
 | [Coming from diskcache](https://sciqlop-cache.readthedocs.io/en/latest/diskcache.html) | one-command migration, API differences |
