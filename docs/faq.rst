@@ -52,7 +52,7 @@ Is it safe to load a cache someone else wrote?
 
 Not with the pickle-based serializers: unpickling can run code. Only load caches you
 (or code you trust) wrote. :class:`~pysciqlop_cache.MsgspecSerializer` only builds plain
-data types.
+data types, numpy arrays, and objects of the classes you list.
 
 Why does ``len()`` count an entry that just expired?
 ====================================================
