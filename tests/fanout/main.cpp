@@ -396,3 +396,22 @@ SCENARIO("An existing fanout store keeps its std::hash routing", "[fanout][porta
     REQUIRE(fi.exists("other"));
     REQUIRE_FALSE(std::filesystem::exists(db_path.path() / "xxh3_00"));
 }
+
+SCENARIO("FanoutCache set_many() writes each shard's items", "[fanout][set_many]")
+{
+    AutoCleanDirectory db_path { "FanoutSetMany" };
+    FanoutCache fc(db_path.path(), 4);
+    std::vector<std::pair<std::string, std::vector<char>>> items;
+    for (int i = 0; i < 100; ++i)
+        items.emplace_back("k" + std::to_string(i), std::vector<char>(i % 3 ? 10 : 20000, 'v'));
+
+    fc.set_many(items, std::chrono::seconds { 3600 }, std::string { "batch" });
+    REQUIRE(fc.count() == 100);
+    for (const auto& [key, value] : items)
+        REQUIRE(fc.get(key)->to_vector() == value);
+    REQUIRE(fc.evict_tag("batch") == 100);
+
+    FanoutIndex fi(db_path.path() / "index", 4);
+    fi.set_many(items);
+    REQUIRE(fi.count() == 100);
+}
