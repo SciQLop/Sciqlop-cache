@@ -67,7 +67,8 @@ Keys
 
 Constructors
     ``directory``, ``size_limit``, ``shards`` and ``timeout`` are accepted as aliases,
-    and ``Index("path", {"a": 1}, b=2)`` seeds the index like diskcache.
+    and ``Index("path", {"a": 1}, b=2)`` seeds the index like diskcache. The folder is
+    ``cache.directory``, as in diskcache.
     ``disk_min_file_size`` sets ``max_blob_size`` (to one byte less: it is the smallest
     value stored as a file). diskcache's other tuning arguments (``statistics``,
     ``tag_index``, ``eviction_policy``, ``cull_limit``, ``sqlite_*``, ``disk_*``) are
@@ -102,6 +103,8 @@ What differs
 - ``stats()`` returns a dict.
 - ``peekitem()`` / ``popitem()`` follow key order, not insertion order (for a ``FanoutIndex``:
   key order within each shard, shard after shard).
-- ``disk=`` is rejected: use ``serializer=`` (see :doc:`serializers`).
+- ``disk=`` is rejected: use ``serializer=`` (see :doc:`serializers`). Any object with
+  a ``name`` and ``dumps``/``loads`` methods works; a cache written with your own
+  serializer must be opened with it again.
 - Not implemented: ``Deque``, ``RLock``, throttling, barriers, ``push``/``pull``/``peek``
   and ``read=True`` file handles (which raise :class:`NotImplementedError`).

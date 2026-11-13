@@ -59,7 +59,13 @@ def _resolve_serializer(store, requested):
     stored = store.get_meta(_META_SERIALIZER)
     if requested is None:
         if stored is not None:
-            return get_serializer_by_name(stored)
+            try:
+                return get_serializer_by_name(stored)
+            except ValueError:
+                raise ValueError(
+                    f"{type(store).__name__} was written with the serializer {stored!r}, which is "
+                    "not built in: open it with serializer=<that serializer>."
+                ) from None
         requested = PickleSerializer()
     elif stored not in (None, requested.name) and (stored, requested.name) not in SERIALIZER_UPGRADES:
         raise ValueError(
@@ -280,6 +286,9 @@ def _reject_unknown_settings(cls_name, settings):
             raise TypeError(f"{cls_name}.__init__() got an unexpected keyword argument {name!r}")
 
 
+_directory = property(lambda self: self.path(), doc="The cache folder, like diskcache's ``directory``.")
+
+
 class Lock:
     """Cross-process lock backed by a cache's atomic add() operation.
 
@@ -352,6 +361,8 @@ class _TransactionContext:
 
 
 class Cache(_Cache):
+
+    directory = _directory
 
     def __init__(
         self,
@@ -716,6 +727,8 @@ class Cache(_Cache):
 
 class Index(_Index):
 
+    directory = _directory
+
     def __init__(
         self,
         directory: str | None = None,
@@ -904,6 +917,8 @@ class Index(_Index):
 
 
 class FanoutCache(_FanoutCache):
+
+    directory = _directory
 
     def __init__(
         self,
@@ -1158,6 +1173,8 @@ class FanoutCache(_FanoutCache):
 
 
 class FanoutIndex(_FanoutIndex):
+
+    directory = _directory
 
     def __init__(
         self,
