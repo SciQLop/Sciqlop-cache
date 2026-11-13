@@ -233,6 +233,7 @@ OPS = {
     "evict": lambda s: s.evict(),
     "evict_tag": lambda s: s.evict_tag("t"),
     "keys_with_tag": lambda s: s._keys_with_tag("t"),
+    "get_many": lambda s: s._get_many(["k", "x"]),
     "check": lambda s: s.check(),
     "get_meta": lambda s: s.get_meta("m"),
     "set_meta": lambda s: s.set_meta("m", "1"),

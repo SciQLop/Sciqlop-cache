@@ -18,6 +18,7 @@
 #include <string>
 #include <thread>
 #include <unordered_set>
+#include <utility>
 #include <cstdint>
 #include <new>
 #ifdef _WIN32
@@ -125,6 +126,8 @@ class _Store : private Policies..., private _ForkAware
     // (depth 0→1) issues an actual SQLite BEGIN/COMMIT; nested levels are
     // logical no-ops. Always read/written under _mtx.
     std::size_t _txn_depth = 0;
+    // True while get_many() reads inside its snapshot. Under _mtx.
+    bool _in_read_snapshot = false;
 
     // --- SQL building helpers (derived from policy fold expressions) ---
 
@@ -474,6 +477,7 @@ class _Store : private Policies..., private _ForkAware
     {
         new (&_mtx) std::recursive_mutex();
         _txn_depth = 0;
+        _in_read_snapshot = false;
         _owner_pid = _sq_getpid();
         // fork() cloned the blob-filename PRNG state verbatim; without a
         // reseed, parent and children generate lockstep-identical UUID
@@ -677,11 +681,13 @@ class _Store : private Policies..., private _ForkAware
         bool finished = false;
         bool outermost;
 
-        explicit _NestedTxn(_Store& s)
+        // exclusive=false is a deferred BEGIN: a read snapshot that doesn't
+        // block writers (WAL), used by get_many().
+        explicit _NestedTxn(_Store& s, bool exclusive = true)
             : store(s), outermost(s._txn_depth == 0)
         {
             if (outermost)
-                txn.emplace(s._db.get(), true);
+                txn.emplace(s._db.get(), exclusive);
             ++store._txn_depth;
         }
         _NestedTxn(const _NestedTxn&) = delete;
@@ -1328,7 +1334,11 @@ public:
                 // fleeting open failure into a permanent data loss, and the
                 // blob file itself was never unlinked either (it just became
                 // orphaned on disk).
-                if (!storage->file_exists(path))
+                // Inside get_many()'s read snapshot the DELETE would have to
+                // upgrade it to a write, which fails on a stale snapshot and
+                // would abort the whole batch: leave the row, the next get()
+                // removes it.
+                if (!_in_read_snapshot && !storage->file_exists(path))
                 {
                     // Path-aware cleanup. Without this, a concurrent process
                     // that swapped the entry between our SELECT and this
@@ -1356,6 +1366,32 @@ public:
         if constexpr (has_stats)
             WithStats::_misses.fetch_add(1, std::memory_order_relaxed);
         return std::nullopt;
+    }
+
+    // Every value comes from one snapshot: one deferred read transaction,
+    // which in WAL mode never blocks writers (unlike transact()'s EXCLUSIVE).
+    // Files deleted after the snapshot started stay readable: the trash keeps
+    // them for _trash_grace_secs. Inside a user transact() it joins that one.
+    [[nodiscard]] std::vector<std::optional<Buffer>> get_many(const std::vector<std::string>& keys)
+    {
+        auto db = this->db();
+        _NestedTxn txn(*this, /*exclusive=*/false);
+        const bool was_in_snapshot = std::exchange(_in_read_snapshot, true);
+        std::vector<std::optional<Buffer>> values;
+        try
+        {
+            values.reserve(keys.size());
+            for (const auto& key : keys)
+                values.push_back(get(key));
+        }
+        catch (...)
+        {
+            _in_read_snapshot = was_in_snapshot;
+            throw;
+        }
+        _in_read_snapshot = was_in_snapshot;
+        txn.commit();
+        return values;
     }
 
     // --- add() overloads ---
