@@ -581,5 +581,34 @@ class SerializerChoiceParity(_TempDir):
                 self.assertEqual(store.serializer.name, "msgspec")
 
 
+class _ReprSerializer:
+    name = "repr-text"
+
+    def dumps(self, value):
+        return repr(value).encode()
+
+    def loads(self, data):
+        return bytes(data).decode()
+
+
+class DiskcacheAttributes(_TempDir):
+    def test_directory_is_the_folder(self):
+        for cls in (Cache, FanoutCache, Index, FanoutIndex):
+            with self.subTest(cls.__name__):
+                folder = f"{self.tmp}/{cls.__name__}"
+                self.assertEqual(cls(folder).directory, folder)
+
+    def test_reopening_a_custom_serializer_store_says_to_pass_it(self):
+        for cls in (Cache, FanoutCache, Index, FanoutIndex):
+            with self.subTest(cls.__name__):
+                folder = f"{self.tmp}/{cls.__name__}"
+                store = cls(folder, serializer=_ReprSerializer())
+                store["k"] = 1
+                store.close()
+                with self.assertRaisesRegex(ValueError, r"repr-text.*serializer="):
+                    cls(folder)
+                self.assertEqual(cls(folder, serializer=_ReprSerializer())["k"], "1")
+
+
 if __name__ == "__main__":
     unittest.main()
