@@ -67,9 +67,11 @@ Keys
 
 Constructors
     ``directory``, ``size_limit``, ``shards`` and ``timeout`` are accepted as aliases,
-    and ``Index("path", {"a": 1}, b=2)`` seeds the index like diskcache. diskcache's tuning
-    arguments (``statistics``, ``tag_index``, ``eviction_policy``, ``cull_limit``,
-    ``sqlite_*``, ``disk_*``) are accepted and ignored.
+    and ``Index("path", {"a": 1}, b=2)`` seeds the index like diskcache.
+    ``disk_min_file_size`` sets ``max_blob_size`` (to one byte less: it is the smallest
+    value stored as a file). diskcache's other tuning arguments (``statistics``,
+    ``tag_index``, ``eviction_policy``, ``cull_limit``, ``sqlite_*``, ``disk_*``) are
+    accepted and ignored.
 
 ``retry=``
     Accepted on every method and ignored: calls already wait up to ``timeout`` on a busy

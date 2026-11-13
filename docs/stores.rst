@@ -69,3 +69,34 @@ Things to know:
 - Whole-store operations (``len``, ``clear``, ``check``, iteration) visit every shard.
 
 For a single process, or a few writers, a plain ``Cache`` is simpler.
+
+Where values go: ``max_blob_size``
+==================================
+
+Values up to ``max_blob_size`` bytes (8 KB by default) are stored inside the database;
+bigger ones get their own file. Every store type takes it:
+
+.. code-block:: python
+
+    from pysciqlop_cache import Cache
+
+    few_files = Cache("few-files", max_blob_size=256 * 1024)
+    few_files["day"] = b"x" * 100_000          # stays in the database
+    print(few_files.max_blob_size())
+    # 262144
+
+The value is recorded in the store: reopening it without ``max_blob_size`` keeps it,
+passing a new one replaces it. Changing it never moves existing values; each one stays
+where it was written, and reads don't care.
+
+Raising it trades files for database size:
+
+- fewer files and directory entries, which matters on filesystems with a file quota or
+  few inodes, and one write instead of a file creation per value;
+- but every value up to the threshold goes through SQLite's write-ahead log and is
+  copied on each read, where a file is memory-mapped, and the database file grows by
+  the whole value.
+
+``max_blob_size=0`` stores every non-empty value as a file. diskcache's
+``disk_min_file_size`` is accepted too (the smallest value stored as a file, so one byte
+more than ``max_blob_size``). :doc:`performance` measures the trade-off.

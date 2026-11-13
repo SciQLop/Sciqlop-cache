@@ -112,7 +112,9 @@ class _Store : private Policies..., private _ForkAware
     std::filesystem::path cache_path;
     size_t max_size;
     std::unique_ptr<Storage> storage;
-    std::size_t _file_size_threshold = 8 * 1024;
+    // Values up to this size are stored in the database, bigger ones as files.
+    // Atomic: set paths read it before taking _mtx.
+    std::atomic<std::size_t> _file_size_threshold { 8 * 1024 };
 
     std::thread _checkpoint_thread;
     std::atomic<bool> _stop_checkpoint { false };
@@ -977,7 +979,7 @@ private:
     {
         // A blob is bound as one contiguous SQLite value.
         if constexpr (!Bytes<decltype(value)>)
-            if (std::size(value) <= _file_size_threshold)
+            if (std::size(value) <= _file_size_threshold.load(std::memory_order_relaxed))
                 return _set_impl(key, value.flatten(), expires_secs, tag);
         auto db = this->db();
         std::size_t seq = 0;
@@ -997,7 +999,7 @@ private:
 
         if constexpr (Bytes<decltype(value)>)
         {
-            if (new_size <= _file_size_threshold)
+            if (new_size <= _file_size_threshold.load(std::memory_order_relaxed))
             {
                 auto binded = REPLACE_VALUE_STMT.bind_all();
                 _bind_core_and_policies(binded.get(), key, value, new_size, abs_exp, seq, tag);
@@ -1034,7 +1036,7 @@ private:
     {
         // A blob is bound as one contiguous SQLite value.
         if constexpr (!Bytes<decltype(value)>)
-            if (std::size(value) <= _file_size_threshold)
+            if (std::size(value) <= _file_size_threshold.load(std::memory_order_relaxed))
                 return _add_impl(key, value.flatten(), expires_secs, tag);
         auto db = this->db();
         std::size_t seq = 0;
@@ -1049,7 +1051,7 @@ private:
 
         if constexpr (Bytes<decltype(value)>)
         {
-            if (new_size <= _file_size_threshold)
+            if (new_size <= _file_size_threshold.load(std::memory_order_relaxed))
             {
                 auto binded = INSERT_VALUE_STMT.bind_all();
                 _bind_core_and_policies(binded.get(), key, value, new_size, abs_exp, seq, tag);
@@ -1195,7 +1197,17 @@ public:
         requires (has_eviction)
     { max_size = value; }
 
-    [[nodiscard]] inline std::size_t file_size_threshold() { return _file_size_threshold; }
+    [[nodiscard]] inline std::size_t file_size_threshold() const
+    {
+        return _file_size_threshold.load(std::memory_order_relaxed);
+    }
+
+    // Applies to the values this handle writes from now on. Existing rows keep
+    // their storage: each row says whether it holds a blob or a file path.
+    inline void set_file_size_threshold(std::size_t bytes)
+    {
+        _file_size_threshold.store(bytes, std::memory_order_relaxed);
+    }
 
     [[nodiscard]] inline std::size_t count()
     {
