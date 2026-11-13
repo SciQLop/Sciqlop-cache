@@ -1,4 +1,5 @@
 import shutil
+import types
 import unittest
 import tempfile
 
@@ -86,7 +87,7 @@ class TestMsgspecSerializer(unittest.TestCase):
     def setUp(self):
         self.tmp_dir = tempfile.mkdtemp()
         self.cache = Cache(
-            self.tmp_dir, serializer=MsgspecSerializer()
+            self.tmp_dir, serializer=MsgspecSerializer(types=[FakeSpeasyVariable, NestedAxis])
         )
 
     def tearDown(self):
@@ -280,7 +281,7 @@ class TestMsgspecOnDiskFormat(unittest.TestCase):
         }
 
     def test_golden_bytes_decode(self):
-        ser = MsgspecSerializer()
+        ser = MsgspecSerializer(types=[types.SimpleNamespace])
         for name, value in self.values().items():
             with self.subTest(name):
                 decoded = ser.loads(self.GOLDEN[name])
@@ -293,7 +294,7 @@ class TestMsgspecOnDiskFormat(unittest.TestCase):
                     self.assertEqual(vars(decoded), vars(value))
 
     def test_encoding_is_unchanged(self):
-        ser = MsgspecSerializer()
+        ser = MsgspecSerializer(types=[types.SimpleNamespace])
         for name, value in self.values().items():
             with self.subTest(name):
                 self.assertEqual(ser.dumps(value), self.GOLDEN[name])
@@ -362,6 +363,50 @@ class KeysOfNonPickleStores(unittest.TestCase):
         cache = Cache(self.tmp, serializer=PickleSerializer())
         _plant_key(cache, _Exploit())
         self.assertEqual(cache.keys(), ["pwned"])
+
+
+def _object_entry(type_path, data):
+    """The bytes a hostile process could plant: an object extension naming any class."""
+    payload = msgspec.msgpack.encode({"__type__": type_path, "__data__": data})
+    return msgspec.msgpack.encode(msgspec.msgpack.Ext(2, payload))
+
+
+@unittest.skipUnless(_has_msgspec, "msgspec not installed")
+class MsgspecObjectsAreAllowListed(unittest.TestCase):
+    """Building an object named by stored data is a deserialization hole (the
+    jsonpickle class of bug, CVE-2020-22083): only listed classes are built."""
+
+    def test_planted_object_imports_nothing(self):
+        import sys
+        sys.modules.pop("this", None)  # importing ``this`` prints; it stands in for any module
+        with self.assertRaises(ValueError):
+            MsgspecSerializer().loads(_object_entry("this.Anything", {}))
+        self.assertNotIn("this", sys.modules)
+
+    def test_planted_object_of_an_imported_class_is_not_built(self):
+        with self.assertRaises(ValueError):
+            MsgspecSerializer().loads(_object_entry("types.SimpleNamespace", {"a": 1}))
+
+    def test_unlisted_class_is_refused_on_write(self):
+        with self.assertRaises(TypeError):
+            MsgspecSerializer().dumps(NestedAxis("time"))
+
+    def test_listed_classes_round_trip(self):
+        ser = MsgspecSerializer(types=[FakeSpeasyVariable, NestedAxis])
+        var = FakeSpeasyVariable("B", np.arange(3.0), [NestedAxis("time", np.arange(3))], {"u": "nT"})
+        out = ser.loads(ser.dumps(var))
+        self.assertIsInstance(out, FakeSpeasyVariable)
+        self.assertIsInstance(out.axes[0], NestedAxis)
+        np.testing.assert_array_equal(out.values, var.values)
+
+    def test_a_listed_class_does_not_allow_another(self):
+        ser = MsgspecSerializer(types=[NestedAxis])
+        with self.assertRaises(ValueError):
+            ser.loads(MsgspecSerializer(types=[FakeSpeasyVariable]).dumps(FakeSpeasyVariable("x")))
+
+    def test_types_must_be_classes(self):
+        with self.assertRaises(TypeError):
+            MsgspecSerializer(types=["types.SimpleNamespace"])
 
 
 if __name__ == "__main__":

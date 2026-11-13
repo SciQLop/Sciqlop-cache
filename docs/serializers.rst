@@ -16,8 +16,8 @@ A serializer turns your Python values into bytes and back. Each cache uses one:
       - Values that carry big numpy arrays, especially in programs with several
         threads. See below.
     * - :class:`~pysciqlop_cache.MsgspecSerializer`
-      - Plain structured data: dicts, lists, numbers, small arrays. Faster and safer
-        than pickle. Needs ``msgspec``.
+      - Plain structured data: dicts, lists, numbers, small arrays, and objects of the
+        classes you list. Faster and safer than pickle. Needs ``msgspec``.
 
 .. code-block:: python
 
@@ -47,10 +47,38 @@ Security
 
 Unpickling runs code. With a pickle serializer, anyone who can write to the cache
 folder can run code in every program that reads from it. Keep the folder writable
-only by you (a usual umask such as 022 does that), or use ``MsgspecSerializer``: it only
-builds plain data types, and its caches never unpickle anything else, not even keys.
-A key such as ``("sensor", 7)`` still works; a planted key that would run code raises
-:class:`pickle.UnpicklingError` instead.
+only by you (a usual umask such as 022 does that), or use ``MsgspecSerializer``.
+
+``MsgspecSerializer`` builds plain data types, numpy arrays, and objects of the classes
+you list in ``types``, nothing else. It never imports a module named by stored data, and
+its caches never unpickle anything, not even keys. A key such as ``("sensor", 7)``
+still works; a planted key that would run code raises :class:`pickle.UnpicklingError`
+instead.
+
+To store your own objects, list their classes. An object is stored as its class
+name plus its attributes, so pass the same list every time you open the cache:
+
+.. code-block:: python
+
+    from dataclasses import dataclass
+    from pysciqlop_cache import MsgspecSerializer
+
+    @dataclass
+    class Reading:
+        sensor: str
+        value: float
+
+    readings = Cache("readings-cache", serializer=MsgspecSerializer(types=[Reading]))
+    readings["latest"] = Reading("probe-1", 21.5)
+    print(readings["latest"])
+    # Reading(sensor='probe-1', value=21.5)
+
+Storing an object of a class that isn't listed raises :class:`TypeError`, and reading
+one raises :class:`ValueError`.
+
+.. versionchanged:: 0.4.1
+   Objects need their class in ``types``. Before, any object was stored, and reading
+   imported whatever class the stored data named.
 
 Big numpy arrays: ``PickleOOBSerializer``
 =========================================

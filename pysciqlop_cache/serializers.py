@@ -4,7 +4,7 @@ import io
 import pickle
 import struct
 import sys
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Iterable, Protocol, runtime_checkable
 
 from ._pysciqlop_cache import compress_buffer, decode_buffers
 
@@ -37,88 +37,109 @@ _EXT_NUMPY = 1
 _EXT_OBJECT = 2
 
 
-def _enc_hook(obj: Any) -> Any:
-    import msgspec.msgpack
-
+def _encode_numpy(obj: Any) -> Any:
+    """msgspec form of a numpy array or scalar, or None if ``obj`` is neither."""
     try:
         import numpy as np
-        if isinstance(obj, np.ndarray):
-            order = "F" if obj.flags["F_CONTIGUOUS"] else "C"
-            header = msgspec.msgpack.encode({
-                "dtype": str(obj.dtype),
-                "shape": list(obj.shape),
-                "order": order,
-            })
-            header_len = len(header).to_bytes(4, "little")
-            return msgspec.msgpack.Ext(_EXT_NUMPY, header_len + header + obj.tobytes(order=order))
-        if isinstance(obj, np.integer):
-            return int(obj)
-        if isinstance(obj, np.floating):
-            return float(obj)
-        if isinstance(obj, np.bool_):
-            return bool(obj)
     except ImportError:
-        pass
-
-    if hasattr(obj, "__dict__"):
-        return msgspec.msgpack.Ext(
-            _EXT_OBJECT,
-            msgspec.msgpack.encode(
-                {
-                    "__type__": f"{type(obj).__module__}.{type(obj).__qualname__}",
-                    "__data__": obj.__dict__,
-                },
-                enc_hook=_enc_hook,
-            ),
-        )
-
-    raise TypeError(f"Cannot serialize {type(obj)}")
-
-
-def _import_type(type_path: str) -> type:
-    module_path, _, qualname = type_path.rpartition(".")
-    import importlib
-    mod = importlib.import_module(module_path)
-    obj = mod
-    for part in qualname.split("."):
-        obj = getattr(obj, part)
-    return obj
-
-
-def _ext_hook(code: int, data: memoryview) -> Any:
+        return None
     import msgspec.msgpack
 
-    if code == _EXT_NUMPY:
-        import numpy as np
-        header_len = int.from_bytes(data[:4], "little")
-        header = msgspec.msgpack.decode(data[4:4 + header_len])
-        buf = bytes(data[4 + header_len:])
-        return np.frombuffer(buf, dtype=np.dtype(header["dtype"])).reshape(
-            header["shape"], order=header.get("order", "C")
-        )
+    if isinstance(obj, np.ndarray):
+        order = "F" if obj.flags["F_CONTIGUOUS"] else "C"
+        header = msgspec.msgpack.encode({
+            "dtype": str(obj.dtype),
+            "shape": list(obj.shape),
+            "order": order,
+        })
+        header_len = len(header).to_bytes(4, "little")
+        return msgspec.msgpack.Ext(_EXT_NUMPY, header_len + header + obj.tobytes(order=order))
+    if isinstance(obj, np.integer):
+        return int(obj)
+    if isinstance(obj, np.floating):
+        return float(obj)
+    if isinstance(obj, np.bool_):
+        return bool(obj)
+    return None
 
-    if code == _EXT_OBJECT:
-        info = msgspec.msgpack.decode(data, type=dict, ext_hook=_ext_hook)
-        type_path = info["__type__"]
-        cls = _import_type(type_path)
-        obj = cls.__new__(cls)
-        for k, v in info["__data__"].items():
-            setattr(obj, k, v)
-        return obj
 
-    raise ValueError(f"Unknown ext type code: {code}")
+def _decode_numpy(data: memoryview) -> Any:
+    import msgspec.msgpack
+    import numpy as np
+
+    header_len = int.from_bytes(data[:4], "little")
+    header = msgspec.msgpack.decode(data[4:4 + header_len])
+    buf = bytes(data[4 + header_len:])
+    return np.frombuffer(buf, dtype=np.dtype(header["dtype"])).reshape(
+        header["shape"], order=header.get("order", "C")
+    )
+
+
+def _type_path(cls: type) -> str:
+    return f"{cls.__module__}.{cls.__qualname__}"
 
 
 class MsgspecSerializer:
+    """msgpack: plain data, numpy arrays, and objects of the classes in ``types``.
+
+    An object is stored as its class name plus its ``__dict__``. Reading only builds
+    classes listed in ``types`` and never imports anything: building a class named by
+    stored data is a deserialization hole (the jsonpickle CVE-2020-22083 kind).
+
+    Args:
+        types: Classes whose instances may be stored. Pass the same list each time
+            the cache is opened.
+    """
+
     name = "msgspec"
+
+    def __init__(self, types: Iterable[type] = ()):
+        types = tuple(types)
+        not_classes = [t for t in types if not isinstance(t, type)]
+        if not_classes:
+            raise TypeError(f"types must be classes, got {not_classes!r}")
+        self._types = {_type_path(t): t for t in types}
 
     def dumps(self, value: Any) -> bytes:
         import msgspec.msgpack
-        return msgspec.msgpack.encode(value, enc_hook=_enc_hook)
+        return msgspec.msgpack.encode(value, enc_hook=self._enc_hook)
 
     def loads(self, data: bytes | memoryview) -> Any:
         import msgspec.msgpack
-        return msgspec.msgpack.decode(data, ext_hook=_ext_hook)
+        return msgspec.msgpack.decode(data, ext_hook=self._ext_hook)
+
+    def _enc_hook(self, obj: Any) -> Any:
+        import msgspec.msgpack
+
+        encoded = _encode_numpy(obj)
+        if encoded is not None:
+            return encoded
+        if not hasattr(obj, "__dict__"):
+            raise TypeError(f"Cannot serialize {type(obj)}")
+        path = _type_path(type(obj))
+        if self._types.get(path) is not type(obj):
+            raise TypeError(f"Cannot serialize {type(obj)}: pass its class in MsgspecSerializer(types=[...])")
+        return msgspec.msgpack.Ext(
+            _EXT_OBJECT,
+            msgspec.msgpack.encode({"__type__": path, "__data__": obj.__dict__}, enc_hook=self._enc_hook),
+        )
+
+    def _ext_hook(self, code: int, data: memoryview) -> Any:
+        import msgspec.msgpack
+
+        if code == _EXT_NUMPY:
+            return _decode_numpy(data)
+        if code == _EXT_OBJECT:
+            info = msgspec.msgpack.decode(data, type=dict, ext_hook=self._ext_hook)
+            cls = self._types.get(info["__type__"])
+            if cls is None:
+                raise ValueError(f"Refusing to build {info['__type__']!r}: "
+                                 "its class is not in MsgspecSerializer(types=[...])")
+            obj = cls.__new__(cls)
+            for k, v in info["__data__"].items():
+                setattr(obj, k, v)
+            return obj
+        raise ValueError(f"Unknown ext type code: {code}")
 
 
 def _datetime_from_int64(ints: Any, dtype: Any) -> Any:
