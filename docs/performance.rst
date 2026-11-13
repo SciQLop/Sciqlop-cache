@@ -165,6 +165,31 @@ and that cost changes between runs with the process's memory history (the 64 KB 
 ranged from 5 to 25 µs per key, for both). The Apple M2 charts predate ``set_many`` and
 ``get_many``.
 
+Choosing ``max_blob_size``
+==========================
+
+Values up to ``max_blob_size`` are stored in the database, bigger ones as files (see
+:doc:`stores`). This sweep runs four thresholds over value sizes from 1 KB to 1 MB, on
+the Linux machine above (``tmpfs``). The fastest of three runs is kept per point.
+
+.. image:: ../benchmark/blob_size_chart.png
+    :alt: set/get latency and database bytes per value vs value size, for max_blob_size 8 KB to 1 MB (Linux, AMD Ryzen 7 5800X)
+
+- **Writes**: a database blob beats a file creation for 16 and 32 KB values (16 KB:
+  44 µs vs 75 µs). At 64 KB it is even, and from 128 KB on a blob is slower (256 KB:
+  277 µs vs 156 µs). On a real disk, where creating a file costs more, blobs win up to
+  64 KB.
+- **Repeated reads** favour files from 16 KB on: a file is memory-mapped once, a blob is
+  copied out of SQLite on every read (64 KB: 5.6 µs vs 11.8 µs).
+- **First reads** are about even up to 64 KB; from 128 KB blobs are slower.
+- **Size**: a blob grows the database by its whole size; a file costs about 250 bytes
+  of database plus one file.
+
+So raising ``max_blob_size`` to 32 KB (64 KB on a real disk) makes writing such values
+cheaper and removes their files, at the price of slower repeated reads and a bigger
+database. Above about 128 KB, files win on every count. One point is unexplained: 1 MB
+values wrote twice as fast in the 32 KB run, though they are files in every run.
+
 numpy arrays
 ============
 
@@ -249,6 +274,9 @@ scripts:
 
     $ python benchmark/bench_valuesize.py > benchmark/valuesize_results.csv
     $ python benchmark/plot_valuesize.py benchmark/valuesize_results.csv -o benchmark
+
+    $ python benchmark/bench_blob_size.py > benchmark/blob_size_results.csv
+    $ python benchmark/plot_blob_size.py benchmark/blob_size_results.csv -o benchmark/blob_size_chart.png
 
     $ python benchmark/bench_arrays.py > benchmark/arrays_results.csv
     $ python benchmark/plot_arrays.py benchmark/arrays_results.csv -o benchmark/arrays_chart.png
