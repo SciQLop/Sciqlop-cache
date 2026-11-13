@@ -215,16 +215,22 @@ above 133 MB): repeated data can compress better than unique data of that size. 
 three store values with pickle protocol 5. diskcache and the default serializer keep
 the array bytes inside the pickle; :class:`~pysciqlop_cache.PickleOOBSerializer` stores
 them next to it, compressed when that pays off (see :doc:`serializers`). Median of
-three runs; the datasets are downloaded on first use (~1.6 GB).
+three runs (five for threads); the datasets are downloaded on first use (~1.6 GB).
+
+These stores live on the NVMe disk (btrfs), not a RAM filesystem: without ``fsync`` a
+write only reaches the page cache, and on this machine ``tmpfs`` is the slower of the
+two (a plain 25 MB file write: 9.5 ms on ``tmpfs``, 3.1 ms on btrfs), because it takes
+memory 4 KB at a time. The disk column is what the library writes (file sizes);
+btrfs's own compression comes after.
 
 .. image:: ../benchmark/arrays_chart.png
     :alt: get, set and disk use vs value size for five datasets: diskcache, pickle, pickle-oob (Linux, AMD Ryzen 7 5800X)
 
 - **Writes:** pickle-oob is the fastest from a few MB up on images, tables, fields and
-  noise: 1 GB of images in 0.32 s, against 1.2 s for the default serializer and 1.5 s
-  for diskcache. The arrays go to disk with no copy into a pickle buffer. The sensor
-  data is the exception: pickle-oob writes it slower than the default serializer
-  (1 GB: 2.1 s vs 1.4 s), see the next point.
+  noise, up to 10x: 1 GB of images in 0.13 s, against 1.3 s for the default serializer
+  and 1.4 s for diskcache. The arrays go to disk with no copy into a pickle buffer. The
+  sensor data is the exception: pickle-oob writes it slower than the default serializer
+  (1 GB: 2.0 s vs 1.3 s), see the next point.
 - **Disk:** what compresses is what has structure: simulation fields (6x up to 100 MB),
   time axes (noise: 29 % saved, all of it from the time axis), tables (23 %). Images and
   the sensor's float64 channels barely compress. pickle-oob decides per array, from its
@@ -236,7 +242,7 @@ three runs; the datasets are downloaded on first use (~1.6 GB).
 - **Reads, one thread:** below a few MB the default serializer is the fastest: the
   benchmark reads the same key again, and SciQLop Cache keeps the last loaded files open,
   so only unpickling is left. From 100 MB, pickle-oob is the fastest on every dataset but
-  the sensor one, 1.8x to 5x the default serializer (1 GB of images: 0.19 s, vs 0.61 s,
+  the sensor one, 2.2x to 4.9x the default serializer (1 GB of images: 0.14 s, vs 0.59 s,
   and 0.49 s for diskcache). From 100 MB the default serializer reads slower than
   diskcache: its copy into the pickle runs with the GIL held.
 - **Very large reads and huge pages:** a decoded array is fresh memory, and numpy asks
@@ -252,11 +258,11 @@ keys:
 .. image:: ../benchmark/arrays_chart_threads.png
     :alt: get and set throughput vs threads on Hurricane ISABEL fields (Linux, AMD Ryzen 7 5800X)
 
-- **Reads:** pickle-oob copies array bytes without the GIL: 7.7 GB/s on one thread,
-  10.6 GB/s on 16, against 2.0 to 7.9 GB/s for diskcache (its file reads release the
-  GIL) and 2.0 to 2.8 GB/s for the default serializer (it copies with the GIL held).
+- **Reads:** pickle-oob copies array bytes without the GIL: 7.2 GB/s on one thread,
+  10 GB/s on 16, against 2.1 to 8.3 GB/s for diskcache (its file reads release the GIL)
+  and 2.2 to 3.3 GB/s for the default serializer (it copies with the GIL held).
 - **Writes:** SQLite takes one writer at a time, so no library scales. pickle-oob
-  sustains 8 to 11 GB/s, because these fields compress 6x; the others stay below
+  sustains about 10 GB/s, because these fields compress 6x; the others stay below
   2 GB/s.
 
 On the Apple M2, an older version of this benchmark (random noise only, up to 100 MB)
@@ -268,7 +274,10 @@ internal SSD, at 0.9 to 1.7 GB/s for all three, so they can't be compared with
 .. image:: ../benchmark/macos-m2/arrays_chart.png
     :alt: numpy arrays, random noise: diskcache vs pickle vs pickle-oob (macOS, Apple M2)
 
-The Linux runs were on a lightly loaded machine (load average 2 to 3), not an idle one.
+The Linux runs were not on an idle machine: the btrfs writeback of earlier values runs
+while later ones are measured, as it would in real use, and pushed the load average to
+5 to 10. Points where the runs disagreed were checked: two of three agree everywhere,
+except for four thread points, which got five runs.
 
 .. [#cifar] A. Krizhevsky, *Learning Multiple Layers of Features from Tiny Images*,
    2009, https://www.cs.toronto.edu/~kriz/cifar.html
