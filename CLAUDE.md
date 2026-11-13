@@ -104,7 +104,7 @@ Index's onto the fanout classes.
 - `utils/buffer.hpp` — Polymorphic buffer: mapped file (`FdMappedFile` on POSIX), heap bytes, or vector
 - `utils/time.hpp` — Epoch/TimePoint conversions for SQLite
 
-**Python bindings** (`pysciqlop_cache/`): nanobind-based, exposes `Cache`, `Index`, `FanoutCache`, and `FanoutIndex` with dict-like interface and `Buffer` with `.memoryview()`.
+**Python bindings** (`pysciqlop_cache/`): nanobind-based, exposes `Cache`, `Index`, `FanoutCache`, and `FanoutIndex` with dict-like interface and `Buffer` with `.memoryview()`. The extension's type stub `pysciqlop_cache/_pysciqlop_cache.pyi` is generated and committed (not built: cross-compiled wheels can't import the module). After changing a binding, regenerate it from outside the repo root: `cd /tmp && PYTHONPATH=<repo>/build python <repo>/subprojects/nanobind-*/src/stubgen.py -q -m pysciqlop_cache._pysciqlop_cache -o <repo>/pysciqlop_cache/_pysciqlop_cache.pyi`. `test_typing` fails when it drifts.
 
 **Tests** (`tests/`): Catch2 BDD-style. Seven always-on C++ suites (basic, basic_index, database, intermediate, multithreads, fanout, check) plus Python tests. Two more suites (`torture`, `concurrency_bugs`) plus the Python `test_torture` and `test_hypothesis` are gated by `-Dwith_torture_tests=true` (designed for sanitizer / long-running runs).
 
