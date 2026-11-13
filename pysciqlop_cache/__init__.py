@@ -30,6 +30,20 @@ def _encode_value(serializer, value):
 
 
 _MISSING = object()
+
+
+def _get_many(store, keys):
+    # simplify: one get() per key. Inside a transact() the batch reads ~2x faster
+    # (one read snapshot), but transact() takes the write lock and would block every
+    # writer for the whole batch. Upgrade: a C++ get_many in one deferred read txn.
+    return {k: v for k in keys if (v := store.get(k, _MISSING)) is not _MISSING}
+
+
+def _encoded_items(store, mapping):
+    """(key, payload) pairs of a batch, serialized before any lock is taken: a value
+    that fails to serialize aborts the batch before anything is written."""
+    return [(k if type(k) is str else _encode_key(store, k), _encode_value(store._serializer, v))
+            for k, v in mapping.items()]
 _META_SERIALIZER = "serializer"
 _META_MAX_SIZE = "max_size"
 _SENTINEL = object()
@@ -637,6 +651,28 @@ class Cache(_Cache):
             key = _encode_key(self, key)
         return Lock(self, key, expire=expire, tag=tag)
 
+    def get_many(self, keys) -> dict:
+        """The values of the ``keys`` that are present, as a dict. Missing and
+        expired keys are left out."""
+        return _get_many(self, keys)
+
+    def set_many(self, mapping, expire=None, tag=None) -> None:
+        """Store every item of ``mapping`` in one transaction: all or nothing.
+
+        ``expire`` and ``tag`` apply to every item, as in :meth:`set`.
+        """
+        items = _encoded_items(self, mapping)
+        if type(expire) in (int, float):
+            expire = timedelta(seconds=expire)
+        with self.transact():
+            for key, payload in items:
+                super().set(key, payload, expire=expire, tag=tag)
+
+    def delete_many(self, keys) -> int:
+        """Remove ``keys`` in one transaction. Returns how many were there."""
+        with self.transact():
+            return sum(self.delete(k) for k in keys)
+
     def transact(self, retry: bool = False):
         """Context manager running a block in one transaction.
 
@@ -782,6 +818,22 @@ class Index(_Index):
 
     def __repr__(self) -> str:
         return f"Index({str(super().path())!r}, count={len(self)})"
+
+    def get_many(self, keys) -> dict:
+        """The values of the ``keys`` that are present, as a dict."""
+        return _get_many(self, keys)
+
+    def set_many(self, mapping) -> None:
+        """Store every item of ``mapping`` in one transaction: all or nothing."""
+        items = _encoded_items(self, mapping)
+        with self.transact():
+            for key, payload in items:
+                super().set(key, payload)
+
+    def delete_many(self, keys) -> int:
+        """Remove ``keys`` in one transaction. Returns how many were there."""
+        with self.transact():
+            return sum(self.delete(k) for k in keys)
 
     def transact(self, retry: bool = False):
         """Context manager running a block in one transaction.
@@ -1037,6 +1089,22 @@ class FanoutCache(_FanoutCache):
             key = _encode_key(self, key)
         return Lock(self, key, expire=expire, tag=tag)
 
+    def get_many(self, keys) -> dict:
+        return _get_many(self, keys)
+
+    def set_many(self, mapping, expire=None, tag=None) -> None:
+        """Store every item of ``mapping``. Shards have no common transaction, so
+        each item is written on its own (each one atomically)."""
+        items = _encoded_items(self, mapping)
+        if type(expire) in (int, float):
+            expire = timedelta(seconds=expire)
+        for key, payload in items:
+            super().set(key, payload, expire=expire, tag=tag)
+
+    def delete_many(self, keys) -> int:
+        """Remove ``keys``, each on its own. Returns how many were there."""
+        return sum(self.delete(k) for k in keys)
+
     def transact(self, key: str, retry: bool = False):
         """Context manager running a block in one transaction on the shard of ``key``.
 
@@ -1167,6 +1235,19 @@ class FanoutIndex(_FanoutIndex):
 
     def __repr__(self) -> str:
         return f"FanoutIndex({str(super().path())!r}, shards={self.shard_count()}, count={len(self)})"
+
+    def get_many(self, keys) -> dict:
+        return _get_many(self, keys)
+
+    def set_many(self, mapping) -> None:
+        """Store every item of ``mapping``. Shards have no common transaction, so
+        each item is written on its own (each one atomically)."""
+        for key, payload in _encoded_items(self, mapping):
+            super().set(key, payload)
+
+    def delete_many(self, keys) -> int:
+        """Remove ``keys``, each on its own. Returns how many were there."""
+        return sum(self.delete(k) for k in keys)
 
     def transact(self, key: str, retry: bool = False):
         """Context manager running a block in one transaction on the shard of ``key``.
