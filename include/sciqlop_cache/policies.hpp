@@ -16,6 +16,9 @@ inline constexpr bool has_policy_v = (std::is_same_v<Policy, Policies> || ...);
 // insert_columns() and insert_placeholders(). The fold expression in _Store
 // concatenates them in Policies... declaration order, which must match
 // extra_columns() order. This eliminates the hardcoded ordering trap.
+// upsert_set() is what overwriting a key sets in the policy's columns: the new
+// value of each inserted column, and the default of each other one, so an
+// overwrite leaves the row as a fresh insert would.
 
 struct WithExpiration
 {
@@ -27,6 +30,7 @@ struct WithExpiration
     }
     static std::string insert_columns() { return ", expire"; }
     static std::string insert_placeholders() { return ", ?"; }
+    static std::string upsert_set() { return ", expire = excluded.expire"; }
 };
 
 struct WithEviction
@@ -72,6 +76,10 @@ struct WithEviction
     }
     static std::string insert_columns() { return ", last_use"; }
     static std::string insert_placeholders() { return ", ?"; }
+    static std::string upsert_set()
+    {
+        return ", last_use = excluded.last_use, last_update = 0, access_count_since_last_update = 0";
+    }
 };
 
 struct WithTags
@@ -84,6 +92,7 @@ struct WithTags
     }
     static std::string insert_columns() { return ", tag"; }
     static std::string insert_placeholders() { return ", ?"; }
+    static std::string upsert_set() { return ", tag = excluded.tag"; }
 };
 
 struct WithStats
@@ -96,4 +105,5 @@ struct WithStats
     static std::string extra_indexes() { return ""; }
     static std::string insert_columns() { return ""; }
     static std::string insert_placeholders() { return ""; }
+    static std::string upsert_set() { return ""; }
 };
