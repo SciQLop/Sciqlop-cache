@@ -112,11 +112,14 @@ jobs:
       fail-fast: false
       matrix:
         os: [macos-15-intel, macos-latest, windows-latest, windows-11-arm, ubuntu-latest, ubuntu-24.04-arm]
-        python-version: ['3.10', '3.11', '3.12', '3.13', '3.14', '3.14t', '3.15', '3.15t']
+        python-version: ['3.10', '3.11', '3.12', '3.13', '3.14', '3.14t', '3.15', '3.15t', 'pypy3.11']
         exclude:
           # no win_arm64 wheel is built for 3.10 (see CIBW_SKIP)
           - os: windows-11-arm
             python-version: '3.10'
+          # PyPy has no Windows ARM64 build
+          - os: windows-11-arm
+            python-version: 'pypy3.11'
     runs-on: ${{ matrix.os }}
     steps:
       - name: Setup Python
