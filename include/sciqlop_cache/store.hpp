@@ -294,6 +294,26 @@ class _Store : private Policies..., private _ForkAware
 
     // --- Schema ---
 
+    // The UPDATE counter triggers. set() overwrites a key in place (upsert), so
+    // they run on every overwrite; the WHEN guards skip the UPDATE on meta when
+    // the counter would not change (same size, blob to blob): an identical
+    // overwrite 2.20 -> 1.57 us/row (sqlite3 replay). The fsize guard is the
+    // counter's own delta, so blob<->file transitions (incr() rewriting a file
+    // entry to a blob, a set() switching storage) still count. Stores created
+    // before these guards get them swapped in by _guard_update_triggers().
+    static constexpr const char* _SIZE_UPDATE_TRIGGER =
+        "cache_size_update AFTER UPDATE OF size ON cache"
+        "   WHEN NEW.size <> OLD.size BEGIN"
+        "   UPDATE meta SET value = value + NEW.size - OLD.size WHERE key = 'size'; END;";
+    static constexpr const char* _FSIZE_UPDATE_TRIGGER =
+        "cache_fsize_update AFTER UPDATE OF size, path ON cache"
+        "   WHEN (CASE WHEN OLD.path IS NOT NULL THEN OLD.size ELSE 0 END)"
+        "     <> (CASE WHEN NEW.path IS NOT NULL THEN NEW.size ELSE 0 END) BEGIN"
+        "   UPDATE meta SET value = value"
+        "     - (CASE WHEN OLD.path IS NOT NULL THEN OLD.size ELSE 0 END)"
+        "     + (CASE WHEN NEW.path IS NOT NULL THEN NEW.size ELSE 0 END)"
+        "   WHERE key = 'file_size'; END;";
+
     static std::string _schema_sql()
     {
         return std::string(
@@ -326,8 +346,7 @@ class _Store : private Policies..., private _ForkAware
               "   UPDATE meta SET value = value - 1 WHERE key = 'count'; END;"
               " CREATE TRIGGER IF NOT EXISTS cache_size_insert AFTER INSERT ON cache BEGIN"
               "   UPDATE meta SET value = value + NEW.size WHERE key = 'size'; END;"
-              " CREATE TRIGGER IF NOT EXISTS cache_size_update AFTER UPDATE OF size ON cache BEGIN"
-              "   UPDATE meta SET value = value + NEW.size - OLD.size WHERE key = 'size'; END;"
+              " CREATE TRIGGER IF NOT EXISTS " + std::string(_SIZE_UPDATE_TRIGGER) +
               " CREATE TRIGGER IF NOT EXISTS cache_size_delete AFTER DELETE ON cache BEGIN"
               "   UPDATE meta SET value = value - OLD.size WHERE key = 'size'; END;"
               " CREATE TRIGGER IF NOT EXISTS cache_fsize_insert AFTER INSERT ON cache"
@@ -336,17 +355,7 @@ class _Store : private Policies..., private _ForkAware
               " CREATE TRIGGER IF NOT EXISTS cache_fsize_delete AFTER DELETE ON cache"
               "   WHEN OLD.path IS NOT NULL BEGIN"
               "   UPDATE meta SET value = value - OLD.size WHERE key = 'file_size'; END;"
-              // No WHEN guard: this must also catch the blob<->file
-              // transitions of a real UPDATE (e.g. incr() rewriting a
-              // file-backed entry to path = NULL via INCR_UPDATE_STMT).
-              // REPLACE (used by set()) never reaches this trigger — with
-              // recursive_triggers=ON it fires as DELETE+INSERT, handled by
-              // the WHEN-guarded pair above.
-              " CREATE TRIGGER IF NOT EXISTS cache_fsize_update AFTER UPDATE OF size, path ON cache BEGIN"
-              "   UPDATE meta SET value = value"
-              "     - (CASE WHEN OLD.path IS NOT NULL THEN OLD.size ELSE 0 END)"
-              "     + (CASE WHEN NEW.path IS NOT NULL THEN NEW.size ELSE 0 END)"
-              "   WHERE key = 'file_size'; END;"
+              " CREATE TRIGGER IF NOT EXISTS " + std::string(_FSIZE_UPDATE_TRIGGER) +
               // DELETE also covers REPLACE (recursive_triggers=ON fires it as
               // DELETE+INSERT); UPDATE covers incr() rewriting a file to a blob.
               " CREATE TRIGGER IF NOT EXISTS cache_trash_delete AFTER DELETE ON cache"
@@ -413,6 +422,23 @@ class _Store : private Policies..., private _ForkAware
         }
     }
 
+    // Swaps the UPDATE counter triggers of a store created before their WHEN
+    // guards (CREATE TRIGGER IF NOT EXISTS keeps old ones). Same counts either
+    // way, so older library versions sharing the store are unaffected. DROP IF
+    // EXISTS: two processes migrating at once each swap whichever they find.
+    void _guard_update_triggers()
+    {
+        if (!_db.exec<std::size_t>("SELECT 1 FROM sqlite_master WHERE type = 'trigger'"
+                                   " AND name = 'cache_size_update' AND sql NOT LIKE '%WHEN%';"))
+            return;
+        (void)_db.exec(std::string("BEGIN IMMEDIATE;"
+                                   " DROP TRIGGER IF EXISTS cache_size_update;"
+                                   " DROP TRIGGER IF EXISTS cache_fsize_update;"
+                                   " CREATE TRIGGER ")
+                       + _SIZE_UPDATE_TRIGGER + " CREATE TRIGGER " + _FSIZE_UPDATE_TRIGGER
+                       + " COMMIT;");
+    }
+
     void _migrate_schema()
     {
         // These are trigger names from a pre-0.1 schema that recomputed
@@ -431,6 +457,7 @@ class _Store : private Policies..., private _ForkAware
                 "CREATE INDEX IF NOT EXISTS idx_cache_tag ON cache(tag) WHERE tag IS NOT NULL;",
                 nullptr, nullptr, nullptr);
         }
+        _guard_update_triggers();
         // One-time reconciliation for DBs whose maintained counters predate
         // the current counters_v (guarded by that marker row so each
         // reconciliation runs once per DB, not once per open): recompute
