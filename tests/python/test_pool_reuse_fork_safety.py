@@ -37,6 +37,7 @@ import sys
 import shutil
 import tempfile
 import unittest
+import pysciqlop_cache
 
 
 _POOL_WORKER_SCRIPT = '''
@@ -140,7 +141,7 @@ class TestPoolReuseForkSafety(unittest.TestCase):
         self.addCleanup(shutil.rmtree, tmp_dir, ignore_errors=True)
         env = os.environ.copy()
         env["PYTHONPATH"] = (
-            os.path.join(os.path.dirname(__file__), "..", "..", "build")
+            os.path.dirname(os.path.dirname(pysciqlop_cache.__file__))
             + os.pathsep + env.get("PYTHONPATH", ""))
 
         try:

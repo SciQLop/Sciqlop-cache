@@ -56,10 +56,11 @@ class Typing(unittest.TestCase):
         self.assertTrue(os.path.exists(os.path.join(PKG, "py.typed")))
         self.assertTrue(os.path.exists(os.path.join(PKG, "_pysciqlop_cache.pyi")))
 
-    # simplify: compared on Linux only, the platform the stub is generated on.
-    # Upgrade if a binding ever gets platform-specific types.
-    @unittest.skipUnless(_stubgen() and sys.platform == "linux" and os.path.exists(STUB),
-                         "needs nanobind's sources and a source checkout, on Linux")
+    # simplify: compared on Linux CPython only, where the stub is generated (PyPy
+    # renders some slots differently). Upgrade if a binding gets platform-specific types.
+    @unittest.skipUnless(_stubgen() and sys.platform == "linux" and os.path.exists(STUB)
+                         and sys.implementation.name == "cpython",
+                         "needs nanobind's sources and a source checkout, on Linux CPython")
     def test_committed_stub_matches_the_bindings(self):
         with tempfile.TemporaryDirectory() as d:
             out = os.path.join(d, "_pysciqlop_cache.pyi")
