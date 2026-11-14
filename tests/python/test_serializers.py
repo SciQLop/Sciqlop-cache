@@ -408,6 +408,42 @@ class MsgspecObjectsAreAllowListed(unittest.TestCase):
         with self.assertRaises(TypeError):
             MsgspecSerializer(types=["types.SimpleNamespace"])
 
+    def test_registered_class_round_trips(self):
+        ser = MsgspecSerializer()
+        ser.register(NestedAxis)
+        out = ser.loads(ser.dumps(NestedAxis("time")))
+        self.assertIsInstance(out, NestedAxis)
+        self.assertEqual(out.name, "time")
+
+    def test_register_works_as_a_decorator(self):
+        ser = MsgspecSerializer()
+
+        @ser.register
+        class Point:
+            def __init__(self, x):
+                self.x = x
+
+        self.assertIs(type(ser.loads(ser.dumps(Point(1)))), Point)
+
+    def test_register_only_affects_its_serializer(self):
+        MsgspecSerializer().register(NestedAxis)
+        with self.assertRaises(TypeError):
+            MsgspecSerializer().dumps(NestedAxis("time"))
+
+    def test_register_takes_classes_only(self):
+        with self.assertRaises(TypeError):
+            MsgspecSerializer().register("types.SimpleNamespace")
+
+    def test_registering_works_on_an_open_cache(self):
+        with tempfile.TemporaryDirectory() as d:
+            ser = MsgspecSerializer()
+            cache = Cache(d, serializer=ser)
+            with self.assertRaises(TypeError):
+                cache["k"] = NestedAxis("time")
+            ser.register(NestedAxis)
+            cache["k"] = NestedAxis("time")
+            self.assertIsInstance(cache["k"], NestedAxis)
+
 
 if __name__ == "__main__":
     unittest.main()
