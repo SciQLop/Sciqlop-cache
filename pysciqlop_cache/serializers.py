@@ -237,7 +237,8 @@ class PickleOOBSerializer:
         if not buffers:
             return header
         stored = [self._stored(b) for b in buffers]
-        entries = b"".join(_ENTRY.pack(codec, len(memoryview(data)), size) for codec, data, size in stored)
+        # nbytes, not len(): PyPy's raw() keeps the item format, so len() counts items.
+        entries = b"".join(_ENTRY.pack(codec, memoryview(data).nbytes, size) for codec, data, size in stored)
         prefix = b"".join([self.MAGIC, _PREAMBLE.pack(len(stored), len(header)), entries, header])
         return [prefix, *(data for _, data, _ in stored)]
 
