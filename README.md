@@ -17,7 +17,7 @@ pip install pysciqlop-cache
 ```
 
 Wheels for Linux, macOS and Windows, x86-64 and ARM64, Python 3.10 to 3.15 (free-threaded
-builds included) and PyPy 3.11. 📖 **[Documentation](https://sciqlop-cache.readthedocs.io/en/latest/)**
+builds included) and PyPy 3.11 and 3.12. 📖 **[Documentation](https://sciqlop-cache.readthedocs.io/en/latest/)**
 
 ```python
 from pysciqlop_cache import Cache
