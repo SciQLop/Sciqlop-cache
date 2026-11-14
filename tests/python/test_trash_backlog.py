@@ -27,6 +27,12 @@ RUN_SECS = 12
 # than this should be gone.
 WINDOW_SECS = 8
 DRAIN_DEADLINE = 20  # grace + tick + slow-runner margin
+# The old drain removed up to 512 files per 1 s tick. A runner that can't write
+# faster than that in every second can't tell the old drain from the new one: a
+# slow or stalled runner (Windows ARM, image 20261112) left files behind with
+# either, so such a measurement is retried, then skipped, never failed.
+OLD_DRAIN_PER_SEC = 512
+MEASURE_ATTEMPTS = 3
 
 SHARED_KEYS = [f"k{i}" for i in range(20)]
 
@@ -101,7 +107,30 @@ class TrashBacklog(unittest.TestCase):
         shutil.rmtree(self.path, ignore_errors=True)
 
     def test_disk_files_track_recent_writes_not_total_writes(self):
-        cache = Cache(self.path)
+        rates = []
+        for _ in range(MEASURE_ATTEMPTS):
+            files, writes_per_second = self._sustained_overwrites()
+            if min(writes_per_second) > OLD_DRAIN_PER_SEC:
+                break
+            rates.append(writes_per_second)
+        else:
+            self.skipTest(f"runner too slow to outrun the old drain: writes per second {rates}")
+
+        recent = sum(writes_per_second[-WINDOW_SECS:])
+        total = sum(writes_per_second)
+        self.assertLessEqual(
+            files, recent + 256,
+            f"{files} files on disk for 1 live value; {total} writes in "
+            f"{RUN_SECS} s, {recent} in the last {WINDOW_SECS} s",
+        )
+
+    def _sustained_overwrites(self):
+        """Overwrite one file value at WRITES_PER_SEC for RUN_SECS in a fresh store.
+
+        Returns the value files left on disk and the writes done each second.
+        """
+        path = tempfile.mkdtemp(dir=self.path)
+        cache = Cache(path)
         writes_per_second = []
         start = time.monotonic()
         for second in range(1, RUN_SECS + 1):
@@ -111,16 +140,10 @@ class TrashBacklog(unittest.TestCase):
                 writes += 1
             time.sleep(max(0.0, second - (time.monotonic() - start)))
             writes_per_second.append(writes)
-        files = _value_files(self.path)
+        files = _value_files(path)
         cache.close()
-
-        recent = sum(writes_per_second[-WINDOW_SECS:])
-        total = sum(writes_per_second)
-        self.assertLessEqual(
-            files, recent + 256,
-            f"{files} files on disk for 1 live value; {total} writes in "
-            f"{RUN_SECS} s, {recent} in the last {WINDOW_SECS} s",
-        )
+        shutil.rmtree(path, ignore_errors=True)
+        return files, writes_per_second
 
     def test_files_are_reclaimed_while_another_process_holds_the_write_lock(self):
         cache = Cache(self.path)
