@@ -90,7 +90,8 @@ class TestMultiProcessStress(unittest.TestCase):
             s = _make_store(store_cls, tmp)
             del s
 
-            n_workers = max(4, 2 * os.cpu_count())
+            # os.cpu_count() is the host's count in a container, not its CPU quota
+            n_workers = int(os.environ.get("TORTURE_WORKERS", max(4, 2 * os.cpu_count())))
             per_worker_duration = DURATION
 
             with Pool(processes=n_workers) as pool:
