@@ -38,6 +38,8 @@ def _wal_files(root):
     return [os.path.join(d, f) for d, _, files in os.walk(root) for f in files if f.endswith("-wal")]
 
 
+@unittest.skipUnless(sys.implementation.name == "cpython",
+                     "the embedding host's reference is made with ctypes.pythonapi")
 class CloseAtExit(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
