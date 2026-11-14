@@ -11,7 +11,8 @@ From PyPI
 
 Wheels are published for Linux (x86-64 and ARM64, glibc and musl), macOS (Intel and
 Apple Silicon) and Windows (x86-64 and ARM64), for Python 3.10 to 3.15, including the
-free-threaded 3.14t and 3.15t builds. Windows ARM64 wheels start at Python 3.11. They have no runtime dependency. They bundle SQLite and the
+free-threaded 3.14t and 3.15t builds, and for PyPy 3.11 (except Windows ARM64). Windows ARM64
+wheels start at Python 3.11. They have no runtime dependency. They bundle SQLite and the
 `blosc2 <https://www.blosc.org/>`_ compression library.
 
 Optional packages:

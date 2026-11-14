@@ -40,6 +40,7 @@ setup = ['-Doptimization=3', '-Dcpp_std=c++20', '--force-fallback-for=sqlite3,bl
 
 [tool.cibuildwheel]
 archs = ["auto"]
+enable = ["pypy"]
 build-frontend = "default"
 
 [tool.cibuildwheel.windows]

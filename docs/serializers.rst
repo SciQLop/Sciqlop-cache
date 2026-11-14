@@ -17,7 +17,8 @@ A serializer turns your Python values into bytes and back. Each cache uses one:
         threads. See below.
     * - :class:`~pysciqlop_cache.MsgspecSerializer`
       - Plain structured data: dicts, lists, numbers, small arrays, and objects of the
-        classes you list. Faster and safer than pickle. Needs ``msgspec``.
+        classes you list. Faster and safer than pickle. Needs ``msgspec``, which does not
+        run on PyPy.
 
 .. code-block:: python
 
