@@ -3,7 +3,10 @@ import types
 import unittest
 import tempfile
 
-import numpy as np
+try:
+    import numpy as np
+except ImportError:  # no numpy wheels for PyPy 3.12
+    np = None
 
 from pysciqlop_cache import Cache, MsgspecSerializer, PickleSerializer
 
@@ -58,12 +61,14 @@ class TestPickleSerializer(unittest.TestCase):
             result = self.cache.get(key)
             self.assertEqual(result, value, f"Failed for {key}")
 
+    @unittest.skipIf(np is None, "numpy not installed")
     def test_numpy_array(self):
         arr = np.arange(100, dtype=np.float64).reshape(10, 10)
         self.cache.set("arr", arr)
         result = self.cache.get("arr")
         np.testing.assert_array_equal(result, arr)
 
+    @unittest.skipIf(np is None, "numpy not installed")
     def test_nested_object(self):
         var = FakeSpeasyVariable(
             name="B_GSE",

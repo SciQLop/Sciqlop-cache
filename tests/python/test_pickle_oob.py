@@ -8,7 +8,10 @@ import tempfile
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 
-import numpy as np
+try:
+    import numpy as np
+except ImportError:  # no numpy wheels for PyPy 3.12
+    raise unittest.SkipTest("pickle-oob stores numpy arrays: needs numpy")
 
 from pysciqlop_cache import Cache, Index, PickleOOBSerializer, PickleSerializer
 from pysciqlop_cache._pysciqlop_cache import BLOSC2_AVAILABLE
