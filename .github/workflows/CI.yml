@@ -95,7 +95,7 @@ jobs:
           echo 'CIBW_CONTAINER_ENGINE=docker; create_args: --volume=${{ github.workspace }}/.ccache:/host_ccache' >> $GITHUB_ENV
 
       - name: Build wheels
-        uses: pypa/cibuildwheel@v4.2.1
+        uses: pypa/cibuildwheel@v4.3.5
 
       - name: Show ccache size (Linux)
         if: runner.os == 'Linux' && always()
@@ -112,7 +112,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [macos-15-intel, macos-latest, windows-latest, windows-11-arm, ubuntu-latest, ubuntu-24.04-arm]
-        python-version: ['3.10', '3.11', '3.12', '3.13', '3.14', '3.14t', '3.15', '3.15t', 'pypy3.11']
+        python-version: ['3.10', '3.11', '3.12', '3.13', '3.14', '3.14t', '3.15', '3.15t', 'pypy3.11', 'pypy3.12']
         exclude:
           # no win_arm64 wheel is built for 3.10 (see CIBW_SKIP)
           - os: windows-11-arm
@@ -120,6 +120,8 @@ jobs:
           # PyPy has no Windows ARM64 build
           - os: windows-11-arm
             python-version: 'pypy3.11'
+          - os: windows-11-arm
+            python-version: 'pypy3.12'
     runs-on: ${{ matrix.os }}
     steps:
       - name: Setup Python
@@ -133,15 +135,17 @@ jobs:
           pattern: cibw-wheels-*
           path: dist
           merge-multiple: true
+      # numpy has no PyPy 3.12 wheels; the tests that need it skip.
+      - name: install numpy
+        if: matrix.python-version != 'pypy3.12'
+        run: pip install numpy
       - name: install wheel (Unix)
         if: runner.os != 'Windows'
         run: |
-          pip install numpy
           pip install --no-index --find-links $GITHUB_WORKSPACE/dist pysciqlop-cache
       - name: install wheel (Windows)
         if: runner.os == 'Windows'
         run: |
-          pip install numpy
           pip install --no-index --find-links $env:GITHUB_WORKSPACE\dist pysciqlop-cache
       - uses: actions/checkout@v4
       - name: run tests
