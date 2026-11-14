@@ -654,3 +654,39 @@ class SetManyTakesPairs(_TempDir):
                 store.set_many(iter([("b", 2)]))
                 self.assertEqual(store.get_many(["a", ("t", 2), "b"]), {"a": 1, ("t", 2): "x", "b": 2})
 
+
+class OverwriteContract(_TempDir):
+    """What overwriting a key must leave behind, whatever SQL does it: one row,
+    exact counters, the old file queued for deletion, and the new set()'s tag and
+    expiry replacing the old ones (none given clears them)."""
+
+    SMALL, BIG = b"s" * 100, b"b" * (32 * 1024)
+
+    def _check_counters(self, store, value):
+        self.assertEqual(len(store), 1)
+        self.assertEqual(bytes(store["k"]), value)
+        self.assertTrue(store.check().ok)
+
+    def test_blob_and_file_overwrites(self):
+        for cls in ALL_STORES:
+            with self.subTest(cls.__name__):
+                store = cls(f"{self.tmp}/{cls.__name__}")
+                for value in (self.SMALL, self.BIG, self.BIG, self.SMALL, self.BIG):
+                    store.set("k", value)
+                    self._check_counters(store, value)
+                store.set("k", self.SMALL)
+                stored = store.size()
+                store.set("k", self.SMALL)
+                self.assertEqual(store.size(), stored)
+
+    def test_a_new_set_replaces_tag_and_expiry(self):
+        for cls in (Cache, FanoutCache):
+            with self.subTest(cls.__name__):
+                store = cls(f"{self.tmp}/{cls.__name__}")
+                store.set("k", self.BIG, expire=3600, tag="old")
+                store.set("k", self.SMALL, tag="new")
+                self.assertEqual(store.expire_and_tag("k"), (None, "new"))
+                store.set("k", self.BIG)
+                self.assertEqual(store.expire_and_tag("k"), (None, None))
+                self.assertEqual(store.evict_tag("new"), 0)
+                self._check_counters(store, self.BIG)
