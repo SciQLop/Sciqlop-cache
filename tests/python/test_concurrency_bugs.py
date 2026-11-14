@@ -17,6 +17,7 @@ import unittest
 from multiprocessing import Pool
 
 from pysciqlop_cache import Cache, FanoutCache
+import pysciqlop_cache
 
 
 def _temp_dir(test):
@@ -200,7 +201,7 @@ class KeyCursorBlocks(unittest.TestCase):
     def test_iter_plus_writer_deadlocks(self):
         env = os.environ.copy()
         env["PYTHONPATH"] = (
-            os.path.join(os.path.dirname(__file__), "..", "..", "build")
+            os.path.dirname(os.path.dirname(pysciqlop_cache.__file__))
             + os.pathsep + env.get("PYTHONPATH", ""))
         try:
             res = subprocess.run(
@@ -296,7 +297,7 @@ class BindingsReleaseGilWhileWaiting(unittest.TestCase):
     def test_no_binding_holds_gil_while_blocking(self):
         env = os.environ.copy()
         env["PYTHONPATH"] = (
-            os.path.join(os.path.dirname(__file__), "..", "..", "build")
+            os.path.dirname(os.path.dirname(pysciqlop_cache.__file__))
             + os.pathsep + env.get("PYTHONPATH", ""))
         try:
             res = subprocess.run(
@@ -332,7 +333,7 @@ class CursorOutlivesStore(unittest.TestCase):
     def test_cursor_keeps_store_alive(self):
         env = os.environ.copy()
         env["PYTHONPATH"] = (
-            os.path.join(os.path.dirname(__file__), "..", "..", "build")
+            os.path.dirname(os.path.dirname(pysciqlop_cache.__file__))
             + os.pathsep + env.get("PYTHONPATH", ""))
         for cls in ("Cache", "Index", "FanoutCache", "FanoutIndex"):
             with self.subTest(cls=cls):
@@ -341,6 +342,65 @@ class CursorOutlivesStore(unittest.TestCase):
                     capture_output=True, text=True, timeout=60, env=env)
                 self.assertEqual(res.returncode, 0, f"crashed: {res.stderr[-500:]}")
                 self.assertEqual(res.stdout.strip(), "200")
+
+
+_GUARD_OUTLIVES_STORE_WORKER = '''
+import gc, sys
+from pysciqlop_cache import _pysciqlop_cache as raw
+cls, path = getattr(raw, sys.argv[1]), sys.argv[2]
+store = cls(path)
+guard = store.begin_user_transaction(*(["k"] if "Fanout" in sys.argv[1] else []))
+store.set("k", b"committed")
+del store
+gc.collect()
+guard.commit()
+del guard
+gc.collect()
+print(bytes(cls(path).get("k").memoryview()).decode(), flush=True)
+'''
+
+
+class TransactionGuardOutlivesStore(unittest.TestCase):
+    """A transaction guard must keep its store alive: it unlocks the store's
+    mutex and commits through it. PyPy's GC frees objects in any order, so a
+    `with transact()` dropped as garbage freed the store first (segfault)."""
+
+    def test_guard_keeps_store_alive(self):
+        env = os.environ.copy()
+        env["PYTHONPATH"] = (
+            os.path.dirname(os.path.dirname(pysciqlop_cache.__file__))
+            + os.pathsep + env.get("PYTHONPATH", ""))
+        for cls in ("Cache", "Index", "FanoutCache", "FanoutIndex"):
+            with self.subTest(cls=cls):
+                res = subprocess.run(
+                    [sys.executable, "-c", _GUARD_OUTLIVES_STORE_WORKER, cls, _temp_dir(self)],
+                    capture_output=True, text=True, timeout=60, env=env)
+                self.assertEqual(res.returncode, 0, f"crashed: {res.stderr[-500:]}")
+                self.assertEqual(res.stdout.strip(), "committed")
+
+
+class TransactionGuardReleasesOnEnd(unittest.TestCase):
+    """commit() and rollback() must release the store, not the guard's destructor:
+    PyPy's GC destroys the guard later (and on any thread), so every other
+    transaction waited for it."""
+
+    def test_finished_guard_does_not_block_other_threads(self):
+        for cls, args in ((Cache, ()), (FanoutCache, ("k",))):
+            for end in ("commit", "rollback"):
+                with self.subTest(cls=cls.__name__, end=end):
+                    store = cls(_temp_dir(self))
+                    guard = store.begin_user_transaction(*args)
+                    getattr(guard, end)()
+                    done = threading.Event()
+
+                    def other_transaction():
+                        with store.transact(*args):
+                            store["k"] = 1
+                        done.set()
+
+                    threading.Thread(target=other_transaction, daemon=True).start()
+                    self.assertTrue(done.wait(10), "a finished guard still holds the store")
+                    del guard
 
 
 class NestedTransactSupported(unittest.TestCase):

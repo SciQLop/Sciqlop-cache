@@ -515,7 +515,7 @@ NB_MODULE(_pysciqlop_cache, m)
         }, doc::stats)
         .def("reset_stats", &Cache::reset_stats, doc::reset_stats, nb::call_guard<nb::gil_scoped_release>())
         .def("close", &Cache::close, close_doc, nb::call_guard<nb::gil_scoped_release>())
-        .def("begin_user_transaction", &Cache::begin_user_transaction,
+        .def("begin_user_transaction", &Cache::begin_user_transaction, nb::keep_alive<0, 1>(),
              nb::call_guard<nb::gil_scoped_release>());
 
     nb::class_<Index>(m, "Index")
@@ -557,7 +557,7 @@ NB_MODULE(_pysciqlop_cache, m)
         .def("get_meta", &Index::get_meta, doc::get_meta, nb::arg("key"), nb::call_guard<nb::gil_scoped_release>())
         .def("path", [](Index& idx) { return idx.path().string(); }, doc::path)
         .def("close", &Index::close, close_doc, nb::call_guard<nb::gil_scoped_release>())
-        .def("begin_user_transaction", &Index::begin_user_transaction,
+        .def("begin_user_transaction", &Index::begin_user_transaction, nb::keep_alive<0, 1>(),
              nb::call_guard<nb::gil_scoped_release>());
 
     nb::class_<FanoutCache>(m, "FanoutCache")
@@ -632,7 +632,7 @@ NB_MODULE(_pysciqlop_cache, m)
         .def("reset_stats", &FanoutCache::reset_stats, doc::reset_stats, nb::call_guard<nb::gil_scoped_release>())
         .def("close", &FanoutCache::close, close_doc, nb::call_guard<nb::gil_scoped_release>())
         .def("begin_user_transaction", &FanoutCache::begin_user_transaction, nb::arg("key"),
-             nb::call_guard<nb::gil_scoped_release>());
+             nb::keep_alive<0, 1>(), nb::call_guard<nb::gil_scoped_release>());
 
     nb::class_<FanoutIndex>(m, "FanoutIndex")
         .def(nb::init<const std::string&, std::size_t>(),
@@ -676,5 +676,5 @@ NB_MODULE(_pysciqlop_cache, m)
         .def("path", [](FanoutIndex& idx) { return idx.path().string(); }, doc::path)
         .def("close", &FanoutIndex::close, close_doc, nb::call_guard<nb::gil_scoped_release>())
         .def("begin_user_transaction", &FanoutIndex::begin_user_transaction, nb::arg("key"),
-             nb::call_guard<nb::gil_scoped_release>());
+             nb::keep_alive<0, 1>(), nb::call_guard<nb::gil_scoped_release>());
 }
