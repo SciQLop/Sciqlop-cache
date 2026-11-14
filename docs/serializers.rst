@@ -76,6 +76,22 @@ name plus its attributes, so pass the same list every time you open the cache:
 Storing an object of a class that isn't listed raises :class:`TypeError`, and reading
 one raises :class:`ValueError`.
 
+Classes can also be added later with ``register()``, which works as a decorator too:
+
+.. code-block:: python
+
+    serializer = MsgspecSerializer()
+
+    @serializer.register
+    @dataclass
+    class Event:
+        name: str
+
+    events = Cache("events-cache", serializer=serializer)
+    events["first"] = Event("shock")
+    print(events["first"])
+    # Event(name='shock')
+
 .. versionchanged:: 0.4.1
    Objects need their class in ``types``. Before, any object was stored, and reading
    imported whatever class the stored data named.

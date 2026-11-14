@@ -83,22 +83,31 @@ class MsgspecSerializer:
     """msgpack: plain data, numpy arrays, and objects of the classes in ``types``.
 
     An object is stored as its class name plus its ``__dict__``. Reading only builds
-    classes listed in ``types`` and never imports anything: building a class named by
-    stored data is a deserialization hole (the jsonpickle CVE-2020-22083 kind).
+    classes listed in ``types`` or added with :meth:`register`, and never imports
+    anything: building a class named by stored data is a deserialization hole (the
+    jsonpickle CVE-2020-22083 kind).
 
     Args:
-        types: Classes whose instances may be stored. Pass the same list each time
-            the cache is opened.
+        types: Classes whose instances may be stored. Same as calling :meth:`register`
+            on each. List the same classes each time the cache is opened.
     """
 
     name = "msgspec"
 
     def __init__(self, types: Iterable[type] = ()):
-        types = tuple(types)
-        not_classes = [t for t in types if not isinstance(t, type)]
-        if not_classes:
-            raise TypeError(f"types must be classes, got {not_classes!r}")
-        self._types = {_type_path(t): t for t in types}
+        self._types = {}
+        for cls in types:
+            self.register(cls)
+
+    def register(self, cls: type) -> type:
+        """Allow instances of ``cls`` to be stored and read back.
+
+        Returns ``cls``, so it also works as a class decorator.
+        """
+        if not isinstance(cls, type):
+            raise TypeError(f"register() takes a class, got {cls!r}")
+        self._types[_type_path(cls)] = cls
+        return cls
 
     def dumps(self, value: Any) -> bytes:
         import msgspec.msgpack
@@ -118,7 +127,7 @@ class MsgspecSerializer:
             raise TypeError(f"Cannot serialize {type(obj)}")
         path = _type_path(type(obj))
         if self._types.get(path) is not type(obj):
-            raise TypeError(f"Cannot serialize {type(obj)}: pass its class in MsgspecSerializer(types=[...])")
+            raise TypeError(f"Cannot serialize {type(obj)}: add its class with MsgspecSerializer(types=[...]) or register()")
         return msgspec.msgpack.Ext(
             _EXT_OBJECT,
             msgspec.msgpack.encode({"__type__": path, "__data__": obj.__dict__}, enc_hook=self._enc_hook),
@@ -134,7 +143,7 @@ class MsgspecSerializer:
             cls = self._types.get(info["__type__"])
             if cls is None:
                 raise ValueError(f"Refusing to build {info['__type__']!r}: "
-                                 "its class is not in MsgspecSerializer(types=[...])")
+                                 "its class is not registered in this MsgspecSerializer")
             obj = cls.__new__(cls)
             for k, v in info["__data__"].items():
                 setattr(obj, k, v)
