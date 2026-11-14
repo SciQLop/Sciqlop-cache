@@ -158,6 +158,14 @@ Many keys at once
     print(cache.delete_many(["a", "b", "missing"]))
     # 2
 
+Like ``dict.update``, ``set_many`` also takes an iterable of ``(key, value)`` pairs:
+
+.. code-block:: python
+
+    cache.set_many([("x", 10), ("y", 20)])
+    print(cache.get_many(["x", "y"]))
+    # {'x': 10, 'y': 20}
+
 ``get_many`` leaves out missing and expired keys, and reads every value from one
 snapshot without blocking writers: a write that changes several keys at once is seen
 entirely or not at all. On ``Cache`` and ``Index``, ``set_many`` and ``delete_many`` run

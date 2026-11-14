@@ -612,3 +612,45 @@ class DiskcacheAttributes(_TempDir):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class GetManyReturnsSmallValuesAsBytes(_TempDir):
+    """A small value comes back as bytes: one Python object instead of a Buffer
+    plus its memoryview, which cost more than reading it. A value stored as a
+    file stays a Buffer, so big arrays are not copied."""
+
+    def test_raw_batch_read_types(self):
+        for cls in ALL_STORES:
+            with self.subTest(cls.__name__):
+                store = cls(f"{self.tmp}/{cls.__name__}")
+                small, big = b"s" * 100, b"b" * (64 * 1024)
+                store.set("small", small)
+                store.set("big", big)
+                raw = store._get_many(["small", "big", "missing"])
+                self.assertIs(type(raw[0]), bytes)
+                self.assertNotIsInstance(raw[1], bytes)
+                self.assertIsNone(raw[2])
+                self.assertEqual(store.get_many(["small", "big", "missing"]),
+                                 {"small": small, "big": big})
+
+    def test_the_boundary_follows_max_blob_size(self):
+        store = Index(f"{self.tmp}/blob", max_blob_size=100)
+        store.set("below", b"a" * 50)  # pickled: a few bytes more
+        store.set("above", b"a" * 200)
+        below, above = store._get_many(["below", "above"])
+        self.assertIs(type(below), bytes)
+        self.assertNotIsInstance(above, bytes)
+
+
+class SetManyTakesPairs(_TempDir):
+    """Like dict.update, set_many takes a mapping or an iterable of (key, value)
+    pairs, so a caller holding pairs doesn't build a dict first."""
+
+    def test_pairs(self):
+        for cls in ALL_STORES:
+            with self.subTest(cls.__name__):
+                store = cls(f"{self.tmp}/{cls.__name__}")
+                store.set_many([("a", 1), (("t", 2), "x")])
+                store.set_many(iter([("b", 2)]))
+                self.assertEqual(store.get_many(["a", ("t", 2), "b"]), {"a": 1, ("t", 2): "x", "b": 2})
+
