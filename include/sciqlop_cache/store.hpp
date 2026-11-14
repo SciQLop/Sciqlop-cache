@@ -849,24 +849,37 @@ public:
                 rollback();
         }
 
-        bool commit()
-        {
-            if (_finished) return false;
-            _finished = true;
-            if (_store._txn_depth > 0) --_store._txn_depth;
-            if (_outermost && _txn)
-                return _txn->commit();
-            return true;
-        }
+        bool commit() { return _end([](Transaction& txn) { return txn.commit(); }); }
 
-        bool rollback()
+        bool rollback() { return _end([](Transaction& txn) { return txn.rollback(); }); }
+
+    private:
+        // Releases the store here, not in the destructor: a Python guard is
+        // destroyed by the GC, which on PyPy runs later and on any thread, so
+        // other transactions waited for it (and unlocking from another thread
+        // is undefined). The SQLite transaction is destroyed first, still under
+        // the lock, so a failed COMMIT is rolled back before anyone else writes.
+        // simplify: a guard dropped without commit()/rollback() still ends in
+        // the destructor; a `with` block always calls one of them.
+        template <typename End>
+        bool _end(End&& end)
         {
             if (_finished) return false;
             _finished = true;
             if (_store._txn_depth > 0) --_store._txn_depth;
-            if (_outermost && _txn)
-                return _txn->rollback();
-            return true;
+            std::unique_lock<std::recursive_mutex> held = std::move(_lock);
+            if (!(_outermost && _txn)) return true;
+            try
+            {
+                const bool ok = end(*_txn);
+                _txn.reset();
+                return ok;
+            }
+            catch (...)
+            {
+                _txn.reset();
+                throw;
+            }
         }
     };
 
