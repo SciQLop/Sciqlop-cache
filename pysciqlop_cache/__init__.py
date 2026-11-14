@@ -36,14 +36,19 @@ def _get_many(store, keys):
     keys = list(keys)
     raw = store._get_many([k if type(k) is str else _encode_key(store, k) for k in keys])
     loads = store._serializer.loads
-    return {k: loads(v.memoryview()) for k, v in zip(keys, raw) if v is not None}
+    return {k: loads(v if type(v) is bytes else v.memoryview())
+            for k, v in zip(keys, raw) if v is not None}
 
 
-def _encoded_items(store, mapping):
+def _encoded_items(store, items):
     """(key, payload) pairs of a batch, serialized before any lock is taken: a value
-    that fails to serialize aborts the batch before anything is written."""
+    that fails to serialize aborts the batch before anything is written.
+
+    ``items`` is a mapping or an iterable of (key, value) pairs, as for dict.update.
+    """
+    pairs = items.items() if hasattr(items, "items") else items
     return [(k if type(k) is str else _encode_key(store, k), _encode_value(store._serializer, v))
-            for k, v in mapping.items()]
+            for k, v in pairs]
 _META_SERIALIZER = "serializer"
 _META_MAX_SIZE = "max_size"
 _META_MAX_BLOB_SIZE = "max_blob_size"
@@ -696,7 +701,8 @@ class Cache(_Cache):
     def set_many(self, mapping, expire=None, tag=None) -> None:
         """Store every item of ``mapping`` in one transaction: all or nothing.
 
-        ``expire`` and ``tag`` apply to every item, as in :meth:`set`.
+        ``mapping`` is a mapping or an iterable of (key, value) pairs, as for
+        ``dict.update``. ``expire`` and ``tag`` apply to every item, as in :meth:`set`.
         """
         items = _encoded_items(self, mapping)
         if type(expire) in (int, float):
@@ -864,7 +870,8 @@ class Index(_Index):
         return _get_many(self, keys)
 
     def set_many(self, mapping) -> None:
-        """Store every item of ``mapping`` in one transaction: all or nothing."""
+        """Store every item of ``mapping`` (a mapping or an iterable of (key, value)
+        pairs, as for ``dict.update``) in one transaction: all or nothing."""
         super()._set_many(_encoded_items(self, mapping))
 
     def delete_many(self, keys) -> int:
@@ -1138,9 +1145,9 @@ class FanoutCache(_FanoutCache):
         return _get_many(self, keys)
 
     def set_many(self, mapping, expire=None, tag=None) -> None:
-        """Store every item of ``mapping``, in one transaction per shard. Shards
-        share none, so a failing batch may keep the items of shards already
-        written."""
+        """Store every item of ``mapping`` (a mapping or an iterable of (key, value)
+        pairs, as for ``dict.update``), in one transaction per shard. Shards share
+        none, so a failing batch may keep the items of shards already written."""
         items = _encoded_items(self, mapping)
         if type(expire) in (int, float):
             expire = timedelta(seconds=expire)
@@ -1292,9 +1299,9 @@ class FanoutIndex(_FanoutIndex):
         return _get_many(self, keys)
 
     def set_many(self, mapping) -> None:
-        """Store every item of ``mapping``, in one transaction per shard. Shards
-        share none, so a failing batch may keep the items of shards already
-        written."""
+        """Store every item of ``mapping`` (a mapping or an iterable of (key, value)
+        pairs, as for ``dict.update``), in one transaction per shard. Shards share
+        none, so a failing batch may keep the items of shards already written."""
         super()._set_many(_encoded_items(self, mapping))
 
     def delete_many(self, keys) -> int:

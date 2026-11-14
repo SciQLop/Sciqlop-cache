@@ -215,6 +215,32 @@ inline void _set_many_impl(T& c, nb::handle items, OptDuration expire = std::nul
         c.set_many(batch);
 }
 
+// A value up to max_blob_size comes back as bytes: one Python object, where a
+// Buffer plus the memoryview Python then takes of it cost more than reading a
+// small value (~0.3 of ~1.3 us per item). Bigger values stay zero-copy Buffers.
+template <typename T>
+inline nb::list _get_many_impl(T& c, const std::vector<std::string>& keys)
+{
+    std::vector<std::optional<Buffer>> values;
+    std::size_t small_max = 0;
+    {
+        nb::gil_scoped_release release;
+        values = c.get_many(keys);
+        small_max = c.file_size_threshold();
+    }
+    nb::list out;
+    for (auto& value : values)
+    {
+        if (!value)
+            out.append(nb::none());
+        else if (value->size() <= small_max)
+            out.append(nb::bytes(value->data(), value->size()));
+        else
+            out.append(nb::cast(std::move(*value)));
+    }
+    return out;
+}
+
 template <typename T>
 inline bool _add_item_impl(T& c, const std::string& key, nb::handle value,
                             OptDuration expire = std::nullopt,
@@ -443,8 +469,7 @@ NB_MODULE(_pysciqlop_cache, m)
              nb::call_guard<nb::gil_scoped_release>())
         .def("_set_many", _set_many_impl<Cache>, nb::arg("items"),
              nb::arg("expire") = nb::none(), nb::arg("tag") = nb::none())
-        .def("_get_many", &Cache::get_many, nb::arg("keys"),
-             nb::call_guard<nb::gil_scoped_release>())
+        .def("_get_many", _get_many_impl<Cache>, nb::arg("keys"))
         .def("__getitem__", &Cache::get, nb::arg("key"),
              nb::call_guard<nb::gil_scoped_release>())
         .def("keys", &Cache::keys, nb::call_guard<nb::gil_scoped_release>())
@@ -504,8 +529,7 @@ NB_MODULE(_pysciqlop_cache, m)
         .def("get", &Index::get, nb::arg("key"),
              nb::call_guard<nb::gil_scoped_release>())
         .def("_set_many", [](Index& s, nb::handle items) { _set_many_impl(s, items); }, nb::arg("items"))
-        .def("_get_many", &Index::get_many, nb::arg("keys"),
-             nb::call_guard<nb::gil_scoped_release>())
+        .def("_get_many", _get_many_impl<Index>, nb::arg("keys"))
         .def("__getitem__", &Index::get, nb::arg("key"),
              nb::call_guard<nb::gil_scoped_release>())
         .def("keys", &Index::keys, nb::call_guard<nb::gil_scoped_release>())
@@ -560,8 +584,7 @@ NB_MODULE(_pysciqlop_cache, m)
              nb::call_guard<nb::gil_scoped_release>())
         .def("_set_many", _set_many_impl<FanoutCache>, nb::arg("items"),
              nb::arg("expire") = nb::none(), nb::arg("tag") = nb::none())
-        .def("_get_many", &FanoutCache::get_many, nb::arg("keys"),
-             nb::call_guard<nb::gil_scoped_release>())
+        .def("_get_many", _get_many_impl<FanoutCache>, nb::arg("keys"))
         .def("__getitem__", &FanoutCache::get, nb::arg("key"),
              nb::call_guard<nb::gil_scoped_release>())
         .def("keys", &FanoutCache::keys, nb::call_guard<nb::gil_scoped_release>())
@@ -623,8 +646,7 @@ NB_MODULE(_pysciqlop_cache, m)
         .def("get", &FanoutIndex::get, nb::arg("key"),
              nb::call_guard<nb::gil_scoped_release>())
         .def("_set_many", [](FanoutIndex& s, nb::handle items) { _set_many_impl(s, items); }, nb::arg("items"))
-        .def("_get_many", &FanoutIndex::get_many, nb::arg("keys"),
-             nb::call_guard<nb::gil_scoped_release>())
+        .def("_get_many", _get_many_impl<FanoutIndex>, nb::arg("keys"))
         .def("__getitem__", &FanoutIndex::get, nb::arg("key"),
              nb::call_guard<nb::gil_scoped_release>())
         .def("keys", &FanoutIndex::keys, nb::call_guard<nb::gil_scoped_release>())
