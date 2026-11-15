@@ -15,6 +15,12 @@ free-threaded 3.14t and 3.15t builds, and for PyPy 3.11 and 3.12 (except Windows
 wheels start at Python 3.11. They have no runtime dependency. They bundle SQLite and the
 `blosc2 <https://www.blosc.org/>`_ compression library.
 
+On PyPy, objects are freed when the garbage collector runs, not when their last reference
+goes. Until then, a value's ``Buffer`` keeps its file mapped and an unfinished key
+iterator keeps the database open, which on Windows stops that file or directory from
+being deleted. Call ``close()`` on stores you are done with, and ``gc.collect()`` if
+you need the files released at once. numpy has no PyPy 3.12 wheels.
+
 Optional packages:
 
 - ``numpy``, for storing arrays (see :doc:`serializers`);

@@ -10,6 +10,7 @@ CLI: FT_TORTURE_DURATION=60 python test_free_threading.py
 """
 
 import hashlib
+import gc
 import os
 import random
 import sys
@@ -158,6 +159,7 @@ class SharedStoreTorture(unittest.TestCase):
                     _assert_value_intact(key, store.get(key))
             self.assertEqual(len(store), len(list(store.keys())))
             self.assertTrue(store.check().ok)
+            gc.collect()  # PyPy: free the threads' cursors and buffers, which keep files open
             store.close()  # Windows can't remove the temp dir while the DB is open
 
     def test_cache(self):
