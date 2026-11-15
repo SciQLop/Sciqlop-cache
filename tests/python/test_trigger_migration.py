@@ -10,6 +10,7 @@ import shutil
 import sqlite3
 import tempfile
 import unittest
+from contextlib import closing
 
 from pysciqlop_cache import Cache, Index
 
@@ -42,7 +43,7 @@ def _guarded(path):
 def _trigger_sql(path):
     # Only on a closed store: a second SQLite library on a live DB can truncate
     # our -shm mapping (see CLAUDE.md).
-    with sqlite3.connect(_db(path)) as db:
+    with closing(sqlite3.connect(_db(path))) as db:
         return dict(db.execute(
             "SELECT name, sql FROM sqlite_master WHERE type = 'trigger' "
             "AND name IN ('cache_size_update', 'cache_fsize_update')"))
@@ -62,9 +63,10 @@ class OldStoresGetGuardedUpdateTriggers(unittest.TestCase):
         store.set("file", b"f" * 32 * 1024)
         store.close()
         del store
-        with sqlite3.connect(_db(path)) as db:
+        with closing(sqlite3.connect(_db(path))) as db:
             for sql in UNGUARDED:
                 db.execute(sql)
+            db.commit()
         return path
 
     def test_reopening_replaces_the_triggers(self):

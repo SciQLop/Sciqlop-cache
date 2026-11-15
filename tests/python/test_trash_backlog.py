@@ -15,6 +15,7 @@ import sqlite3
 import tempfile
 import time
 import unittest
+from contextlib import closing
 
 from pysciqlop_cache import Cache
 
@@ -62,7 +63,7 @@ def _wait_until(predicate, deadline_secs):
 def _trash_rows(path):
     # Only after the cache is closed: a second SQLite library on a live DB
     # can truncate our -shm mapping (see CLAUDE.md).
-    with sqlite3.connect(os.path.join(path, "sciqlop-cache.db")) as db:
+    with closing(sqlite3.connect(os.path.join(path, "sciqlop-cache.db"))) as db:
         return db.execute("SELECT count(*) FROM trash").fetchone()[0]
 
 
