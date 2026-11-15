@@ -9,8 +9,8 @@ Always-on with a short default duration so CI's 3.14t job runs it.
 CLI: FT_TORTURE_DURATION=60 python test_free_threading.py
 """
 
-import hashlib
 import gc
+import hashlib
 import os
 import random
 import sys
@@ -18,6 +18,7 @@ import sysconfig
 import threading
 import time
 import unittest
+import zlib
 from tempfile import TemporaryDirectory
 
 from pysciqlop_cache import Cache, Index, FanoutCache, FanoutIndex
@@ -31,9 +32,15 @@ COUNTER_KEY = "shared_counter"
 FREE_THREADED_BUILD = bool(sysconfig.get_config_var("Py_GIL_DISABLED"))
 
 
+def _digest(payload):
+    # crc32, not hashlib.blake2b: PyPy's blake2 raised a cffi TypeError when
+    # several threads hashed at once. A checksum is enough to catch a torn value.
+    return zlib.crc32(payload).to_bytes(8, "little")
+
+
 def _make_value(key, rng):
     payload = rng.randbytes(rng.randint(16, MAX_VALUE_SIZE))
-    return key.encode() + b"|" + hashlib.blake2b(payload, digest_size=8).digest() + payload
+    return key.encode() + b"|" + _digest(payload) + payload
 
 
 def _assert_value_intact(key, value):
@@ -41,7 +48,7 @@ def _assert_value_intact(key, value):
     prefix = key.encode() + b"|"
     assert value.startswith(prefix), f"{key!r}: value belongs to another key"
     digest, payload = value[len(prefix):len(prefix) + 8], value[len(prefix) + 8:]
-    assert hashlib.blake2b(payload, digest_size=8).digest() == digest, f"{key!r}: torn value"
+    assert _digest(payload) == digest, f"{key!r}: torn value"
 
 
 def _transact(store, key):
@@ -159,7 +166,8 @@ class SharedStoreTorture(unittest.TestCase):
                     _assert_value_intact(key, store.get(key))
             self.assertEqual(len(store), len(list(store.keys())))
             self.assertTrue(store.check().ok)
-            gc.collect()  # PyPy: free the threads' cursors and buffers, which keep files open
+            gc.collect()  # PyPy: free the threads' cursors and buffers, which keep files
+            gc.collect()  # open; a C object is freed on the second collection
             store.close()  # Windows can't remove the temp dir while the DB is open
 
     def test_cache(self):

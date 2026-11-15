@@ -31,7 +31,8 @@ class DeleteWhileMapped(unittest.TestCase):
             c.delete("big")
             self.assertTrue(c.check().ok, "file left behind with no row and no trash entry")
             del buf
-            gc.collect()  # PyPy unmaps only when its GC frees the Buffer
+            gc.collect()  # PyPy unmaps only when its GC frees the Buffer,
+            gc.collect()  # on the second collection
             deadline = time.monotonic() + 15  # 5 s trash grace + 1 s bg tick, with margin
             while value_files(tmp) and time.monotonic() < deadline:
                 time.sleep(0.5)
